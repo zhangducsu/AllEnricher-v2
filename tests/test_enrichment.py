@@ -232,9 +232,10 @@ class TestEnrichmentAnalyzer:
     
     def test_filter_results(self, analyzer):
         """测试结果过滤功能
-        
-        默认q值阈值为0.05，只有校正后p值 <= 0.05的结果应被保留。
+
+        设置 output_all=False，仅保留满足 q 值阈值的显著条目。
         """
+        analyzer.config.output_all = False
         results = [
             EnrichmentResult(
                 term_id="TERM1",
@@ -265,11 +266,69 @@ class TestEnrichmentAnalyzer:
                 background_ratio="50/1000"
             )
         ]
-        
+
         filtered = analyzer.filter_results(results)
-        
+
         assert len(filtered) == 1            # 只保留1个结果
         assert filtered[0].term_id == "TERM1"  # 保留的是TERM1
+
+    def test_filter_results_output_all(self, analyzer):
+        """测试默认输出全部结果（与v1一致）
+
+        output_all=True 时仅过滤不满足 min_genes 的条目，保留全部 p 值。
+        """
+        # 默认 output_all=True
+        assert analyzer.config.output_all == True
+        results = [
+            EnrichmentResult(
+                term_id="TERM1",
+                term_name="Term 1",
+                database="TEST",
+                pvalue=0.001,
+                adjusted_pvalue=0.01,
+                gene_count=5,
+                background_count=50,
+                expected_count=2.5,
+                rich_factor=2.0,
+                gene_list=[],
+                gene_ratio="5/100",
+                background_ratio="50/1000"
+            ),
+            EnrichmentResult(
+                term_id="TERM2",
+                term_name="Term 2",
+                database="TEST",
+                pvalue=0.1,
+                adjusted_pvalue=0.5,     # 不显著，但 output_all=True 时也应保留
+                gene_count=5,
+                background_count=50,
+                expected_count=2.5,
+                rich_factor=2.0,
+                gene_list=[],
+                gene_ratio="5/100",
+                background_ratio="50/1000"
+            ),
+            EnrichmentResult(
+                term_id="TERM3",
+                term_name="Term 3",
+                database="TEST",
+                pvalue=0.001,
+                adjusted_pvalue=0.01,
+                gene_count=1,              # 低于 min_genes=2，应被过滤掉
+                background_count=50,
+                expected_count=2.5,
+                rich_factor=2.0,
+                gene_list=[],
+                gene_ratio="1/100",
+                background_ratio="50/1000"
+            )
+        ]
+
+        filtered = analyzer.filter_results(results)
+
+        assert len(filtered) == 2            # 保留TERM1和TERM2，TERM3因基因数不足被过滤
+        assert filtered[0].term_id == "TERM1"
+        assert filtered[1].term_id == "TERM2"
 
 
 class TestEnrichmentMethodEnum:

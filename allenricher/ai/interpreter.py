@@ -4,6 +4,9 @@ AI-powered result interpretation module for AllEnricher v2.0
 Supports multiple AI backends:
 - OpenAI (GPT-4, GPT-3.5)
 - Anthropic (Claude)
+- DeepSeek (国产大模型)
+- GLM / ChatGLM (智谱AI)
+- MiniMax (MiniMax大模型)
 - Local models (via Ollama)
 
 中文模块说明：
@@ -12,12 +15,15 @@ Supports multiple AI backends:
     本模块提供基于人工智能的基因集富集分析结果解读功能，支持多种AI后端：
     - OpenAI（GPT-4、GPT-3.5）：云端大语言模型，提供高质量的生物学解读
     - Anthropic（Claude）：Anthropic公司的Claude系列模型，擅长长文本分析
+    - DeepSeek：国产大模型，性价比高，API兼容OpenAI格式
+    - GLM/ChatGLM：智谱AI的大语言模型，中文能力强
+    - MiniMax：MiniMax大模型，支持长上下文
     - Ollama：本地部署的开源模型，无需API密钥，适合离线或隐私敏感场景
     - Mock：测试用模拟后端，无需任何AI服务即可运行
 
     模块架构：
     - AIInterpreterBase：抽象基类，定义统一的解读接口
-    - OpenAIInterpreter / ClaudeInterpreter / OllamaInterpreter：具体后端实现
+    - OpenAIInterpreter / ClaudeInterpreter / DeepSeekInterpreter / GLMInterpreter / MiniMaxInterpreter / OllamaInterpreter：具体后端实现
     - MockInterpreter：用于测试的模拟实现
     - AIInterpreter：主入口类（门面模式），统一管理不同后端
     - create_interpreter()：工厂函数，便捷创建解释器实例
@@ -158,7 +164,7 @@ class OpenAIInterpreter(AIInterpreterBase):
         """
         对所有富集分析结果生成AI解读
 
-        遍历每个数据库的富集结果，提取前10个最显著的富集条目，
+        遍历每个数据库的富集结果，提取前20个最显著的富集条目，
         构建包含P值和基因数量的详细提示词，调用OpenAI API生成生物学解读。
 
         参数:
@@ -177,10 +183,11 @@ class OpenAIInterpreter(AIInterpreterBase):
         for db_name, df in results.items():
             # 跳过空结果
             if len(df) == 0:
+                interpretations[db_name] = "No significant enrichment results found for this database."
                 continue
 
-            # 提取前10个最显著的富集结果，构建摘要信息
-            top_results = df.head(10)
+            # 提取前20个最显著的富集结果，构建摘要信息
+            top_results = df.head(20)
             summary_lines = []
 
             for _, row in top_results.iterrows():
@@ -190,23 +197,17 @@ class OpenAIInterpreter(AIInterpreterBase):
                     f"Genes={row.get('Gene_Count', 0)}"
                 )
 
-            # 构建详细的提示词，包含分析上下文和具体要求
-            prompt = f"""
-Please provide a biological interpretation of the following {db_name} enrichment analysis results.
+            # 构建简洁的英文提示词，分点结构，无客套话
+            prompt = f"""Interpret these {db_name} enrichment results. IMPORTANT: Keep total response under 250 words.
 
-Context: {context if context else "Gene set enrichment analysis"}
-
-Top 10 enriched terms:
+Top {len(top_results)} enriched terms:
 {chr(10).join(summary_lines)}
 
-Please:
-1. Summarize the main biological themes represented by these enriched terms
-2. Identify any potential biological processes or pathways that are significantly overrepresented
-3. Suggest potential biological implications of these findings
-4. Note any interesting patterns or relationships between the enriched terms
-
-Keep the interpretation concise (2-3 paragraphs) and focus on biological insights.
-"""
+Structure (use this exact format):
+**Main themes**: [1-2 sentences]
+**Pathways**: [key terms, comma-separated]
+**Significance**: [1-2 sentences about biological meaning]
+**Genes**: [notable gene patterns, 1 sentence]"""
 
             # 调用API并存储解读结果
             interpretation = self._call_api(prompt)
@@ -320,7 +321,7 @@ class ClaudeInterpreter(AIInterpreterBase):
         """
         对所有富集分析结果生成AI解读
 
-        遍历每个数据库的富集结果，提取前10个最显著的富集条目，
+        遍历每个数据库的富集结果，提取前20个最显著的富集条目，
         构建提示词并调用Claude API生成简洁的生物学解读。
 
         参数:
@@ -339,10 +340,11 @@ class ClaudeInterpreter(AIInterpreterBase):
         for db_name, df in results.items():
             # 跳过空结果
             if len(df) == 0:
+                interpretations[db_name] = "No significant enrichment results found for this database."
                 continue
 
-            # 提取前10个最显著的富集结果，构建摘要信息（包含P值）
-            top_results = df.head(10)
+            # 提取前20个最显著的富集结果，构建摘要信息（包含P值）
+            top_results = df.head(20)
             summary_lines = []
 
             for _, row in top_results.iterrows():
@@ -351,14 +353,19 @@ class ClaudeInterpreter(AIInterpreterBase):
                     f"P-value={row.get('P_Value', 1):.2e}"
                 )
 
-            # 构建提示词，将生物信息学专家角色嵌入用户提示中
-            prompt = f"""
-You are a bioinformatics expert. Please interpret the following {db_name} enrichment results:
+            # 构建简洁的英文提示词
+            prompt = f"""Interpret these {db_name} enrichment results. Keep response to ~300 words, organized with clear themes.
 
+Top {len(top_results)} enriched terms:
 {chr(10).join(summary_lines)}
 
-Provide a concise biological interpretation (2-3 paragraphs).
-"""
+Structure your response as:
+• Main biological themes
+• Key pathways/processes involved
+• Potential biological significance
+• Notable gene patterns
+
+⚠ Disclaimer: This AI-generated interpretation is for reference only and should be reviewed by domain experts. Verify all biological conclusions with literature."""
 
             # 调用API并存储解读结果
             interpretation = self._call_api(prompt)
@@ -402,7 +409,7 @@ class OllamaInterpreter(AIInterpreterBase):
     - 完全本地运行，数据不离开本机
     - 无需API密钥和付费订阅
     - 支持多种开源模型
-    - 仅提取前5个富集条目（相比云端后端更少），以适配本地模型能力
+    - 仅提取前20个富集条目，以适配本地模型能力
     """
 
     def __init__(self, model: str = "llama2", base_url: str = "http://localhost:11434"):
@@ -459,7 +466,7 @@ class OllamaInterpreter(AIInterpreterBase):
         """
         对所有富集分析结果生成AI解读
 
-        遍历每个数据库的富集结果，提取前5个最显著的富集条目（适配本地模型能力），
+        遍历每个数据库的富集结果，提取前20个最显著的富集条目，
         构建简洁的提示词并调用Ollama API生成生物学解读。
 
         参数:
@@ -474,23 +481,28 @@ class OllamaInterpreter(AIInterpreterBase):
         for db_name, df in results.items():
             # 跳过空结果
             if len(df) == 0:
+                interpretations[db_name] = "No significant enrichment results found for this database."
                 continue
 
-            # 提取前5个最显著的富集结果（比云端后端少，适配本地模型能力）
-            top_results = df.head(5)
+            # 提取前20个最显著的富集结果
+            top_results = df.head(20)
             summary_lines = []
 
             for _, row in top_results.iterrows():
                 # 仅提取条目名称，不包含详细统计信息
                 summary_lines.append(f"- {row.get('Term_Name', 'N/A')}")
 
-            # 构建简洁的提示词
-            prompt = f"""
-Interpret these {db_name} enrichment results:
+            # 构建简洁的英文提示词，分点结构，无客套话
+            prompt = f"""Interpret these {db_name} enrichment results. IMPORTANT: Keep total response under 250 words.
+
+Top {len(top_results)} enriched terms:
 {chr(10).join(summary_lines)}
 
-Provide a brief biological interpretation.
-"""
+Structure (use this exact format):
+**Main themes**: [1-2 sentences]
+**Pathways**: [key terms, comma-separated]
+**Significance**: [1-2 sentences about biological meaning]
+**Genes**: [notable gene patterns, 1 sentence]"""
 
             # 调用API并存储解读结果
             interpretation = self._call_api(prompt)
@@ -516,6 +528,389 @@ Provide a brief biological interpretation.
         return self._call_api(prompt)
 
 
+class DeepSeekInterpreter(AIInterpreterBase):
+    """
+    DeepSeek 后端解释器
+
+    使用 DeepSeek 大模型（如 deepseek-chat、deepseek-coder）对富集分析结果进行 AI 解读。
+    DeepSeek 是国产大模型，API 兼容 OpenAI 格式，性价比高。
+
+    特点：
+    - API 兼容 OpenAI 格式，可使用 openai SDK
+    - 支持中文和英文解读
+    - 性价比高，适合大规模分析
+
+    使用前提：
+    - 需要获取 DeepSeek API 密钥：https://platform.deepseek.com/
+    - 设置环境变量 DEEPSEEK_API_KEY 或在构造函数中传入
+    """
+
+    # DeepSeek API 基础 URL
+    BASE_URL = "https://api.deepseek.com"
+
+    def __init__(
+        self,
+        api_key: str = None,
+        model: str = "deepseek-chat",
+        max_tokens: int = 2000,
+        temperature: float = 0.7
+    ):
+        """
+        初始化 DeepSeek 解释器
+
+        参数:
+            api_key (str): DeepSeek API 密钥，若为 None 则从环境变量 DEEPSEEK_API_KEY 获取
+            model (str): 使用的模型名称，默认为 "deepseek-chat"，可选 "deepseek-coder" 等
+            max_tokens (int): 生成文本的最大 token 数量，默认为 2000
+            temperature (float): 生成温度，控制输出随机性，范围 0-1，默认为 0.7
+        """
+        self.api_key = api_key or os.getenv("DEEPSEEK_API_KEY")
+        self.model = model
+        self.max_tokens = max_tokens
+        self.temperature = temperature
+
+        if not self.api_key:
+            logger.warning("DeepSeek API key not provided. Set DEEPSEEK_API_KEY environment variable.")
+
+    def _call_api(self, prompt: str) -> str:
+        """
+        调用 DeepSeek API（OpenAI 兼容格式）
+
+        参数:
+            prompt (str): 用户提示词
+
+        返回:
+            str: AI 生成的解读文本
+        """
+        try:
+            import openai
+
+            # 使用 OpenAI SDK，指定 DeepSeek 的 base_url
+            client = openai.OpenAI(
+                api_key=self.api_key,
+                base_url=self.BASE_URL
+            )
+
+            response = client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": "你是一位专业的生物信息学专家，擅长基因集富集分析结果的解读。请提供清晰、准确、有洞察力的生物学解读。"},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=self.max_tokens,
+                temperature=self.temperature
+            )
+
+            return response.choices[0].message.content
+
+        except ImportError:
+            logger.error("openai package not installed. Run: pip install openai")
+            return "Error: openai package not installed"
+        except Exception as e:
+            logger.error(f"DeepSeek API error: {e}")
+            return f"Error: {str(e)}"
+
+    def interpret(self, results: Dict[str, pd.DataFrame], context: str = "") -> Dict[str, str]:
+        """对所有富集分析结果生成 AI 解读"""
+        interpretations = {}
+
+        if not self.api_key:
+            return interpretations
+
+        for db_name, df in results.items():
+            if len(df) == 0:
+                interpretations[db_name] = "No significant enrichment results found for this database."
+                continue
+
+            top_results = df.head(20)
+            summary_lines = []
+
+            for _, row in top_results.iterrows():
+                summary_lines.append(
+                    f"- {row.get('Term_Name', 'N/A')}: "
+                    f"P值={row.get('P_Value', 1):.2e}, "
+                    f"基因数={row.get('Gene_Count', 0)}"
+                )
+
+            prompt = f"""Interpret these {db_name} enrichment results. IMPORTANT: Keep total response under 250 words.
+
+Top {len(top_results)} enriched terms:
+{chr(10).join(summary_lines)}
+
+Structure (use this exact format):
+**Main themes**: [1-2 sentences]
+**Pathways**: [key terms, comma-separated]
+**Significance**: [1-2 sentences about biological meaning]
+**Genes**: [notable gene patterns, 1 sentence]"""
+
+            interpretations[db_name] = self._call_api(prompt)
+
+        return interpretations
+
+    def summarize_term(self, term_name: str, gene_list: List[str]) -> str:
+        """对单个富集条目生成简要总结"""
+        if not self.api_key:
+            return ""
+
+        prompt = f"""
+请简要描述以下生物学术语及其相关性:
+
+术语: {term_name}
+关联基因: {', '.join(gene_list[:10])}{'...' if len(gene_list) > 10 else ''}
+
+请用2-3句话解释该术语代表的生物学意义。
+"""
+
+        return self._call_api(prompt)
+
+
+class GLMInterpreter(AIInterpreterBase):
+    """
+    GLM / ChatGLM 后端解释器
+
+    使用智谱 AI 的 GLM 系列模型（如 glm-4、glm-3-turbo）对富集分析结果进行 AI 解读。
+    GLM 是国产大模型，中文能力强，API 兼容 OpenAI 格式。
+
+    特点：
+    - 中文理解能力强
+    - API 兼容 OpenAI 格式
+    - 支持长上下文
+
+    使用前提：
+    - 需要获取智谱 AI API 密钥：https://open.bigmodel.cn/
+    - 设置环境变量 GLM_API_KEY 或在构造函数中传入
+    """
+
+    # 智谱 AI API 基础 URL
+    BASE_URL = "https://open.bigmodel.cn/api/paas/v4"
+
+    def __init__(
+        self,
+        api_key: str = None,
+        model: str = "glm-4",
+        max_tokens: int = 2000,
+        temperature: float = 0.7
+    ):
+        """
+        初始化 GLM 解释器
+
+        参数:
+            api_key (str): 智谱 AI API 密钥，若为 None 则从环境变量 GLM_API_KEY 获取
+            model (str): 使用的模型名称，默认为 "glm-4"，可选 "glm-3-turbo" 等
+            max_tokens (int): 生成文本的最大 token 数量，默认为 2000
+            temperature (float): 生成温度，默认为 0.7
+        """
+        self.api_key = api_key or os.getenv("GLM_API_KEY")
+        self.model = model
+        self.max_tokens = max_tokens
+        self.temperature = temperature
+
+        if not self.api_key:
+            logger.warning("GLM API key not provided. Set GLM_API_KEY environment variable.")
+
+    def _call_api(self, prompt: str) -> str:
+        """调用智谱 AI API（OpenAI 兼容格式）"""
+        try:
+            import openai
+
+            client = openai.OpenAI(
+                api_key=self.api_key,
+                base_url=self.BASE_URL
+            )
+
+            response = client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": "你是一位资深的生物信息学研究员，专注于基因功能注释和富集分析。请提供专业、准确的结果解读。"},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=self.max_tokens,
+                temperature=self.temperature
+            )
+
+            return response.choices[0].message.content
+
+        except ImportError:
+            logger.error("openai package not installed. Run: pip install openai")
+            return "Error: openai package not installed"
+        except Exception as e:
+            logger.error(f"GLM API error: {e}")
+            return f"Error: {str(e)}"
+
+    def interpret(self, results: Dict[str, pd.DataFrame], context: str = "") -> Dict[str, str]:
+        """对所有富集分析结果生成 AI 解读"""
+        interpretations = {}
+
+        if not self.api_key:
+            return interpretations
+
+        for db_name, df in results.items():
+            if len(df) == 0:
+                interpretations[db_name] = "No significant enrichment results found for this database."
+                continue
+
+            top_results = df.head(20)
+            summary_lines = []
+
+            for _, row in top_results.iterrows():
+                summary_lines.append(
+                    f"- {row.get('Term_Name', 'N/A')}: "
+                    f"P值={row.get('P_Value', 1):.2e}, "
+                    f"基因数={row.get('Gene_Count', 0)}"
+                )
+
+            prompt = f"""Interpret these {db_name} enrichment results. IMPORTANT: Keep total response under 250 words.
+
+Top {len(top_results)} enriched terms:
+{chr(10).join(summary_lines)}
+
+Structure (use this exact format):
+**Main themes**: [1-2 sentences]
+**Pathways**: [key terms, comma-separated]
+**Significance**: [1-2 sentences about biological meaning]
+**Genes**: [notable gene patterns, 1 sentence]"""
+
+            interpretations[db_name] = self._call_api(prompt)
+
+        return interpretations
+
+    def summarize_term(self, term_name: str, gene_list: List[str]) -> str:
+        """对单个富集条目生成简要总结"""
+        if not self.api_key:
+            return ""
+
+        prompt = f"请用2-3句话简要描述生物学术语'{term_name}'的含义及其生物学意义。"
+        return self._call_api(prompt)
+
+
+class MiniMaxInterpreter(AIInterpreterBase):
+    """
+    MiniMax 后端解释器
+
+    使用 MiniMax 大模型（如 abab6.5-chat）对富集分析结果进行 AI 解读。
+    MiniMax 是国产大模型，支持长上下文，API 兼容 OpenAI 格式。
+
+    特点：
+    - 支持超长上下文（最高 245k tokens）
+    - API 兼容 OpenAI 格式
+    - 多模态能力
+
+    使用前提：
+    - 需要获取 MiniMax API 密钥：https://www.minimaxi.com/
+    - 设置环境变量 MINIMAX_API_KEY 或在构造函数中传入
+    - 需要设置 Group ID：环境变量 MINIMAX_GROUP_ID 或构造函数传入
+    """
+
+    # MiniMax API 基础 URL
+    BASE_URL = "https://api.minimax.chat/v1"
+
+    def __init__(
+        self,
+        api_key: str = None,
+        group_id: str = None,
+        model: str = "abab6.5s-chat",
+        max_tokens: int = 2000,
+        temperature: float = 0.7
+    ):
+        """
+        初始化 MiniMax 解释器
+
+        参数:
+            api_key (str): MiniMax API 密钥，若为 None 则从环境变量 MINIMAX_API_KEY 获取
+            group_id (str): MiniMax Group ID，若为 None 则从环境变量 MINIMAX_GROUP_ID 获取
+            model (str): 使用的模型名称，默认为 "abab6.5s-chat"
+            max_tokens (int): 生成文本的最大 token 数量，默认为 2000
+            temperature (float): 生成温度，默认为 0.7
+        """
+        self.api_key = api_key or os.getenv("MINIMAX_API_KEY")
+        self.group_id = group_id or os.getenv("MINIMAX_GROUP_ID")
+        self.model = model
+        self.max_tokens = max_tokens
+        self.temperature = temperature
+
+        if not self.api_key:
+            logger.warning("MiniMax API key not provided. Set MINIMAX_API_KEY environment variable.")
+        if not self.group_id:
+            logger.warning("MiniMax Group ID not provided. Set MINIMAX_GROUP_ID environment variable.")
+
+    def _call_api(self, prompt: str) -> str:
+        """调用 MiniMax API（OpenAI 兼容格式）"""
+        try:
+            import openai
+
+            if not self.api_key or not self.group_id:
+                return "Error: MiniMax API key or Group ID not configured"
+
+            client = openai.OpenAI(
+                api_key=self.api_key,
+                base_url=f"{self.BASE_URL}"
+            )
+
+            response = client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": "你是一位专业的生物信息学专家，擅长基因集富集分析。请提供准确、专业的生物学解读。"},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=self.max_tokens,
+                temperature=self.temperature
+            )
+
+            return response.choices[0].message.content
+
+        except ImportError:
+            logger.error("openai package not installed. Run: pip install openai")
+            return "Error: openai package not installed"
+        except Exception as e:
+            logger.error(f"MiniMax API error: {e}")
+            return f"Error: {str(e)}"
+
+    def interpret(self, results: Dict[str, pd.DataFrame], context: str = "") -> Dict[str, str]:
+        """对所有富集分析结果生成 AI 解读"""
+        interpretations = {}
+
+        if not self.api_key or not self.group_id:
+            return interpretations
+
+        for db_name, df in results.items():
+            if len(df) == 0:
+                interpretations[db_name] = "No significant enrichment results found for this database."
+                continue
+
+            top_results = df.head(20)
+            summary_lines = []
+
+            for _, row in top_results.iterrows():
+                summary_lines.append(
+                    f"- {row.get('Term_Name', 'N/A')}: "
+                    f"P-value={row.get('P_Value', 1):.2e}, "
+                    f"Genes={row.get('Gene_Count', 0)}"
+                )
+
+            prompt = f"""Interpret these {db_name} enrichment results. IMPORTANT: Keep total response under 250 words.
+
+Top {len(top_results)} enriched terms:
+{chr(10).join(summary_lines)}
+
+Structure (use this exact format):
+**Main themes**: [1-2 sentences]
+**Pathways**: [key terms, comma-separated]
+**Significance**: [1-2 sentences about biological meaning]
+**Genes**: [notable gene patterns, 1 sentence]"""
+
+            interpretations[db_name] = self._call_api(prompt)
+
+        return interpretations
+
+    def summarize_term(self, term_name: str, gene_list: List[str]) -> str:
+        """对单个富集条目生成简要总结"""
+        if not self.api_key or not self.group_id:
+            return ""
+
+        prompt = f"Briefly describe the biological term '{term_name}' and its significance in 2-3 sentences."
+        return self._call_api(prompt)
+
+
 class MockInterpreter(AIInterpreterBase):
     """
     测试用模拟解释器
@@ -535,7 +930,7 @@ class MockInterpreter(AIInterpreterBase):
 
         为每个数据库生成包含以下内容的模板化解读：
         - 数据库名称和富集条目总数
-        - 前5个最显著的富集条目列表
+        - 前20个最显著的富集条目列表
         - 通用的生物学解读模板
         - 分析建议
 
@@ -553,30 +948,23 @@ class MockInterpreter(AIInterpreterBase):
             if len(df) == 0:
                 continue
 
-            # 提取前5个富集条目名称
-            top_terms = df.head(5)['Term_Name'].tolist()
+            # 提取前20个富集条目名称
+            top_terms = df.head(20)['Term_Name'].tolist()
 
-            # 生成模板化的模拟解读（Markdown格式）
-            interpretation = f"""
-**{db_name} Enrichment Analysis Summary**
+            # 生成简洁的英文模拟解读（~300 words 格式）
+            top_5 = top_terms[:5]
+            interpretation = f"""Mock Interpretation for {db_name} ({len(df)} terms analyzed, top 20 shown to AI)
 
-The gene set shows significant enrichment in {len(df)} terms from the {db_name} database.
+**Main themes**: The gene set shows enrichment in {db_name} database across multiple biological processes.
 
-**Top enriched terms:**
-{chr(10).join([f"- {term}" for term in top_terms])}
+**Pathways**: [see top enriched terms below]
 
-**Biological Interpretation:**
-The enrichment results suggest that the input gene set is involved in several biological processes. 
-The top enriched terms indicate potential functional themes that may be relevant to the biological 
-context of your study.
+**Significance**: Further investigation needed to interpret these findings in biological context.
 
-**Recommendations:**
-1. Validate key findings with literature review
-2. Consider pathway analysis for deeper insights
-3. Cross-reference with other omics data if available
+**Genes**: Multiple overlapping gene sets suggest coordinated biological functions.
 
-*Note: This is a mock interpretation. Enable AI integration for detailed analysis.*
-"""
+Top {min(5, len(top_terms))} enriched terms:
+{chr(10).join([f"- {term}" for term in top_terms[:5]])}"""
 
             interpretations[db_name] = interpretation
 
@@ -629,6 +1017,9 @@ class AIInterpreter:
     BACKENDS = {
         "openai": OpenAIInterpreter,
         "claude": ClaudeInterpreter,
+        "deepseek": DeepSeekInterpreter,
+        "glm": GLMInterpreter,
+        "minimax": MiniMaxInterpreter,
         "ollama": OllamaInterpreter,
         "mock": MockInterpreter
     }
@@ -644,13 +1035,19 @@ class AIInterpreter:
         初始化AI解释器
 
         根据指定的后端名称创建对应的解释器实例。
-        不同后端使用不同的默认模型：OpenAI默认gpt-4，Claude默认claude-3-opus，Ollama默认llama2。
+        不同后端使用不同的默认模型：
+        - OpenAI: gpt-4
+        - Claude: claude-3-opus
+        - DeepSeek: deepseek-chat
+        - GLM: glm-4
+        - MiniMax: abab6.5s-chat
+        - Ollama: llama2
 
         参数:
-            backend (str): AI后端名称，可选 "openai"、"claude"、"ollama"、"mock"，默认为 "openai"
-            api_key (str): API密钥，用于openai和claude后端；若为None则从对应环境变量获取
+            backend (str): AI后端名称，可选 "openai"、"claude"、"deepseek"、"glm"、"minimax"、"ollama"、"mock"，默认为 "openai"
+            api_key (str): API密钥，用于云端后端；若为None则从对应环境变量获取
             model (str): 模型名称，若为None则使用各后端的默认模型
-            **kwargs: 传递给具体后端构造函数的额外参数（如 max_tokens、temperature 等）
+            **kwargs: 传递给具体后端构造函数的额外参数（如 max_tokens、temperature、group_id 等）
 
         异常:
             ValueError: 当指定的后端名称不在支持列表中时抛出
@@ -662,15 +1059,40 @@ class AIInterpreter:
         interpreter_class = self.BACKENDS[backend]
 
         # 根据后端类型，使用适当的参数初始化对应的解释器实例
-        if backend in ["openai", "claude"]:
-            # 云端后端：需要API密钥，使用对应默认模型
+        if backend == "openai":
             self.interpreter = interpreter_class(
                 api_key=api_key,
-                model=model or ("gpt-4" if backend == "openai" else "claude-3-opus-20240229"),
+                model=model or "gpt-4",
+                **kwargs
+            )
+        elif backend == "claude":
+            self.interpreter = interpreter_class(
+                api_key=api_key,
+                model=model or "claude-3-opus-20240229",
+                **kwargs
+            )
+        elif backend == "deepseek":
+            self.interpreter = interpreter_class(
+                api_key=api_key,
+                model=model or "deepseek-chat",
+                **kwargs
+            )
+        elif backend == "glm":
+            self.interpreter = interpreter_class(
+                api_key=api_key,
+                model=model or "glm-4",
+                **kwargs
+            )
+        elif backend == "minimax":
+            # MiniMax 需要 group_id 参数
+            group_id = kwargs.pop("group_id", None)
+            self.interpreter = interpreter_class(
+                api_key=api_key,
+                group_id=group_id,
+                model=model or "abab6.5s-chat",
                 **kwargs
             )
         elif backend == "ollama":
-            # 本地Ollama后端：无需API密钥，默认使用llama2模型
             self.interpreter = interpreter_class(
                 model=model or "llama2",
                 **kwargs
@@ -688,30 +1110,30 @@ class AIInterpreter:
         """
         生成富集分析结果的综合AI解读
 
-        首先调用后端解释器生成各数据库的整体解读，可选地为每个数据库的前5个富集条目
+        首先调用后端解释器生成各数据库的整体解读，可选地为每个数据库的前20个富集条目
         生成单独的条目总结。
 
         参数:
             results (Dict[str, pd.DataFrame]): 富集分析结果字典，键为数据库名称，值为结果DataFrame
             context (str): 额外的分析上下文信息（如实验设计、研究目的等），默认为空字符串
-            include_term_summaries (bool): 是否为每个数据库的前5个富集条目生成单独总结，默认为False
+            include_term_summaries (bool): 是否为每个数据库的前20个富集条目生成单独总结，默认为False
 
         返回:
             Dict[str, Any]: 综合解读结果字典，包含：
                 - 各数据库名称对应的整体解读文本
                 - 若 include_term_summaries=True，还包含 "{数据库名}_term_summaries" 键，
-                  值为该数据库前5个条目的总结字典
+                  值为该数据库前20个条目的总结字典
         """
         # 调用后端解释器生成各数据库的整体解读
         interpretations = self.interpreter.interpret(results, context)
 
-        # 可选：为每个数据库的前5个富集条目生成单独的条目总结
+        # 可选：为每个数据库的前20个富集条目生成单独的条目总结
         if include_term_summaries:
             for db_name, df in results.items():
                 if len(df) > 0:
                     term_summaries = {}
-                    # 遍历前5个富集条目
-                    for _, row in df.head(5).iterrows():
+                    # 遍历前20个富集条目
+                    for _, row in df.head(20).iterrows():
                         term_name = row.get('Term_Name', '')
                         # 从 'Genes' 列提取基因列表（分号分隔）
                         genes = row.get('Genes', '').split(';')
@@ -782,7 +1204,7 @@ def get_available_backends() -> List[str]:
     获取所有可用的AI后端名称列表
 
     返回:
-        List[str]: 支持的后端名称列表，包含 ["openai", "claude", "ollama", "mock"]
+        List[str]: 支持的后端名称列表，包含 ["openai", "claude", "deepseek", "glm", "minimax", "ollama", "mock"]
     """
     return list(AIInterpreter.BACKENDS.keys())
 
@@ -800,17 +1222,26 @@ def create_interpreter(
     默认使用 "mock" 后端，确保在没有AI服务配置的情况下也能正常使用。
 
     参数:
-        backend (str): AI后端名称，可选 "openai"、"claude"、"ollama"、"mock"，默认为 "mock"
-        api_key (str): API密钥，用于openai和claude后端
+        backend (str): AI后端名称，可选 "openai"、"claude"、"deepseek"、"glm"、"minimax"、"ollama"、"mock"，默认为 "mock"
+        api_key (str): API密钥，用于云端后端（openai、claude、deepseek、glm、minimax）
         model (str): 模型名称，若为None则使用各后端的默认模型
-        **kwargs: 传递给具体后端构造函数的额外参数
+        **kwargs: 传递给具体后端构造函数的额外参数（如 minimax 的 group_id）
 
     返回:
         AIInterpreter: 初始化完成的AI解释器实例
 
     使用示例:
-        # 快速创建一个OpenAI解释器
+        # 创建一个OpenAI解释器
         interpreter = create_interpreter(backend="openai", api_key="sk-xxx")
+
+        # 创建一个DeepSeek解释器（国产大模型，性价比高）
+        interpreter = create_interpreter(backend="deepseek", api_key="sk-xxx")
+
+        # 创建一个GLM解释器（智谱AI，中文能力强）
+        interpreter = create_interpreter(backend="glm", api_key="xxx")
+
+        # 创建一个MiniMax解释器（需要group_id）
+        interpreter = create_interpreter(backend="minimax", api_key="xxx", group_id="xxx")
 
         # 创建一个本地Ollama解释器
         interpreter = create_interpreter(backend="ollama", model="mistral")
@@ -819,3 +1250,74 @@ def create_interpreter(
         interpreter = create_interpreter()
     """
     return AIInterpreter(backend=backend, api_key=api_key, model=model, **kwargs)
+
+
+def create_interpreter_from_config(config, backend: str = None) -> AIInterpreter:
+    """
+    从Config对象创建AI解释器实例
+
+    从YAML配置文件加载的Config对象中读取AI后端配置，创建对应的解释器实例。
+    支持多后端密钥配置，优先级：YAML ai_backends > 全局ai_api_key > 环境变量
+
+    参数:
+        config: Config对象，包含ai_backends、ai_backend、ai_api_key等配置
+        backend (str): 指定后端名称，若为None则使用config.ai_backend
+
+    返回:
+        AIInterpreter: 初始化完成的AI解释器实例
+
+    使用示例:
+        # 从YAML加载配置
+        config = Config.from_file("config.yaml")
+
+        # 使用默认后端（config.ai_backend）
+        interpreter = create_interpreter_from_config(config)
+
+        # 指定使用特定后端
+        interpreter = create_interpreter_from_config(config, backend="deepseek")
+
+    YAML配置示例:
+        ai_backend: "openai"  # 默认后端
+        ai_backends:
+          openai:
+            api_key: "sk-xxx"
+            model: "gpt-4"
+          deepseek:
+            api_key: "ds-xxx"
+            model: "deepseek-chat"
+          minimax:
+            api_key: "mm-xxx"
+            group_id: "group-xxx"
+    """
+    # 确定使用的后端
+    backend_name = backend or getattr(config, 'ai_backend', 'mock')
+
+    # 获取API密钥（优先级：YAML ai_backends > 全局ai_api_key > 环境变量）
+    api_key = config.get_ai_api_key(backend_name)
+
+    # 获取模型名称（优先级：YAML ai_backends > 全局ai_model > 后端默认值）
+    default_models = {
+        "openai": "gpt-4",
+        "claude": "claude-3-opus-20240229",
+        "deepseek": "deepseek-chat",
+        "glm": "glm-4",
+        "minimax": "abab6.5s-chat",
+        "ollama": "llama2",
+        "mock": None,
+    }
+    model = config.get_ai_model(backend_name, default_models.get(backend_name))
+
+    # 获取额外参数
+    kwargs = {}
+
+    # base_url（用于Ollama或自定义API端点）
+    base_url = config.get_ai_base_url(backend_name)
+    if base_url:
+        kwargs['base_url'] = base_url
+
+    # group_id（用于MiniMax）
+    group_id = config.get_ai_group_id(backend_name)
+    if group_id:
+        kwargs['group_id'] = group_id
+
+    return AIInterpreter(backend=backend_name, api_key=api_key, model=model, **kwargs)

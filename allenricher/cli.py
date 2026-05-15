@@ -28,7 +28,7 @@ from allenricher.core.enrichment import EnrichmentAnalyzer
 from allenricher.database.manager import DatabaseManager
 from allenricher.visualization.plotter import Plotter
 from allenricher.report.generator import ReportGenerator
-from allenricher.ai.interpreter import create_interpreter
+from allenricher.ai.interpreter import create_interpreter, create_interpreter_from_config
 
 # 配置日志输出格式
 logging.basicConfig(
@@ -96,10 +96,13 @@ Examples:
     analyze_parser.add_argument('-j', '--jobs', type=int, default=1, help='Number of parallel jobs')   # 并行任务数
     analyze_parser.add_argument('--no-plot', action='store_true', help='Skip plot generation')          # 跳过可视化图表生成
     analyze_parser.add_argument('--no-report', action='store_true', help='Skip report generation')      # 跳过 HTML 报告生成
-    analyze_parser.add_argument('--ai', choices=['openai', 'claude', 'ollama', 'mock'], help='AI backend for interpretation')  # AI 解读后端选择
-    analyze_parser.add_argument('--ai-key', help='AI API key')                                          # AI 服务 API 密钥
-    analyze_parser.add_argument('--ai-model', help='AI model name')                                     # AI 模型名称
+    analyze_parser.add_argument('--only-significant', action='store_true', help='Only output significant terms (filter by p/q cutoff)')  # 仅输出显著条目（按 p/q 阈值过滤，默认不启用，输出全部条目）
+    analyze_parser.add_argument('--ai', choices=['openai', 'claude', 'deepseek', 'glm', 'minimax', 'ollama', 'mock'],
+                                help='AI backend for interpretation (override YAML config)')  # AI 解读后端选择
+    analyze_parser.add_argument('--ai-key', help='AI API key (override YAML config, optional if set in YAML)')  # AI 服务 API 密钥
+    analyze_parser.add_argument('--ai-model', help='AI model name (override YAML config)')  # AI 模型名称
     analyze_parser.add_argument('--config', help='Configuration file (YAML/JSON)')                      # 外部配置文件路径
+    analyze_parser.add_argument('--database-dir', help='Database directory')                       # 数据库目录路径
     analyze_parser.add_argument('--verbose', action='store_true', help='Enable verbose (DEBUG) logging')  # 启用详细日志输出
     
     # ==================== download 子命令 ====================
@@ -108,6 +111,9 @@ Examples:
     download_parser.add_argument('-d', '--databases', required=True, help='Comma-separated databases to download')  # 要下载的数据库名称（必需）
     download_parser.add_argument('-s', '--species', default='hsa', help='Species code')                # 物种代码
     download_parser.add_argument('--database-dir', default='./database', help='Database directory')     # 数据库存储目录
+    download_parser.add_argument('--workers', type=int, default=4, help='Multi-thread download workers (default: 4)')  # 多线程下载数
+    download_parser.add_argument('--no-multi-thread', action='store_true', help='Disable multi-thread download')       # 禁用多线程
+    download_parser.add_argument('--no-verify', action='store_true', help='Skip post-download integrity check')        # 跳过完整性校验
     
     # ==================== build 子命令 ====================
     # 为指定物种构建本地富集分析数据库，需要提供物种代码和分类学 ID
@@ -196,6 +202,9 @@ def cmd_analyze(args) -> int:
                 config.output_dir = args.output
             if args.background:
                 config.background_file = args.background
+            # CLI 标志覆盖 output_all（默认 True，--only-significant 时设为 False）
+            if args.only_significant:
+                config.output_all = False
         else:
             config = Config(
                 input_file=args.input,
@@ -208,7 +217,8 @@ def cmd_analyze(args) -> int:
                 qvalue_cutoff=args.qvalue,
                 min_genes=args.min_genes,
                 n_jobs=args.jobs,
-                background_file=args.background
+                background_file=args.background,
+                output_all=not args.only_significant  # 默认输出全部条目（与v1一致）
             )
         
         # ---- 第2步：验证配置 ----
@@ -236,8 +246,9 @@ def cmd_analyze(args) -> int:
         
         # ---- 第5步：加载富集分析数据库 ----
         # 根据配置中指定的数据库名称加载对应的数据库数据
-        logger.info(f"Loading databases: {config.databases}")
-        db_manager = DatabaseManager(config.database_dir, config.species)
+        db_dir = args.database_dir if args.database_dir else config.database_dir
+        logger.info(f"Loading databases: {config.databases} from {db_dir}")
+        db_manager = DatabaseManager(db_dir, config.species)
         db_manager.load_databases(config.databases)
         
         # ---- 第6步：确定背景基因集 ----
@@ -272,43 +283,74 @@ def cmd_analyze(args) -> int:
             return 0  # 正常退出，不报错
         
         # ---- 第8步：保存分析结果 ----
-        # 将富集分析结果保存到输出目录
+        # 将富集分析结果保存到输出目录（保存全部条目）
         logger.info("Saving results...")
         analyzer.save_results(str(output_dir))
         
+        # ---- 第8.5步：筛选显著结果用于绘图和报告 ----
+        # 按 p/q 阈值过滤，只保留显著富集的条目用于后续可视化和报告
+        significant_results = {}
+        for db_name, df in results.items():
+            if len(df) == 0:
+                continue
+            filtered = df[
+                (df['P_Value'] <= config.pvalue_cutoff) &
+                (df['Adjusted_P_Value'] <= config.qvalue_cutoff)
+            ].copy()
+            if len(filtered) > 0:
+                significant_results[db_name] = filtered
+        
+        sig_total = sum(len(df) for df in significant_results.values())
+        all_total = sum(len(df) for df in results.values())
+        logger.info(f"Significant results: {sig_total}/{all_total} terms (p<={config.pvalue_cutoff}, q<={config.qvalue_cutoff})")
+        
         # ---- 第9步：生成可视化图表 ----
-        # 除非用户指定 --no-plot，否则为每个数据库的结果生成图表
-        if not args.no_plot:
-            logger.info("Generating plots...")
+        # 除非用户指定 --no-plot，否则为每个数据库的显著结果生成图表
+        if not args.no_plot and significant_results:
+            logger.info("Generating plots (significant results only)...")
             plotter = Plotter(str(output_dir / "plots"), config)
-            for db_name, df in results.items():
+            for db_name, df in significant_results.items():
                 if len(df) > 0:
                     plotter.plot_all(df, db_name, top_n=config.top_terms)
         
         # ---- 第10步：生成 AI 解读报告 ----
-        # 如果用户指定了 AI 后端，则调用 AI 模型对分析结果进行智能解读
+        # 如果用户指定了 AI 后端（命令行或YAML配置），则调用 AI 模型对分析结果进行智能解读
         ai_interpretation = None
-        if args.ai:
-            logger.info(f"Generating AI interpretation using {args.ai}...")
-            interpreter = create_interpreter(
-                backend=args.ai,
-                api_key=args.ai_key,
-                model=args.ai_model
-            )
-            ai_interpretation = interpreter.interpret_results(results)
-            
+
+        # 确定是否启用AI解读：命令行 --ai > YAML ai_interpretation
+        ai_enabled = args.ai or (config.ai_interpretation and config.ai_backend)
+
+        if ai_enabled and significant_results:
+            # 确定使用的后端：命令行 --ai > YAML ai_backend
+            ai_backend = args.ai or config.ai_backend
+
+            logger.info(f"Generating AI interpretation using {ai_backend}...")
+
+            # 如果命令行提供了 --ai-key 或 --ai-model，使用传统方式（命令行参数优先）
+            if args.ai_key or (args.ai_model and not config.ai_backends):
+                interpreter = create_interpreter(
+                    backend=ai_backend,
+                    api_key=args.ai_key,
+                    model=args.ai_model
+                )
+            else:
+                # 从Config对象创建解释器（支持YAML ai_backends配置）
+                interpreter = create_interpreter_from_config(config, backend=ai_backend)
+
+            ai_interpretation = interpreter.interpret_results(significant_results)
+
             # 将 AI 解读结果保存为 JSON 文件
             import json
             with open(output_dir / "ai_interpretation.json", 'w') as f:
                 json.dump(ai_interpretation, f, indent=2)
         
         # ---- 第11步：生成 HTML 综合报告 ----
-        # 除非用户指定 --no-report，否则生成包含结果表格、图表和 AI 解读的 HTML 报告
-        if not args.no_report:
-            logger.info("Generating HTML report...")
+        # 除非用户指定 --no-report，否则基于显著结果生成 HTML 报告
+        if not args.no_report and significant_results:
+            logger.info("Generating HTML report (significant results only)...")
             report_gen = ReportGenerator(str(output_dir), config)
             report_gen.generate(
-                results,
+                significant_results,
                 str(output_dir / "report.html"),
                 gene_list=list(gene_set),
                 ai_interpretation=ai_interpretation
@@ -352,79 +394,94 @@ def cmd_analyze(args) -> int:
 
 
 def cmd_download(args) -> int:
-    """下载数据库
+    """下载全体物种通用数据库
 
-    从远程数据源下载指定的富集分析数据库（如 GO、KEGG 等）到本地目录。
-    支持一次下载多个数据库（通过逗号分隔指定）。
+    下载步骤（对应 v1 的 update_GOdb / update_ReactomeDB）：
+    - go:    下载 gene2go.gz + gene_info.gz + go-basic.obo → database/basic/go/GO{date}/
+    - reactome: 下载 NCBI2Reactome + gene_info.gz → database/basic/reactome/Reactome{date}/
+    - do:    下载 Jensen Lab disease TSV → database/basic/do/
+    - disgenet: 下载 DisGeNET TSV → database/basic/disgenet/
+
+    下载的是全体物种的通用原始数据，不区分物种。
+    后续用 build 命令从中提取指定物种的数据。
 
     Args:
-        args: 命令行参数命名空间，包含 databases、species、database_dir 等参数
+        args: 命令行参数命名空间
 
     Returns:
         int: 0 表示下载成功
     """
-    logger.info(f"Downloading databases: {args.databases}")
-    
-    # 初始化数据库管理器，指定存储目录和目标物种
-    db_manager = DatabaseManager(args.database_dir, args.species)
-    databases = args.databases.split(',')  # 将逗号分隔的数据库名称拆分为列表
-    
-    # 逐个下载每个数据库
-    for db_name in databases:
-        logger.info(f"Downloading {db_name}...")
-        db_manager.load_database(db_name)      # 加载数据库配置
-        db = db_manager.databases[db_name]
-        db.download()                           # 执行实际的下载操作
-    
-    logger.info("Download complete!")
-    return 0
+    from allenricher.database.downloader import DataDownloader
+
+    databases = [d.strip().lower() for d in args.databases.split(',')]
+    download_dir = args.database_dir or "./database"
+
+    logger.info(f"下载全体物种通用数据 → {download_dir}")
+    logger.info(f"数据库类型: {', '.join(databases)}")
+
+    downloader = DataDownloader(
+        root_dir=download_dir,
+        max_workers=getattr(args, 'workers', 4),
+        use_multi_thread=not getattr(args, 'no_multi_thread', False),
+        verify_integrity=not getattr(args, 'no_verify', False),
+    )
+
+    try:
+        downloaded = downloader.download_all(databases)
+        for db_type, path in downloaded.items():
+            logger.info(f"  ✅ {db_type}: {path}")
+        logger.info("全部下载完成！")
+        logger.info("")
+        logger.info("下一步：构建指定物种的数据库")
+        logger.info("  allenricher build -s hsa -t 9606 -d GO,Reactome")
+        return 0
+    except Exception as e:
+        logger.error(f"下载失败: {e}")
+        return 1
 
 
 def cmd_build(args) -> int:
-    """构建物种数据库
+    """构建指定物种的数据库
 
-    为指定物种构建本地富集分析数据库（复刻v1.0的make_speciesDB功能）。
-    需要提供物种代码和对应的 NCBI 分类学 ID（Taxonomy ID），
-    以及 NCBI gene_info.gz 原始数据文件。
-
-    构建流程：
-      1. 解析用户指定的数据库列表
-      2. 初始化 DatabaseManager
-      3. 调用 build_databases 方法，依次构建各数据库
-      4. 构建完成后数据库可直接用于富集分析
+    构建步骤（对应 v1 的 make_speciesDB）：
+    从 database/basic/ 中的全体物种通用数据中，
+    提取指定物种的数据，格式化输出到 database/organism/v{date}/{species}/。
 
     Args:
-        args: 命令行参数命名空间，包含 species、taxonomy、database_dir、databases、gene_info 等参数
+        args: 命令行参数命名空间
 
     Returns:
         int: 0 表示构建成功
     """
-    from allenricher.database.manager import DatabaseManager
+    from allenricher.database.builder import DatabaseBuilder
 
-    # 第1步：解析数据库列表
     databases = [d.strip().upper() for d in args.databases.split(',')]
-    logger.info(f"Building databases for {args.species} (TaxID: {args.taxonomy})")
-    logger.info(f"Databases to build: {', '.join(databases)}")
+    build_dir = args.database_dir or "./database"
 
-    # 第2步：初始化数据库管理器
-    db_manager = DatabaseManager(args.database_dir, args.species)
+    logger.info(f"构建物种专属数据库: {args.species} (TaxID: {args.taxonomy})")
+    logger.info(f"数据库根目录: {build_dir}")
+    logger.info(f"要构建的数据库: {', '.join(databases)}")
 
-    # 第3步：执行一键构建
+    builder = DatabaseBuilder(root_dir=build_dir)
+
     try:
-        db_manager.build_databases(
+        outdir = builder.build_species_db(
+            species=args.species,
             taxid=args.taxonomy,
-            databases=databases,
-            gene_info_file=args.gene_info
+            databases=databases
         )
-        logger.info("Database build complete!")
+        logger.info(f"构建完成！输出目录: {outdir}")
+        logger.info("")
+        logger.info("下一步：运行富集分析")
+        logger.info(f"  allenricher analyze -i genes.txt -s {args.species} --database-dir {outdir}")
         return 0
     except FileNotFoundError as e:
-        logger.error(f"Required data file not found: {e}")
-        logger.error("Please ensure NCBI gene_info.gz and other source files are available.")
-        logger.error("You can download them from: https://ftp.ncbi.nlm.nih.gov/gene/DATA/")
+        logger.error(f"基础数据未找到: {e}")
+        logger.info("请先运行 download 下载基础数据：")
+        logger.info("  allenricher download -d go,reactome")
         return 1
     except Exception as e:
-        logger.error(f"Database build failed: {e}")
+        logger.error(f"构建失败: {e}")
         return 1
 
 
@@ -475,11 +532,9 @@ def cmd_list(args) -> int:
         
     elif args.resource == 'databases':
         # 列出支持的数据库类型
-        from allenricher.database.manager import DatabaseManager
-        
         print("\nSupported Databases:")
         print("-" * 50)
-        for db_name in DatabaseManager.DATABASE_CLASSES.keys():
+        for db_name in ['GO', 'KEGG', 'DO', 'Reactome', 'DisGeNET']:
             print(f"  - {db_name}")
     
     return 0

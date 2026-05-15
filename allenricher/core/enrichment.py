@@ -1373,10 +1373,9 @@ class EnrichmentAnalyzer:
         """
         根据配置参数过滤富集分析结果
 
-        过滤条件：
-        1. 校正后 p 值（adjusted_pvalue）<= qvalue_cutoff
-        2. 命中基因数（gene_count）>= min_genes
-        3. 命中基因数（gene_count）<= max_genes
+        过滤条件（取决于 output_all 配置）：
+        - output_all=True（默认，与v1一致）: 仅过滤不满足 min_genes/max_genes 的条目，保留全部 p 值
+        - output_all=False: 额外过滤 adjusted_pvalue > qvalue_cutoff 的条目
 
         参数:
             results: 待过滤的富集分析结果列表
@@ -1385,22 +1384,23 @@ class EnrichmentAnalyzer:
             List[EnrichmentResult]: 过滤后的结果列表
         """
         filtered = []
-        
+
         for result in results:
-            # 检查校正后 p 值是否超过阈值
-            if result.adjusted_pvalue > self.config.qvalue_cutoff:
-                continue
-            
+            # 仅当 output_all=False 时才按 q 值过滤
+            if not self.config.output_all:
+                if result.adjusted_pvalue > self.config.qvalue_cutoff:
+                    continue
+
             # 检查命中基因数是否低于最小值
             if result.gene_count < self.config.min_genes:
                 continue
-            
+
             # 检查命中基因数是否超过最大值（max_genes 为 inf 时表示无限制）
             if self.config.max_genes != float('inf') and result.gene_count > self.config.max_genes:
                 continue
-            
+
             filtered.append(result)
-        
+
         return filtered
     
     def analyze_database(
@@ -1491,8 +1491,8 @@ class EnrichmentAnalyzer:
             
             # 记录命中的基因（用于后续计算 gene_total）
             genes_with_hits.update(genes_in_term)
-            # 计算背景中属于该条目的基因数（条目基因与用户背景基因集的交集）
-            num_in_C = len(term_genes & background_set)
+            # num_in_C: 条目基因总数（与 v1 一致，不是与背景的交集）
+            num_in_C = len(term_genes)
             
             term_stats[term_id] = {
                 "num_in_O": num_in_O,  # 观察到的命中基因数
