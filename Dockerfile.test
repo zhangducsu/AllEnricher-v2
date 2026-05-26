@@ -1,0 +1,25 @@
+# AllEnricher v2 测试 Docker Image
+FROM my-bio-env:latest
+
+USER root
+
+# 安装 Python
+RUN apt-get update && apt-get install -y \
+    python3 \
+    python3-pip \
+    python3-venv \
+    && rm -rf /var/lib/apt/lists/*
+
+# 安装必要的 Python 包
+RUN pip3 install --no-cache-dir --break-system-packages \
+    numpy \
+    pandas \
+    scipy \
+    statsmodels \
+    tqdm
+
+# 设置工作目录
+WORKDIR /workspace
+
+# 默认命令
+CMD ["/bin/bash"]

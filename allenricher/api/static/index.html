@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AllEnricher - 基因富集分析</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+        
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+        
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+        
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+        
+        .card {
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            margin-bottom: 20px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+        }
+        
+        .card h2 {
+            color: #333;
+            margin-bottom: 20px;
+            font-size: 1.3em;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #555;
+            font-weight: 500;
+        }
+        
+        textarea, select, input[type="number"], input[type="text"] {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+        
+        textarea:focus, select:focus, input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        textarea {
+            min-height: 150px;
+            resize: vertical;
+            font-family: monospace;
+        }
+        
+        .row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        
+        @media (max-width: 600px) {
+            .row {
+                grid-template-columns: 1fr;
+            }
+        }
+        
+        .checkbox-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+        
+        .checkbox-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .checkbox-item input[type="checkbox"] {
+            width: auto;
+        }
+        
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 15px 40px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            display: inline-block;
+        }
+        
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
+        }
+        
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .btn-container {
+            text-align: center;
+            margin-top: 30px;
+        }
+        
+        .status {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 8px;
+            display: none;
+        }
+        
+        .status.pending {
+            display: block;
+            background: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeaa7;
+        }
+        
+        .status.running {
+            display: block;
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+        
+        .status.completed {
+            display: block;
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        
+        .status.error {
+            display: block;
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background: #e0e0e0;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-top: 10px;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            transition: width 0.3s;
+            width: 0%;
+        }
+        
+        .results {
+            margin-top: 30px;
+            display: none;
+        }
+        
+        .results.show {
+            display: block;
+        }
+        
+        .database-tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #e0e0e0;
+        }
+        
+        .tab-btn {
+            padding: 10px 20px;
+            border: none;
+            background: none;
+            cursor: pointer;
+            font-size: 14px;
+            color: #666;
+            border-bottom: 2px solid transparent;
+            margin-bottom: -2px;
+        }
+        
+        .tab-btn.active {
+            color: #667eea;
+            border-bottom-color: #667eea;
+            font-weight: 600;
+        }
+        
+        .tab-content {
+            display: none;
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+        
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        
+        th {
+            background: #f8f9fa;
+            font-weight: 600;
+            color: #555;
+        }
+        
+        tr:hover {
+            background: #f8f9fa;
+        }
+        
+        .download-links {
+            margin-top: 20px;
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+        
+        .download-links a {
+            color: #667eea;
+            text-decoration: none;
+            font-weight: 500;
+        }
+        
+        .download-links a:hover {
+            text-decoration: underline;
+        }
+        
+        .info-box {
+            background: #f8f9fa;
+            border-left: 4px solid #667eea;
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 0 8px 8px 0;
+        }
+        
+        .info-box h4 {
+            color: #333;
+            margin-bottom: 8px;
+        }
+        
+        .info-box p {
+            color: #666;
+            font-size: 13px;
+            line-height: 1.6;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>AllEnricher</h1>
+            <p>基因集富集分析工具</p>
+        </div>
+        
+        <div class="card">
+            <div class="info-box">
+                <h4>使用说明</h4>
+                <p>输入基因符号列表（每行一个），选择物种和数据库，点击"开始分析"。分析完成后可查看结果表格、下载报告和图表。</p>
+            </div>
+            
+            <form id="analyzeForm">
+                <div class="form-group">
+                    <label for="genes">基因列表 *</label>
+                    <textarea id="genes" name="genes" placeholder="BRCA1&#10;TP53&#10;EGFR&#10;MYC&#10;KRAS" required></textarea>
+                </div>
+                
+                <div class="row">
+                    <div class="form-group">
+                        <label for="species">物种</label>
+                        <select id="species" name="species">
+                            <option value="hsa">人类 (Homo sapiens)</option>
+                            <option value="mmu">小鼠 (Mus musculus)</option>
+                            <option value="rno">大鼠 (Rattus norvegicus)</option>
+                            <option value="dre">斑马鱼 (Danio rerio)</option>
+                            <option value="dme">果蝇 (Drosophila melanogaster)</option>
+                            <option value="cel">线虫 (Caenorhabditis elegans)</option>
+                            <option value="sce">酿酒酵母 (Saccharomyces cerevisiae)</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>分析数据库</label>
+                        <div class="checkbox-group">
+                            <div class="checkbox-item">
+                                <input type="checkbox" id="db_go" name="databases" value="GO" checked>
+                                <label for="db_go">GO</label>
+                            </div>
+                            <div class="checkbox-item">
+                                <input type="checkbox" id="db_kegg" name="databases" value="KEGG" checked>
+                                <label for="db_kegg">KEGG</label>
+                            </div>
+                            <div class="checkbox-item">
+                                <input type="checkbox" id="db_reactome" name="databases" value="Reactome">
+                                <label for="db_reactome">Reactome</label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="row">
+                    <div class="form-group">
+                        <label for="method">分析方法</label>
+                        <select id="method" name="method">
+                            <option value="fisher">Fisher 精确检验</option>
+                            <option value="hypergeometric">超几何检验</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="correction">多重检验校正</label>
+                        <select id="correction" name="correction">
+                            <option value="BH">BH (Benjamini-Hochberg)</option>
+                            <option value="BY">BY (Benjamini-Yekutieli)</option>
+                            <option value="bonferroni">Bonferroni</option>
+                            <option value="holm">Holm</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div class="row">
+                    <div class="form-group">
+                        <label for="pvalue_cutoff">P 值阈值</label>
+                        <input type="number" id="pvalue_cutoff" name="pvalue_cutoff" value="0.05" min="0" max="1" step="0.01">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="qvalue_cutoff">Q 值阈值</label>
+                        <input type="number" id="qvalue_cutoff" name="qvalue_cutoff" value="0.05" min="0" max="1" step="0.01">
+                    </div>
+                </div>
+                
+                <div class="btn-container">
+                    <button type="submit" class="btn" id="submitBtn">开始分析</button>
+                </div>
+            </form>
+            
+            <div id="status" class="status">
+                <div id="statusText"></div>
+                <div class="progress-bar">
+                    <div id="progressFill" class="progress-fill"></div>
+                </div>
+            </div>
+        </div>
+        
+        <div id="results" class="card results">
+            <h2>分析结果</h2>
+            <div class="database-tabs" id="dbTabs"></div>
+            <div id="tabContents"></div>
+            <div class="download-links" id="downloadLinks"></div>
+        </div>
+    </div>
+    
+    <script>
+        let currentJobId = null;
+        let statusInterval = null;
+        
+        document.getElementById('analyzeForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const submitBtn = document.getElementById('submitBtn');
+            submitBtn.disabled = true;
+            submitBtn.textContent = '提交中...';
+            
+            // 收集表单数据
+            const genes = document.getElementById('genes').value
+                .split('\n')
+                .map(g => g.trim())
+                .filter(g => g.length > 0);
+            
+            const databases = Array.from(document.querySelectorAll('input[name="databases"]:checked'))
+                .map(cb => cb.value);
+            
+            if (databases.length === 0) {
+                alert('请至少选择一个数据库');
+                submitBtn.disabled = false;
+                submitBtn.textContent = '开始分析';
+                return;
+            }
+            
+            const requestData = {
+                genes: genes,
+                species: document.getElementById('species').value,
+                databases: databases,
+                method: document.getElementById('method').value,
+                correction: document.getElementById('correction').value,
+                pvalue_cutoff: parseFloat(document.getElementById('pvalue_cutoff').value),
+                qvalue_cutoff: parseFloat(document.getElementById('qvalue_cutoff').value),
+                min_genes: 2
+            };
+            
+            try {
+                const response = await fetch('/api/analyze', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(requestData)
+                });
+                
+                const data = await response.json();
+                currentJobId = data.job_id;
+                
+                showStatus('pending', '分析已提交，任务ID: ' + currentJobId);
+                startStatusPolling();
+                
+            } catch (error) {
+                showStatus('error', '提交失败: ' + error.message);
+                submitBtn.disabled = false;
+                submitBtn.textContent = '开始分析';
+            }
+        });
+        
+        function showStatus(status, message, progress = 0) {
+            const statusDiv = document.getElementById('status');
+            const statusText = document.getElementById('statusText');
+            const progressFill = document.getElementById('progressFill');
+            
+            statusDiv.className = 'status ' + status;
+            statusText.textContent = message;
+            progressFill.style.width = (progress * 100) + '%';
+        }
+        
+        function startStatusPolling() {
+            if (statusInterval) {
+                clearInterval(statusInterval);
+            }
+            
+            statusInterval = setInterval(async () => {
+                if (!currentJobId) return;
+                
+                try {
+                    const response = await fetch(`/api/status/${currentJobId}`);
+                    const data = await response.json();
+                    
+                    showStatus(data.status, getStatusMessage(data.status), data.progress);
+                    
+                    if (data.status === 'completed') {
+                        clearInterval(statusInterval);
+                        document.getElementById('submitBtn').disabled = false;
+                        document.getElementById('submitBtn').textContent = '开始分析';
+                        loadResults(currentJobId);
+                    } else if (data.status === 'failed') {
+                        clearInterval(statusInterval);
+                        showStatus('error', '分析失败: ' + (data.error || '未知错误'));
+                        document.getElementById('submitBtn').disabled = false;
+                        document.getElementById('submitBtn').textContent = '开始分析';
+                    }
+                } catch (error) {
+                    console.error('状态查询失败:', error);
+                }
+            }, 1000);
+        }
+        
+        function getStatusMessage(status) {
+            const messages = {
+                'pending': '等待执行...',
+                'running': '正在分析...',
+                'completed': '分析完成',
+                'failed': '分析失败'
+            };
+            return messages[status] || status;
+        }
+        
+        async function loadResults(jobId) {
+            try {
+                const response = await fetch(`/api/results/${jobId}?format=json`);
+                const data = await response.json();
+                
+                displayResults(data, jobId);
+            } catch (error) {
+                console.error('加载结果失败:', error);
+            }
+        }
+        
+        function displayResults(data, jobId) {
+            const resultsDiv = document.getElementById('results');
+            const tabsDiv = document.getElementById('dbTabs');
+            const contentsDiv = document.getElementById('tabContents');
+            const downloadDiv = document.getElementById('downloadLinks');
+            
+            resultsDiv.classList.add('show');
+            
+            // 创建数据库标签页
+            const databases = Object.keys(data);
+            tabsDiv.innerHTML = '';
+            contentsDiv.innerHTML = '';
+            
+            databases.forEach((db, index) => {
+                // 创建标签按钮
+                const tabBtn = document.createElement('button');
+                tabBtn.className = 'tab-btn' + (index === 0 ? ' active' : '');
+                tabBtn.textContent = db;
+                tabBtn.onclick = () => switchTab(db);
+                tabsDiv.appendChild(tabBtn);
+                
+                // 创建内容区域
+                const contentDiv = document.createElement('div');
+                contentDiv.className = 'tab-content' + (index === 0 ? ' active' : '');
+                contentDiv.id = 'tab-' + db;
+                contentDiv.innerHTML = createResultsTable(data[db]);
+                contentsDiv.appendChild(contentDiv);
+            });
+            
+            // 下载链接
+            downloadDiv.innerHTML = `
+                <a href="/api/results/${jobId}?format=tsv" download>下载 TSV 结果</a>
+                <a href="/api/results/${jobId}/report" download>下载 HTML 报告</a>
+            `;
+            
+            // 滚动到结果区域
+            resultsDiv.scrollIntoView({ behavior: 'smooth' });
+        }
+        
+        function switchTab(db) {
+            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+            
+            event.target.classList.add('active');
+            document.getElementById('tab-' + db).classList.add('active');
+        }
+        
+        function createResultsTable(results) {
+            if (!results || results.length === 0) {
+                return '<p style="text-align:center;color:#666;padding:40px;">无显著富集结果</p>';
+            }
+            
+            const columns = Object.keys(results[0]);
+            const displayColumns = columns.filter(c => c !== 'Term_URL' && c !== 'Genes');
+            
+            let html = '<div style="overflow-x:auto;"><table><thead><tr>';
+            displayColumns.forEach(col => {
+                html += `<th>${col.replace(/_/g, ' ')}</th>`;
+            });
+            html += '</tr></thead><tbody>';
+            
+            results.slice(0, 50).forEach(row => {
+                html += '<tr>';
+                displayColumns.forEach(col => {
+                    let value = row[col];
+                    if (typeof value === 'number') {
+                        if (col.includes('P_Value') || col.includes('Q_Value')) {
+                            value = value.toExponential(2);
+                        } else {
+                            value = value.toFixed(3);
+                        }
+                    }
+                    html += `<td>${value !== null && value !== undefined ? value : ''}</td>`;
+                });
+                html += '</tr>';
+            });
+            
+            html += '</tbody></table></div>';
+            
+            if (results.length > 50) {
+                html += `<p style="text-align:center;color:#666;margin-top:15px;">显示前 50 条，共 ${results.length} 条结果</p>`;
+            }
+            
+            return html;
+        }
+    </script>
+</body>
+</html>

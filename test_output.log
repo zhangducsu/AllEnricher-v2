@@ -1,0 +1,44 @@
+﻿============================= test session starts =============================
+platform win32 -- Python 3.10.11, pytest-9.0.3, pluggy-1.6.0
+rootdir: F:\OneDrive\Documents\TraeSOLO\AllEnricher\AllEnricher-v2
+configfile: pyproject.toml
+plugins: anyio-4.13.0
+collected 257 items / 1 skipped
+
+tests\test_ai_integration.py .......................................     [ 15%]
+tests\test_ai_interpreter.py ........................................... [ 31%]
+..........................                                               [ 42%]
+tests\test_cli.py ...............                                        [ 47%]
+tests\test_database.py ..............                                    [ 53%]
+tests\test_download.py ............................                      [ 64%]
+tests\test_enrichment.py ...............                                 [ 70%]
+tests\test_enrichment_extended.py ...................................... [ 84%]
+............                                                             [ 89%]
+tests\test_phase5.py FFFFF............FF                                 [ 96%]
+tests\test_visualization.py ........                                     [100%]
+
+================================== FAILURES ===================================
+E   ModuleNotFoundError: No module named 'fastapi'
+F:\OneDrive\Documents\TraeSOLO\AllEnricher\AllEnricher-v2\allenricher\api\server.py:37: ModuleNotFoundError: No module named 'fastapi'
+E   ModuleNotFoundError: No module named 'fastapi'
+F:\OneDrive\Documents\TraeSOLO\AllEnricher\AllEnricher-v2\allenricher\api\server.py:37: ModuleNotFoundError: No module named 'fastapi'
+E   ModuleNotFoundError: No module named 'fastapi'
+F:\OneDrive\Documents\TraeSOLO\AllEnricher\AllEnricher-v2\allenricher\api\server.py:37: ModuleNotFoundError: No module named 'fastapi'
+E   ModuleNotFoundError: No module named 'fastapi'
+F:\OneDrive\Documents\TraeSOLO\AllEnricher\AllEnricher-v2\allenricher\api\server.py:37: ModuleNotFoundError: No module named 'fastapi'
+E   ModuleNotFoundError: No module named 'fastapi'
+F:\OneDrive\Documents\TraeSOLO\AllEnricher\AllEnricher-v2\allenricher\api\server.py:37: ModuleNotFoundError: No module named 'fastapi'
+E   ModuleNotFoundError: No module named 'fastapi'
+F:\OneDrive\Documents\TraeSOLO\AllEnricher\AllEnricher-v2\allenricher\api\server.py:37: ModuleNotFoundError: No module named 'fastapi'
+E   ModuleNotFoundError: No module named 'fastapi'
+F:\OneDrive\Documents\TraeSOLO\AllEnricher\AllEnricher-v2\allenricher\api\server.py:37: ModuleNotFoundError: No module named 'fastapi'
+=========================== short test summary info ===========================
+SKIPPED [1] tests\test_api_server.py:36: could not import 'fastapi': No module named 'fastapi'
+FAILED tests/test_phase5.py::TestAPIEndpoints::test_app_creation - ModuleNotFoundError: No module named 'fastapi'
+FAILED tests/test_phase5.py::TestAPIEndpoints::test_root_endpoint - ModuleNotFoundError: No module named 'fastapi'
+FAILED tests/test_phase5.py::TestAPIEndpoints::test_species_endpoint - ModuleNotFoundError: No module named 'fastapi'
+FAILED tests/test_phase5.py::TestAPIEndpoints::test_databases_endpoint - ModuleNotFoundError: No module named 'fastapi'
+FAILED tests/test_phase5.py::TestAPIEndpoints::test_status_not_found - ModuleNotFoundError: No module named 'fastapi'
+FAILED tests/test_phase5.py::TestModels::test_enrichment_request - ModuleNotFoundError: No module named 'fastapi'
+FAILED tests/test_phase5.py::TestModels::test_enrichment_response - ModuleNotFoundError: No module named 'fastapi'
+================== 7 failed, 250 passed, 1 skipped in 48.65s ==================

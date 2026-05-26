@@ -952,7 +952,7 @@ class MockInterpreter(AIInterpreterBase):
             top_terms = df.head(20)['Term_Name'].tolist()
 
             # 生成简洁的英文模拟解读（~300 words 格式）
-            top_5 = top_terms[:5]
+            # 展示所有 top_terms 条目名称
             interpretation = f"""Mock Interpretation for {db_name} ({len(df)} terms analyzed, top 20 shown to AI)
 
 **Main themes**: The gene set shows enrichment in {db_name} database across multiple biological processes.
@@ -963,8 +963,8 @@ class MockInterpreter(AIInterpreterBase):
 
 **Genes**: Multiple overlapping gene sets suggest coordinated biological functions.
 
-Top {min(5, len(top_terms))} enriched terms:
-{chr(10).join([f"- {term}" for term in top_terms[:5]])}"""
+Top {len(top_terms)} enriched terms:
+{chr(10).join([f"- {term}" for term in top_terms])}"""
 
             interpretations[db_name] = interpretation
 

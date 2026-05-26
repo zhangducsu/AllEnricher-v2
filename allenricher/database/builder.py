@@ -42,6 +42,7 @@ from .parsers.reactome import ReactomeParser
 from .parsers.do import DOParser
 from .parsers.disgenet import DisGeNETParser
 from .downloader import DataDownloader
+from .gmt_generator import GMTGenerator
 
 
 class DatabaseBuilder:
@@ -166,6 +167,8 @@ class DatabaseBuilder:
                 print(f"    ❌ {fname} - 未生成")
 
         print(f"\nGO 数据库构建完成 → {outdir}")
+        # 自动生成 GMT 文件
+        self.generate_gmt_files(species, str(outdir))
         return str(outdir)
 
     # ============================
@@ -253,6 +256,8 @@ class DatabaseBuilder:
                 print(f"    ❌ {fname} - 未生成")
 
         print(f"\nReactome 数据库构建完成 → {outdir}")
+        # 自动生成 GMT 文件
+        self.generate_gmt_files(species, str(outdir))
         return str(outdir)
 
     # ============================
@@ -330,6 +335,8 @@ class DatabaseBuilder:
         )
 
         print(f"\nKEGG 数据库构建完成 → {outdir}")
+        # 自动生成 GMT 文件
+        self.generate_gmt_files(species, str(outdir))
         return str(outdir)
 
     # ============================
@@ -400,6 +407,8 @@ class DatabaseBuilder:
         )
 
         print(f"\nDO 数据库构建完成 → {outdir}")
+        # 自动生成 GMT 文件
+        self.generate_gmt_files("hsa", str(outdir))
         return str(outdir)
 
     def build_disgenet(self, taxid: int,
@@ -449,7 +458,44 @@ class DatabaseBuilder:
         )
 
         print(f"\nDisGeNET 数据库构建完成 → {outdir}")
+        # 自动生成 GMT 文件
+        self.generate_gmt_files("hsa", str(outdir))
         return str(outdir)
+
+    # ============================
+    # GMT 基因集文件生成
+    # ============================
+    def generate_gmt_files(self, species: str,
+                           output_dir: str = None) -> Dict[str, str]:
+        """从物种数据库产物生成 GMT 基因集文件
+
+        扫描物种数据库目录中的所有可用数据库产物，
+        自动生成对应的 .gmt.gz 文件供 GSEA/ssGSEA/GSVA 使用。
+
+        Args:
+            species: 物种缩写（如 hsa）
+            output_dir: 物种数据库目录路径，默认自动检测最新版本
+
+        Returns:
+            Dict[str, str]: {数据库名称: GMT文件路径}，仅包含成功生成的条目
+        """
+        if output_dir is None:
+            # 自动查找最新的物种数据库目录
+            if not self.organism_dir.exists():
+                print("|--- [警告] 物种数据库目录不存在，跳过 GMT 生成")
+                return {}
+            species_dirs = sorted(
+                self.organism_dir.glob(f"*/{species}"),
+                key=lambda p: p.parent.name,
+                reverse=True
+            )
+            if not species_dirs:
+                print(f"|--- [警告] 未找到物种 {species} 的数据库目录，跳过 GMT 生成")
+                return {}
+            output_dir = str(species_dirs[0])
+
+        generator = GMTGenerator(organism_dir=output_dir)
+        return generator.generate_all_gmt(species)
 
     # ============================
     # 一键构建（对应 make_speciesDB）

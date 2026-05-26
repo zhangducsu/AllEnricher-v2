@@ -7,7 +7,7 @@ AllEnricher v2.0 配置管理模块
 本模块是 AllEnricher v2.0 的核心配置管理模块，负责定义和管理整个富集分析流程中
 所需的所有配置参数。主要功能包括：
 
-1. 定义支持的富集分析方法（Fisher精确检验、超几何检验、GSEA、ssGSEA）
+1. 定义支持的富集分析方法（Fisher精确检验、超几何检验、GSEA、ssGSEA、GSVA）
 2. 定义支持的多重检验校正方法（BH、BY、Bonferroni、Holm等）
 3. 定义支持的数据库类型（GO、KEGG、Reactome、WikiPathways等）
 4. 提供物种配置信息（物种名称、KEGG代码、分类学ID等）
@@ -45,11 +45,13 @@ class EnrichmentMethod(Enum):
         HYPERGEOMETRIC: 超几何检验，另一种过表示分析方法
         GSEA: 基因集富集分析（Gene Set Enrichment Analysis），适用于排序基因列表
         SSGSEA: 单样本GSEA（Single Sample GSEA），适用于单样本的基因集富集分析
+        GSVA: 基因集变异分析（Gene Set Variation Analysis），适用于样本级别的基因集活性评估
     """
     FISHER = "fisher"                    # Fisher精确检验
     HYPERGEOMETRIC = "hypergeometric"    # 超几何检验
     GSEA = "gsea"                        # 基因集富集分析（Gene Set Enrichment Analysis）
     SSGSEA = "ssgsea"                    # 单样本GSEA
+    GSVA = "gsva"                        # 基因集变异分析（Gene Set Variation Analysis）
 
 
 class CorrectionMethod(Enum):
@@ -219,6 +221,12 @@ class Config:
     gsea_permutations: int = 1000          # GSEA排列检验次数，次数越多结果越精确但越慢
     gsea_min_size: int = 10                # GSEA基因集最小大小，参考clusterProfiler默认值（minGSSize=10）
     gsea_max_size: int = 500               # GSEA基因集最大大小，参考clusterProfiler默认值（maxGSSize=500）
+
+    # GSVA specific settings
+    # GSVA专用设置（仅在使用GSVA方法时生效）
+    gsva_method: str = "gsva"              # GSVA 方法变体: gsva（默认）/ plage / zscore
+    gsva_kcdf: str = "Gaussian"            # 核密度估计核函数: Gaussian（默认）/ Poisson
+    gsva_tau: float = 1.0                  # 核密度带宽参数，默认1.0（仅Gaussian核时生效）
 
     # Visualization settings
     # 可视化设置

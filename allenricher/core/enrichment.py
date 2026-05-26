@@ -716,6 +716,77 @@ class GSEA(EnrichmentMethodBase):
         pvalue = (count_ge + 1) / (n_permutations + 1)
         return pvalue
 
+    def calculate_normalized_es(
+        self,
+        ranked_genes: List[str],
+        gene_set: Set[str],
+        gene_weights: Optional[Dict[str, float]] = None
+    ) -> Tuple[float, float, float, List[str]]:
+        """
+        计算基于置换检验的归一化富集分数 (NES)
+
+        步骤:
+        1. 计算实际 ES 和 leading edge
+        2. 进行 self.permutations 次置换，每次打乱基因标签重新计算 ES
+        3. 分别计算正向和负向 null ES 分布的均值
+        4. NES = ES / mean(|ES_null|)（正负分别归一化）
+        5. pvalue = 置换检验中 |ES_null| >= |ES| 的比例
+
+        参数:
+            ranked_genes: 按某种指标排序的基因列表
+            gene_set: 目标基因集合
+            gene_weights: 可选的基因权重字典
+
+        返回值:
+            Tuple[float, float, float, List[str]]: (ES, NES, pvalue, leading_edge_genes)
+        """
+        # 步骤 1: 计算实际 ES 和前沿基因
+        es, leading_edge = self.calculate_enrichment_score(
+            ranked_genes, gene_set, gene_weights
+        )
+
+        # 空基因集或无交集的情况
+        if es == 0.0:
+            return 0.0, 0.0, 1.0, []
+
+        # 步骤 2: 进行置换检验
+        rng = np.random.default_rng(self.seed)
+        ranked_array = np.array(ranked_genes)
+        null_es_positive = []  # 正向 null ES
+        null_es_negative = []  # 负向 null ES
+        count_ge = 0  # 统计 |ES_null| >= |ES| 的次数
+
+        for _ in range(self.permutations):
+            permuted_genes = rng.permutation(ranked_array).tolist()
+            permuted_es, _ = self.calculate_enrichment_score(
+                permuted_genes, gene_set, gene_weights
+            )
+
+            # 分别收集正负向 null ES
+            if permuted_es >= 0:
+                null_es_positive.append(permuted_es)
+            else:
+                null_es_negative.append(permuted_es)
+
+            # 统计 |ES_null| >= |ES| 的次数
+            if abs(permuted_es) >= abs(es):
+                count_ge += 1
+
+        # 步骤 3: 计算正负向 null ES 分布的均值
+        mean_pos = np.mean(null_es_positive) if null_es_positive else 1.0
+        mean_neg = np.mean([abs(e) for e in null_es_negative]) if null_es_negative else 1.0
+
+        # 步骤 4: NES = ES / mean(|ES_null|)（正负分别归一化）
+        if es > 0:
+            nes = es / mean_pos if mean_pos > 0 else 0.0
+        else:
+            nes = es / mean_neg if mean_neg > 0 else 0.0
+
+        # 步骤 5: pvalue = 置换检验中 |ES_null| >= |ES| 的比例
+        pvalue = (count_ge + 1) / (self.permutations + 1)
+
+        return es, nes, pvalue, leading_edge
+
     def calculate_enrichment(
         self,
         gene_set: Set[str],
@@ -732,9 +803,8 @@ class GSEA(EnrichmentMethodBase):
 
         分析流程：
         1. 检查基因集大小是否在允许范围内 [min_size, max_size]
-        2. 计算富集分数（ES）和前沿基因
-        3. 计算归一化富集分数（NES）= ES * sqrt(N/nh)
-        4. 通过置换检验计算 p 值和 FDR（当前为占位实现）
+        2. 通过基于置换检验的归一化方法计算 ES、NES、pvalue 和前沿基因
+        3. 构建富集分析结果对象
 
         参数:
             gene_set: 输入基因集合（查询基因列表）
@@ -755,39 +825,22 @@ class GSEA(EnrichmentMethodBase):
         overlap = gene_set & term_genes
         if len(overlap) < self.min_size or len(overlap) > self.max_size:
             return None
-        
+
         # 如果未提供排序列表，使用背景基因集作为默认排序列表
         if ranked_genes is None:
             ranked_genes = list(background_set)
-        
-        # 计算富集分数（ES）和前沿基因
-        es, leading_edge = self.calculate_enrichment_score(
+
+        # 使用基于置换检验的归一化方法计算 ES、NES、pvalue 和前沿基因
+        es, nes, pvalue, leading_edge = self.calculate_normalized_es(
             ranked_genes, term_genes, gene_weights
         )
-        
-        # 计算归一化富集分数（NES）
-        # NES = ES * sqrt(N / nh)，其中 N 为排序列表基因总数，nh 为交集基因数
-        # 归一化消除了基因集大小对 ES 的影响，使得不同大小的基因集可以比较
-        n = len(ranked_genes)
-        nh = len(overlap)
-        nes = es * np.sqrt(n / nh) if nh > 0 else 0
-        
-        # 通过置换检验计算经验 p 值
-        # 将排序列表中的基因标签随机打乱，重新计算 ES，统计打乱后 ES >= 观察 ES 的次数
-        pvalue = self._run_permutation_test(
-            ranked_genes=ranked_genes,
-            gene_set=term_genes,
-            observed_es=es,
-            gene_weights=gene_weights,
-            n_permutations=self.permutations,
-            seed=self.seed
-        )
+
         # FDR 暂时设为 pvalue，后续在 adjust_pvalues 中统一进行 BH 校正
         fdr = pvalue
-        
+
         # 生成条目的数据库链接 URL
         term_url = generate_term_url(term_id, database)
-        
+
         # 构建并返回 GSEA 富集结果对象
         return EnrichmentResult(
             term_id=term_id,
@@ -803,11 +856,58 @@ class GSEA(EnrichmentMethodBase):
             gene_ratio=f"{len(overlap)}/{len(gene_set)}",
             background_ratio=f"{len(term_genes)}/{len(background_set)}",
             term_url=term_url,  # 条目的数据库链接 URL
-            nes=nes,  # 归一化富集分数
+            nes=nes,  # 归一化富集分数（基于置换检验）
             es=es,  # 原始富集分数
             fdr=fdr,  # FDR q 值
             leading_edge=leading_edge  # 前沿基因
         )
+
+    def analyze_matrix(
+        self,
+        expression_matrix: pd.DataFrame,
+        gene_sets: Dict[str, Set[str]],
+        gene_weights_matrix: Optional[pd.DataFrame] = None
+    ) -> pd.DataFrame:
+        """
+        基于表达矩阵运行 GSEA 分析
+
+        对每个样本:
+        1. 按表达量排序基因
+        2. 对每个基因集计算 ES 和 NES
+        3. 汇总为样本 x 通路结果矩阵
+
+        参数:
+            expression_matrix: 表达矩阵 (行=基因, 列=样本)
+            gene_sets: {通路名: 基因集合}
+            gene_weights_matrix: 可选的权重矩阵 (行=基因, 列=样本)
+
+        返回值:
+            DataFrame (行=通路, 列=样本, 值=NES)
+        """
+        samples = expression_matrix.columns.tolist()
+        results = {}
+
+        for pathway_name, pathway_genes in gene_sets.items():
+            nes_values = []
+            for sample in samples:
+                # 获取当前样本的表达量并按降序排序基因
+                sample_expr = expression_matrix[sample]
+                ranked_genes = sample_expr.sort_values(ascending=False).index.tolist()
+
+                # 获取可选的权重
+                weights = None
+                if gene_weights_matrix is not None and sample in gene_weights_matrix.columns:
+                    weights = gene_weights_matrix[sample].to_dict()
+
+                # 计算归一化 ES
+                _, nes, _, _ = self.calculate_normalized_es(
+                    ranked_genes, pathway_genes, weights
+                )
+                nes_values.append(nes)
+
+            results[pathway_name] = nes_values
+
+        return pd.DataFrame(results, index=samples).T
 
 
 class SSGSEA(EnrichmentMethodBase):
@@ -1027,6 +1127,50 @@ class SSGSEA(EnrichmentMethodBase):
             leading_edge=leading_edge  # 前沿基因
         )
 
+    def analyze_matrix(
+        self,
+        expression_matrix: pd.DataFrame,
+        gene_sets: Dict[str, Set[str]]
+    ) -> pd.DataFrame:
+        """
+        基于表达矩阵运行 ssGSEA 分析
+
+        对每个样本独立计算每个通路的 ssGSEA 得分。
+
+        参数:
+            expression_matrix: 表达矩阵 (行=基因, 列=样本)
+            gene_sets: {通路名: 基因集合}
+
+        返回值:
+            DataFrame (行=通路, 列=样本, 值=NES)
+        """
+        samples = expression_matrix.columns.tolist()
+        results = {}
+
+        for pathway_name, pathway_genes in gene_sets.items():
+            nes_values = []
+            for sample in samples:
+                # 获取当前样本的表达量并按降序排序基因
+                sample_expr = expression_matrix[sample]
+                ranked_genes = sample_expr.sort_values(ascending=False).index.tolist()
+
+                # 将表达量作为权重
+                weights = sample_expr.to_dict()
+
+                # 计算富集分数（ES、ES_min、ES_max、前沿基因）
+                es, es_min, es_max, _ = self.calculate_enrichment_score(
+                    ranked_genes, pathway_genes, weights
+                )
+
+                # 归一化: NES = ES / (|ES_min| + |ES_max|)
+                denominator = abs(es_min) + abs(es_max)
+                nes = es / denominator if denominator > 0 else 0.0
+                nes_values.append(nes)
+
+            results[pathway_name] = nes_values
+
+        return pd.DataFrame(results, index=samples).T
+
 
 class EnrichmentAnalyzer:
     """
@@ -1101,7 +1245,16 @@ class EnrichmentAnalyzer:
                 max_size=self.config.gsea_max_size
             ),
         }
-        
+
+        # 延迟导入 GSVA 以避免循环依赖（gsva.py 导入了 enrichment.py 的基类）
+        from allenricher.core.gsva import GSVA
+        methods[EnrichmentMethod.GSVA.value] = GSVA(  # GSVA 基因集变异分析
+            method=self.config.gsva_method,
+            kcdf=self.config.gsva_kcdf,
+            tau=self.config.gsva_tau,
+            min_size=self.config.gsea_min_size,
+            max_size=self.config.gsea_max_size
+        )
         if self.config.method not in methods:
             raise ValueError(f"Unknown method: {self.config.method}")
         

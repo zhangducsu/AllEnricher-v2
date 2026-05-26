@@ -1,0 +1,13 @@
+GENE_A	1	GO:0005576		extracellular region
+GENE_B	2	GO:0005576		extracellular region
+GENE_C	3	GO:0005576		extracellular region
+GENE_A	1	GO:0051301		cell division
+GENE_D	4	GO:0051301		cell division
+GENE_E	5	GO:0051301		cell division
+GENE_F	6	GO:0005515		protein binding
+GENE_A	1	GO:0005515		protein binding
+GENE_B	2	GO:0005515		protein binding
+GENE_C	3	GO:0005515		protein binding
+GENE_D	4	GO:0005515		protein binding
+GENE_E	5	GO:0005515		protein binding
+GENE_F	6	GO:0005515		protein binding

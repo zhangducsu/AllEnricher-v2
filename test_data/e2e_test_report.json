@@ -1,0 +1,87 @@
+{
+  "test_date": "2026-05-26 15:09:28",
+  "test_data": {
+    "sorted_genes": 2000,
+    "expression_matrix": "2000 genes x 6 samples",
+    "gene_sets": 10,
+    "samples": [
+      "Normal_1",
+      "Normal_2",
+      "Normal_3",
+      "Disease_1",
+      "Disease_2",
+      "Disease_3"
+    ]
+  },
+  "results": {
+    "GSEA": {
+      "status": "success",
+      "pathways_analyzed": 5,
+      "positive_enrichment": 5,
+      "negative_enrichment": 0,
+      "significant_p05": 2,
+      "nes_range": [
+        1.4738743329507098,
+        2.2872295645929004
+      ],
+      "top_results": [
+        {
+          "term_name": "HSA_Cell_Cycle_1",
+          "nes": 2.2872295645929004,
+          "pvalue": 0.009900990099009901,
+          "gene_count": 50
+        },
+        {
+          "term_name": "HSA_DNA_Repair_2",
+          "nes": 1.49289915503569,
+          "pvalue": 0.18811881188118812,
+          "gene_count": 50
+        },
+        {
+          "term_name": "HSA_PI3K_AKT_3",
+          "nes": 1.7668760330096722,
+          "pvalue": 0.04950495049504951,
+          "gene_count": 50
+        },
+        {
+          "term_name": "HSA_MAPK_Signaling_4",
+          "nes": 1.4738743329507098,
+          "pvalue": 0.15841584158415842,
+          "gene_count": 50
+        },
+        {
+          "term_name": "HSA_Apoptosis_5",
+          "nes": 1.711803685937577,
+          "pvalue": 0.0594059405940594,
+          "gene_count": 50
+        }
+      ]
+    },
+    "ssGSEA": {
+      "status": "success",
+      "shape": [
+        5,
+        6
+      ],
+      "score_range": [
+        0.6840602880994109,
+        1.0
+      ],
+      "mean_score": 0.8439853351953112,
+      "std_score": 0.10378404152647396
+    },
+    "GSVA": {
+      "status": "success",
+      "shape": [
+        5,
+        6
+      ],
+      "score_range": [
+        0.0,
+        0.6284955031913163
+      ],
+      "mean_score": 0.07947523630068387,
+      "std_score": 0.2028047773004008
+    }
+  }
+}

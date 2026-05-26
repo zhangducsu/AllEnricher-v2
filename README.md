@@ -15,6 +15,10 @@
 - [安装方式](#安装方式)
 - [快速开始](#快速开始)
 - [详细使用说明](#详细使用说明)
+  - [CLI 命令详解](#31-cli-命令详解)
+  - [本地 Web 服务](#serve---启动本地-web-分析服务)
+  - [Python API 使用](#32-python-api-使用)
+  - [GSEA/GSVA/ssGSEA 使用示例](#33-gseagsvasssgsea-使用示例)
 - [测试指南](#测试指南)
 - [输出文件说明](#输出文件说明)
 - [配置文件](#配置文件)
@@ -27,11 +31,12 @@
 AllEnricher v2.0 是 AllEnricher v1.0 的 Python 重构版本，保留了 v1 的核心功能并增加了多项改进：
 
 - **兼容 v1 数据库**：可直接使用 v1 构建的 GO、KEGG、Reactome、DO、DisGeNET 数据库
-- **多种统计方法**：Fisher 精确检验、超几何检验、GSEA、ssGSEA
+- **多种统计方法**：Fisher 精确检验、超几何检验、GSEA、ssGSEA、GSVA
 - **多重检验校正**：BH、BY、Bonferroni、Holm
-- **丰富可视化**：柱状图、气泡图（复用 v1 R 脚本）
+- **丰富可视化**：柱状图、气泡图、富集曲线图、热图、网络图等12+种发表级图表
+- **本地 Web 服务**：基于 FastAPI 的交互式分析界面，浏览器打开即可使用
 - **AI 智能解读**：支持 OpenAI、Claude、DeepSeek、GLM、MiniMax、Ollama
-- **REST API**：FastAPI 驱动的 Web 服务
+- **REST API**：完整的 RESTful API，支持程序化调用
 - **交互式报告**：学术风格的 HTML 报告
 
 ---
@@ -54,8 +59,15 @@ AllEnricher v2.0 是 AllEnricher v1.0 的 Python 重构版本，保留了 v1 的
 |------|------|----------|
 | Fisher | Fisher 精确检验 | 标准富集分析 |
 | Hypergeometric | 超几何检验 | Fisher 的替代方案 |
-| GSEA | 基因集富集分析 | 排序基因列表 |
-| ssGSEA | 单样本 GSEA | 单样本分析 |
+| **GSEA** | 基因集富集分析 | 排序基因列表（case vs control） |
+| **ssGSEA** | 单样本 GSEA | 单样本通路活性评分 |
+| **GSVA** | 基因集变异分析 | 多样本通路活性矩阵（3种方法变体） |
+
+**GSEA/GSVA/ssGSEA 特性：**
+- 🧬 **GSEA**: 基于置换检验的富集分析，支持NES标准化和Leading Edge识别
+- 📊 **ssGSEA**: 单样本水平计算通路富集得分，适用于免疫浸润分析
+- 🔄 **GSVA**: 三种计算方法（Random Walk/PLAGE/Z-score），适用于样本聚类和异质性分析
+- 🎨 **发表级可视化**: 富集曲线图、热图、气泡图、网络图等12+种图表类型
 
 ### AI 后端支持
 
@@ -236,7 +248,15 @@ allenricher analyze [选项]
                             支持：GO, KEGG, Reactome, DO, DisGeNET
   -o, --output DIR          输出目录（默认：./results）
   -m, --method TEXT         统计方法（默认：fisher）
-                            fisher, hypergeometric, gsea, ssgsea
+                            fisher, hypergeometric, gsea, ssgsea, gsva
+  -e, --expression-matrix   表达矩阵文件（ssGSEA/GSVA必需，TSV格式）
+  -r, --ranked-genes        排序基因列表文件（GSEA必需，含权重）
+  --gmt FILE                GMT格式基因集文件（GSEA/ssGSEA/GSVA可选）
+  --plot-types LIST         可视化图表类型，逗号分隔
+                            GSEA: enrichment,nes_barplot,dotplot
+                            ssGSEA/GSVA: heatmap,group_comparison,dotplot,correlation
+  --plot-format FORMAT      图表格式（png/pdf/svg，默认png）
+  --plot-dpi INT           图表分辨率（默认300）
   -c, --correction TEXT     多重检验校正方法（默认：BH）
                             BH, BY, bonferroni, holm, none
   -p, --pvalue FLOAT        P 值阈值（默认：0.05）
@@ -318,10 +338,73 @@ allenricher build -s hsa -t 9606 -d GO,Reactome
 allenricher analyze -i genes.txt -s hsa --database-dir database/organism/v{date}/hsa/
 ```
 
-#### serve - 启动 API 服务
+#### serve - 启动本地 Web 分析服务
 
 ```bash
+# 安装 API 依赖
+pip install -e ".[api]"
+
+# 启动服务（默认端口 8000）
 allenricher serve --port 8000 --host 0.0.0.0
+
+# 浏览器打开
+# http://localhost:8000
+```
+
+启动后，用户可以在浏览器中打开 `http://localhost:8000`，通过 **交互式 Web 界面** 完成富集分析，无需编写任何代码。
+
+**Web 界面功能：**
+- 📝 基因列表输入（文本粘贴或文件上传）
+- 🧬 物种选择（支持所有已构建数据库的物种）
+- 🗃️ 数据库勾选（GO、KEGG、Reactome、DO、DisGeNET）
+- ⚙️ 参数配置（P值阈值、校正方法、最小基因数等）
+- 📊 结果展示（交互式表格，支持排序和搜索）
+- 📥 结果下载（TSV结果、PDF图表、HTML报告）
+- 🔄 异步任务（提交后实时显示进度）
+
+**API 端点一览：**
+
+| 端点 | 方法 | 描述 |
+|------|------|------|
+| `/` | GET | Web 分析界面 |
+| `/api/species` | GET | 获取支持的物种列表 |
+| `/api/databases` | GET | 获取可用数据库信息 |
+| `/api/analyze` | POST | 提交富集分析任务 |
+| `/api/upload` | POST | 上传基因列表文件并分析 |
+| `/api/status/{job_id}` | GET | 查询任务状态和进度 |
+| `/api/results/{job_id}` | GET | 获取分析结果（JSON/TSV） |
+| `/api/results/{job_id}/plot` | GET | 下载可视化图表 |
+| `/api/results/{job_id}/report` | GET | 下载 HTML 报告 |
+| `/api/jobs/{job_id}` | DELETE | 删除任务 |
+| `/docs` | GET | Swagger API 文档 |
+| `/redoc` | GET | ReDoc API 文档 |
+
+**API 调用示例：**
+
+```bash
+# 提交分析任务
+curl -X POST "http://localhost:8000/api/analyze" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "genes": ["BRCA1", "TP53", "EGFR", "MYC", "KRAS"],
+    "species": "hsa",
+    "databases": ["GO", "KEGG"],
+    "method": "fisher",
+    "pvalue_cutoff": 0.05,
+    "qvalue_cutoff": 0.05
+  }'
+# 返回: {"job_id": "xxx-xxx-xxx", "status": "pending"}
+
+# 查询任务状态
+curl "http://localhost:8000/api/status/xxx-xxx-xxx"
+# 返回: {"job_id": "...", "status": "completed", "progress": 1.0, ...}
+
+# 获取结果
+curl "http://localhost:8000/api/results/xxx-xxx-xxx"
+# 返回: {"GO": [...], "KEGG": [...], ...}
+
+# 下载 HTML 报告
+curl -o report.html "http://localhost:8000/api/results/xxx-xxx-xxx/report"
 ```
 
 ### 3.2 Python API 使用
@@ -369,30 +452,76 @@ report_gen = ReportGenerator("./output")
 report_gen.generate(results, "./output/report.html", gene_list=list(gene_set))
 ```
 
-### 3.3 REST API 使用
+### 3.3 GSEA/GSVA/ssGSEA 使用示例
+
+#### GSEA 分析（排序基因列表）
 
 ```bash
-# 启动服务
-allenricher serve --port 8000
+# 准备排序基因列表文件（两列：gene, weight）
+# ranked_genes.tsv:
+# gene<TAB>weight
+# BRCA1<TAB>2.5
+# TP53<TAB>-1.8
+# ...
 
-# 提交分析任务
-curl -X POST "http://localhost:8000/api/analyze" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "genes": ["BRCA1", "TP53", "EGFR", "MYC", "KRAS"],
-    "species": "hsa",
-    "databases": ["GO", "KEGG"],
-    "method": "fisher",
-    "pvalue_cutoff": 0.05,
-    "qvalue_cutoff": 0.05,
-    "database_dir": "/path/to/v1/database/organism/v20190612/hsa"
-  }'
+# 运行GSEA分析
+allenricher analyze \
+    --method gsea \
+    -r ranked_genes.tsv \
+    -s hsa \
+    --gmt hsa.KEGG.gmt.gz \
+    --plot-types enrichment,nes_barplot,dotplot \
+    --plot-format png \
+    -o gsea_results/
+```
 
-# 查询任务状态
-curl "http://localhost:8000/api/status/{job_id}"
+#### ssGSEA 分析（单样本通路活性）
 
-# 获取结果
-curl "http://localhost:8000/api/results/{job_id}"
+```bash
+# 准备表达矩阵（基因×样本，TSV格式）
+# expression.tsv:
+# gene<TAB>Sample1<TAB>Sample2<TAB>...
+# BRCA1<TAB>8.5<TAB>9.2<TAB>...
+# ...
+
+# 运行ssGSEA分析
+allenricher analyze \
+    --method ssgsea \
+    -e expression.tsv \
+    -s hsa \
+    --gmt hsa.GO.gmt.gz \
+    --plot-types heatmap,group_comparison \
+    --groups "Tumor:Sample1,Sample2,Sample3;Normal:Sample4,Sample5,Sample6" \
+    -o ssgsea_results/
+```
+
+#### GSVA 分析（三种方法变体）
+
+```bash
+# GSVA (Random Walk - 默认)
+allenricher analyze \
+    --method gsva \
+    -e expression.tsv \
+    -s hsa \
+    --gmt hsa.Reactome.gmt.gz \
+    --plot-types heatmap,correlation \
+    -o gsva_results/
+
+# GSVA (PLAGE方法)
+allenricher analyze \
+    --method gsva \
+    -e expression.tsv \
+    --gmt hsa.Reactome.gmt.gz \
+    --gsva-method plage \
+    -o gsva_plage_results/
+
+# GSVA (Z-score方法)
+allenricher analyze \
+    --method gsva \
+    -e expression.tsv \
+    --gmt hsa.Reactome.gmt.gz \
+    --gsva-method zscore \
+    -o gsva_zscore_results/
 ```
 
 ---
@@ -461,6 +590,11 @@ diff ./test_results/GO_enrichment.tsv "$V1_EXAMPLE/../fisher/Q0.05/example.glist
 | `test_database.py` | 数据库模块（8 个测试） |
 | `test_cli.py` | 命令行接口（15 个测试） |
 | `test_phase5.py` | API/AI/报告模块（19 个测试） |
+| `test_e2e_gsea.py` | GSEA端到端测试（7 个测试） |
+| `test_e2e_ssgsea.py` | ssGSEA端到端测试（8 个测试） |
+| `test_e2e_gsva.py` | GSVA端到端测试（14 个测试） |
+| `test_e2e_visualization.py` | 可视化集成测试（26 个测试） |
+| `test_gmt_generation_e2e.py` | GMT文件生成测试（8 个测试） |
 
 ---
 
@@ -500,6 +634,48 @@ GO:0051301  cell division                8           0.0418        4.56e-04     
 - 交互式数据表格（支持排序、搜索、下载）
 - 可视化图表链接
 - 可选的 AI 解读内容
+
+### 5.4 GSEA/GSVA/ssGSEA 可视化图表
+
+**GSEA 专属图表：**
+
+| 图表类型 | 描述 | 文件 |
+|----------|------|------|
+| 富集曲线图 | 三面板图：Running ES曲线、基因位置标记、基因排序度量 | `*_enrichment.png` |
+| NES条形图 | 水平条形图展示各通路NES值，按显著性排序 | `*_nes_barplot.png` |
+| 气泡图 | 气泡大小表示基因数，颜色表示显著性 | `*_dotplot.png` |
+
+**ssGSEA/GSVA 专属图表：**
+
+| 图表类型 | 描述 | 文件 |
+|----------|------|------|
+| 通路活性热图 | 样本×通路的活性得分热图，支持聚类 | `*_heatmap.png` |
+| 组间比较图 | 箱线图/小提琴图比较不同组别通路活性 | `*_group_comparison.png` |
+| 样本相关性热图 | 样本间通路活性的相关性矩阵 | `*_correlation.png` |
+
+**通用图表：**
+
+| 图表类型 | 描述 | 文件 |
+|----------|------|------|
+| 通路网络图 | 基于基因重叠的通路关系网络 | `enrichment_network.png` |
+| 火山图 | NES vs -log10(pvalue)的散点图 | `*_volcano.png` |
+| 方法比较图 | 不同方法结果的相关性散点图 | `method_comparison.png` |
+
+**图表配置：**
+
+```bash
+# 指定图表类型
+--plot-types enrichment,heatmap,dotplot
+
+# 指定输出格式（支持PNG/PDF/SVG）
+--plot-format pdf
+
+# 指定分辨率（发表级300DPI）
+--plot-dpi 300
+
+# 生成所有可用图表
+--plot-types all
+```
 
 ---
 
@@ -662,7 +838,19 @@ MIT License
 
 ---
 
-## 最近更新 (v2.0.1)
+## 最近更新 (v2.0.2)
+
+### 2026-05-26: GSEA/GSVA/ssGSEA 功能扩展
+
+- **🧬 GSEA 富集分析**: 基于置换检验的标准GSEA实现，支持NES标准化和Leading Edge识别
+- **📊 ssGSEA 单样本分析**: 单样本水平计算通路富集得分，适用于免疫浸润和多样本比较
+- **🔄 GSVA 基因集变异分析**: 三种计算方法（Random Walk/PLAGE/Z-score），适用于样本聚类和异质性分析
+- **🎨 发表级可视化**: 新增12+种可视化图表类型
+  - GSEA: 富集曲线图、NES条形图、气泡图
+  - ssGSEA/GSVA: 通路活性热图、组间比较图、样本相关性热图
+  - 通用: 通路网络图、火山图、方法比较图、UpSet图
+- **📁 GMT文件生成**: 数据库构建时自动生成GMT格式基因集文件，支持GSEA/ssGSEA/GSVA分析
+- **✅ 全量端到端测试**: 新增63个E2E测试，覆盖500基因排序列表和6000×6样本表达矩阵
 
 ### 2026-05-15: Bug 修复
 
@@ -673,4 +861,4 @@ MIT License
 
 ---
 
-*最后更新：2026-05-15*
+*最后更新：2026-05-26*

@@ -1,0 +1,19 @@
+# 临时测试配置
+species: "hsa"
+databases:
+  - "GO"
+  - "KEGG"
+method: "fisher"
+correction: "BH"
+pvalue_cutoff: 0.05
+qvalue_cutoff: 0.05
+
+ai_interpretation: true
+ai_backend: "deepseek"
+ai_backends:
+  deepseek:
+    api_key: "sk-5857ffb7000c42c99f5b5c88ee1d1c51"
+    model: "deepseek-v4-flash"
+    enabled: true
+
+database_dir: "./database"

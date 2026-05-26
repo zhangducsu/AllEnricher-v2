@@ -1,0 +1,22 @@
+﻿============================= test session starts =============================
+platform win32 -- Python 3.10.11, pytest-9.0.3, pluggy-1.6.0
+rootdir: F:\OneDrive\Documents\TraeSOLO\AllEnricher\AllEnricher-v2
+configfile: pyproject.toml
+plugins: anyio-4.13.0
+collected 48 items
+
+tests\test_gsea_extended.py ..........                                   [ 20%]
+tests\test_gsva.py ...............                                       [ 52%]
+tests\test_cli_gsea.py .......................                           [100%]
+
+============================== warnings summary ===============================
+tests/test_gsva.py::TestGSVA::test_gsva_single_sample
+  C:\Users\Lenovo\AppData\Roaming\TRAE SOLO CN\ModularData\ai-agent\vm\tools\python\lib\site-packages\numpy\_core\_methods.py:223: RuntimeWarning: Degrees of freedom <= 0 for slice
+    ret = _var(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+
+tests/test_gsva.py::TestGSVA::test_gsva_single_sample
+  C:\Users\Lenovo\AppData\Roaming\TRAE SOLO CN\ModularData\ai-agent\vm\tools\python\lib\site-packages\numpy\_core\_methods.py:215: RuntimeWarning: invalid value encountered in scalar divide
+    ret = ret.dtype.type(ret / rcount)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+======================= 48 passed, 2 warnings in 2.99s ========================

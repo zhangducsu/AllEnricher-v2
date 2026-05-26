@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AllEnricher v2.0 - Enrichment Analysis Report</title>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Serif:wght@400;600&family=Source+Sans+Pro:wght@400;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --text-primary: #1a1a1a;
+            --text-secondary: #4a4a4a;
+            --text-muted: #6b6b6b;
+            --border-color: #d1d1d1;
+            --bg-primary: #ffffff;
+            --bg-secondary: #f8f8f8;
+            --accent-color: #2c5282;
+            --accent-hover: #1a365d;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Source Sans Pro', -apple-system, BlinkMacSystemFont, sans-serif;
+            font-size: 14px;
+            line-height: 1.6;
+            color: var(--text-primary);
+            background-color: var(--bg-secondary);
+        }
+
+        /* Header */
+        .header {
+            background: var(--bg-primary);
+            border-bottom: 1px solid var(--border-color);
+            padding: 1.25rem 2rem;
+        }
+
+        .header-content {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+        }
+
+        .header h1 {
+            font-family: 'Noto Serif', Georgia, serif;
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .header .meta {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+        }
+
+        /* Navigation */
+        .nav {
+            background: var(--bg-primary);
+            border-bottom: 1px solid var(--border-color);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .nav ul {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 2rem;
+            list-style: none;
+            display: flex;
+            gap: 2rem;
+        }
+
+        .nav a {
+            display: block;
+            padding: 0.75rem 0;
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-size: 0.875rem;
+            border-bottom: 2px solid transparent;
+            transition: border-color 0.15s;
+        }
+
+        .nav a:hover {
+            color: var(--accent-color);
+            border-bottom-color: var(--accent-color);
+        }
+
+        /* Main Content */
+        .main {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        /* Section */
+        .section {
+            background: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            padding: 1.5rem 2rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .section h2 {
+            font-family: 'Noto Serif', Georgia, serif;
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 1.25rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .section h2 .result-count,
+        .section h2 .ai-note {
+            font-family: 'Source Sans Pro', sans-serif;
+            font-weight: 400;
+            font-size: 0.875rem;
+            color: var(--text-muted);
+        }
+
+        /* Summary Grid */
+        .summary-grid {
+            display: flex;
+            gap: 2rem;
+            margin-bottom: 1.5rem;
+            padding: 1rem 0;
+        }
+
+        .stat-item {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .stat-value {
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: var(--text-primary);
+            line-height: 1.2;
+        }
+
+        .stat-label {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            margin-top: 0.25rem;
+        }
+
+        /* Data Table */
+        .table-wrapper {
+            overflow-x: auto;
+            margin: 0 -2rem;
+            padding: 0 2rem;
+        }
+
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.875rem;
+        }
+
+        .data-table th {
+            text-align: left;
+            padding: 0.6rem 0.75rem;
+            background: var(--bg-secondary);
+            border-bottom: 2px solid var(--border-color);
+            font-weight: 600;
+            color: var(--text-secondary);
+            white-space: nowrap;
+        }
+
+        .data-table td {
+            padding: 0.6rem 0.75rem;
+            border-bottom: 1px solid var(--border-color);
+            vertical-align: top;
+        }
+
+        .data-table tr:hover td {
+            background: #fafafa;
+        }
+
+        .data-table a {
+            color: var(--accent-color);
+            text-decoration: none;
+        }
+
+        .data-table a:hover {
+            text-decoration: underline;
+        }
+
+        .data-table .genes {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            max-width: 200px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        /* Table Actions */
+        .table-actions {
+            display: flex;
+            gap: 1rem;
+            margin-top: 1rem;
+            padding-top: 1rem;
+            border-top: 1px solid var(--border-color);
+        }
+
+        .table-actions button {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            padding: 0.4rem 0.75rem;
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            cursor: pointer;
+            border-radius: 3px;
+            transition: all 0.15s;
+        }
+
+        .table-actions button:hover {
+            background: var(--bg-primary);
+            border-color: var(--accent-color);
+            color: var(--accent-color);
+        }
+
+        /* Plots */
+        .plot-group {
+            margin-bottom: 1.25rem;
+        }
+
+        .plot-group h3 {
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+            margin-bottom: 0.5rem;
+        }
+
+        .plot-links {
+            display: flex;
+            gap: 1rem;
+            font-size: 0.875rem;
+        }
+
+        .plot-link {
+            color: var(--accent-color);
+            text-decoration: none;
+        }
+
+        .plot-link:hover {
+            text-decoration: underline;
+        }
+
+        /* AI Interpretation */
+        .ai-block {
+            margin-bottom: 1.25rem;
+            padding: 1rem;
+            background: var(--bg-secondary);
+            border-left: 3px solid var(--border-color);
+        }
+
+        .ai-block h3 {
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+            margin-bottom: 0.5rem;
+        }
+
+        .ai-block p {
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+            line-height: 1.7;
+        }
+
+        /* Footer */
+        .footer {
+            text-align: center;
+            padding: 2rem;
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            border-top: 1px solid var(--border-color);
+            margin-top: 2rem;
+        }
+
+        .footer a {
+            color: var(--accent-color);
+            text-decoration: none;
+        }
+
+        /* DataTables customization */
+        .dataTables_wrapper .dataTables_length,
+        .dataTables_wrapper .dataTables_filter {
+            margin-bottom: 1rem;
+        }
+
+        .dataTables_wrapper .dataTables_info {
+            color: var(--text-muted);
+            font-size: 0.8rem;
+        }
+
+        .paginate_button {
+            color: var(--text-secondary) !important;
+        }
+
+        .paginate_button.current {
+            color: var(--accent-color) !important;
+            font-weight: 600;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .header-content {
+                flex-direction: column;
+                gap: 0.5rem;
+            }
+
+            .nav ul {
+                overflow-x: auto;
+                gap: 1.5rem;
+            }
+
+            .summary-grid {
+                flex-wrap: wrap;
+                gap: 1rem;
+            }
+
+            .stat-item {
+                min-width: 80px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header class="header">
+        <div class="header-content">
+            <h1>AllEnricher Report</h1>
+            <span class="meta">Version 2.0 | 2026-05-13</span>
+        </div>
+    </header>
+
+    <nav class="nav">
+        <ul><li><a href="#summary">Summary</a></li><li><a href="#plots">Plots</a></li><li><a href="#GO-table">GO</a></li></ul>
+    </nav>
+
+    <main class="main">
+        
+        <div class="section" id="summary">
+            <h2>Analysis Summary</h2>
+            <div class="summary-grid">
+                <div class="stat-item">
+                    <span class="stat-value">5</span>
+                    <span class="stat-label">Input Genes</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-value">1</span>
+                    <span class="stat-label">Databases</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-value">3</span>
+                    <span class="stat-label">Enriched Terms</span>
+                </div>
+            </div>
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Database</th>
+                        <th>Terms</th>
+                        <th>Min P-value</th>
+                        <th>Min Adj. P-value</th>
+                    </tr>
+                </thead>
+                <tbody><tr><td><a href="#GO-table">GO</a></td><td>3</td><td>1.00e-06</td><td>1.00e-04</td></tr></tbody>
+            </table>
+        </div>
+        <div class="section" id="plots"><h2>Visualization</h2>
+</div>
+        
+            <div class="section" id="GO-table">
+                <h2>GO Enrichment Results <span class="result-count">(3 terms)</span></h2>
+                <div class="table-wrapper">
+                    <table class="data-table" id="table-GO">
+                        <thead>
+                            <tr>
+                                <th>Term ID</th>
+                                <th>Term Name</th>
+                                <th>Genes</th>
+                                <th>Rich Factor</th>
+                                <th>P-value</th>
+                                <th>Adj. P-value</th>
+                            </tr>
+                        </thead>
+                        <tbody><tr><td>GO:0005576</td><td>extracellular region</td><td>10</td><td>0.0500</td><td>1.00e-05</td><td>1.00e-03</td><td class="genes" title="GENE1;GENE2;GENE3;GENE4;GENE5;GENE6;GENE7;GENE8;GENE9;GENE10">GENE1;GENE2;GENE3;GENE4;GENE5;GENE6;GENE7;GENE8;GENE9;GENE10</td></tr><tr><td>GO:0051301</td><td>cell division</td><td>8</td><td>0.0400</td><td>1.00e-04</td><td>1.00e-02</td><td class="genes" title="GENE1;GENE2;GENE3;GENE4;GENE5;GENE6;GENE7;GENE8">GENE1;GENE2;GENE3;GENE4;GENE5;GENE6;GENE7;GENE8</td></tr><tr><td>GO:0005515</td><td>protein binding</td><td>15</td><td>0.0600</td><td>1.00e-06</td><td>1.00e-04</td><td class="genes" title="GENE1;GENE2;GENE3;GENE4;GENE5;GENE6;GENE7;GENE8;GENE9;GENE10;GENE11;GENE12;GENE13;GENE14;GENE15">GENE1;GENE2;GENE3;GENE4;GENE5;GENE6;GENE7;GENE8;GENE9;GENE10...</td></tr></tbody>
+                    </table>
+                </div>
+                <div class="table-actions">
+                    <button onclick="downloadTable('GO')">Download TSV</button>
+                    <button onclick="copyTable('GO')">Copy</button>
+                </div>
+            </div>
+        
+    </main>
+
+    <footer class="footer">
+        <p>Generated by <a href="https://github.com/zd105/AllEnricher">AllEnricher v2.0</a></p>
+    </footer>
+
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdn.datatables.net/1.13.4/js/jquery.dataTables.min.js"></script>
+    <script>
+        $(document).ready(function() {
+            $('.data-table').DataTable({
+                pageLength: 25,
+                order: [[5, 'asc']],
+                columnDefs: [
+                    { orderable: false, targets: [2, 6] }
+                ]
+            });
+        });
+
+        function downloadTable(dbName) {
+            const table = document.getElementById('table-' + dbName);
+            let tsv = [];
+            const headers = Array.from(table.querySelectorAll('th')).map(th => th.textContent.trim());
+            tsv.push(headers.join('	'));
+            const rows = table.querySelectorAll('tbody tr');
+            rows.forEach(row => {
+                const cells = Array.from(row.querySelectorAll('td')).map(td => td.textContent.trim());
+                tsv.push(cells.join('	'));
+            });
+            const blob = new Blob([tsv.join('
+')], { type: 'text/tab-separated-values' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = dbName + '_enrichment.tsv';
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        function copyTable(dbName) {
+            const table = document.getElementById('table-' + dbName);
+            const range = document.createRange();
+            range.selectNode(table);
+            window.getSelection().removeAllRanges();
+            window.getSelection().addRange(range);
+            document.execCommand('copy');
+            window.getSelection().removeAllRanges();
+            alert('Table copied to clipboard');
+        }
+    </script>
+</body>
+</html>

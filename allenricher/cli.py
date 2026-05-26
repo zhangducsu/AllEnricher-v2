@@ -20,7 +20,7 @@ import argparse
 import logging
 import sys
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional, Set
 
 from allenricher import __version__
 from allenricher.core.config import Config
@@ -36,6 +36,347 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# GSEA/GSVA/ssGSEA 可视化辅助函数
+# ---------------------------------------------------------------------------
+
+# 各方法支持的图表类型白名单
+_METHOD_PLOT_TYPES = {
+    'gsea': {'enrichment', 'nes_barplot', 'dotplot'},
+    'ssgsea': {'heatmap', 'group_comparison', 'dotplot', 'correlation'},
+    'gsva': {'heatmap', 'group_comparison', 'dotplot', 'correlation'},
+}
+
+
+def _parse_gmt_file(gmt_file: str) -> Dict[str, Set[str]]:
+    """读取GMT格式基因集文件
+
+    GMT文件格式：每行以TAB分隔，第1列为基因集名称，第2列为描述（可选），
+    第3列起为基因名称列表。支持 .gmt 和 .gmt.gz 两种格式。
+
+    Args:
+        gmt_file: GMT文件路径
+
+    Returns:
+        Dict[str, Set[str]]: 基因集名称到基因集合的映射
+
+    Raises:
+        FileNotFoundError: 文件不存在
+        ValueError: 文件格式不正确
+    """
+    import gzip
+
+    gmt_path = Path(gmt_file)
+    if not gmt_path.exists():
+        raise FileNotFoundError(f"GMT文件不存在: {gmt_file}")
+
+    # 根据扩展名选择打开方式
+    if gmt_path.suffix.lower() == '.gz':
+        opener = gzip.open
+        mode = 'rt'
+    else:
+        opener = open
+        mode = 'r'
+
+    gene_sets: Dict[str, Set[str]] = {}
+    with opener(gmt_path, mode, encoding='utf-8') as f:
+        for line_num, line in enumerate(f, 1):
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            parts = line.split('\t')
+            if len(parts) < 3:
+                logger.warning(f"GMT文件第{line_num}行格式不正确（至少需要3列），已跳过")
+                continue
+            set_name = parts[0]
+            # 第3列起为基因名称
+            genes = {g.strip() for g in parts[2:] if g.strip()}
+            if genes:
+                gene_sets[set_name] = genes
+
+    logger.info(f"GMT文件加载完成: {len(gene_sets)} 个基因集, 来源: {gmt_file}")
+    return gene_sets
+
+
+def _parse_groups(groups_str: str) -> Dict[str, List[str]]:
+    """解析分组字符串
+
+    将 'Group1:sample1,sample2;Group2:sample3,sample4' 格式的字符串
+    解析为 {组名: [样本名列表]} 字典。
+
+    Args:
+        groups_str: 分组定义字符串
+
+    Returns:
+        Dict[str, List[str]]: 分组名称到样本名列表的映射
+
+    Raises:
+        ValueError: 格式不正确
+    """
+    if not groups_str:
+        return {}
+
+    groups: Dict[str, List[str]] = {}
+    for group_def in groups_str.split(';'):
+        group_def = group_def.strip()
+        if not group_def:
+            continue
+        if ':' not in group_def:
+            raise ValueError(
+                f"分组定义格式错误: '{group_def}'，"
+                f"期望格式为 'GroupName:sample1,sample2'"
+            )
+        group_name, samples_str = group_def.split(':', 1)
+        group_name = group_name.strip()
+        samples = [s.strip() for s in samples_str.split(',') if s.strip()]
+        if not group_name:
+            raise ValueError("分组名称不能为空")
+        if not samples:
+            raise ValueError(f"分组 '{group_name}' 中没有样本")
+        groups[group_name] = samples
+
+    logger.info(f"样本分组解析完成: {len(groups)} 个分组 - {list(groups.keys())}")
+    return groups
+
+
+def _generate_plots(
+    method: str,
+    results: dict,
+    ranked_genes: Optional[list],
+    gene_weights: Optional[dict],
+    gene_sets: Optional[Dict[str, Set[str]]],
+    expr_matrix,
+    groups: Optional[Dict[str, List[str]]],
+    plot_types: List[str],
+    output_dir: str,
+    plot_format: str = 'png',
+    plot_dpi: int = 300,
+) -> List[str]:
+    """根据方法类型生成可视化图表
+
+    根据分析方法和用户指定的图表类型，调用对应的可视化函数生成图表。
+
+    Args:
+        method: 分析方法 (gsea/ssgsea/gsva)
+        results: 分析结果字典 {db_name: DataFrame}
+        ranked_genes: 排序基因列表（GSEA需要）
+        gene_weights: 基因权重字典（GSEA需要）
+        gene_sets: 基因集字典 {set_name: gene_set}（GSEA富集曲线需要）
+        expr_matrix: 表达矩阵 DataFrame（ssGSEA/GSVA需要）
+        groups: 样本分组字典（组间比较图需要）
+        plot_types: 要生成的图表类型列表
+        output_dir: 输出目录
+        plot_format: 图表格式 (png/pdf/svg)
+        plot_dpi: 图表DPI
+
+    Returns:
+        List[str]: 生成的图表文件路径列表
+    """
+    generated_files: List[str] = []
+
+    if not plot_types or not results:
+        return generated_files
+
+    # 校验图表类型是否支持
+    supported = _METHOD_PLOT_TYPES.get(method, set())
+    for pt in plot_types:
+        if pt not in supported:
+            logger.warning(f"方法 '{method}' 不支持图表类型 '{pt}'，跳过。"
+                           f"支持的类型: {sorted(supported)}")
+
+    valid_types = [pt for pt in plot_types if pt in supported]
+    if not valid_types:
+        return generated_files
+
+    # 确保输出目录存在
+    plot_dir = Path(output_dir) / "gsea_plots"
+    plot_dir.mkdir(parents=True, exist_ok=True)
+
+    # ---- GSEA 图表 ----
+    if method == 'gsea':
+        from allenricher.visualization.gsea_plots import (
+            plot_gsea_enrichment,
+            plot_gsea_nes_barplot,
+            plot_gsea_dotplot,
+        )
+
+        for db_name, df in results.items():
+            if df is None or len(df) == 0:
+                continue
+
+            # NES 条形图
+            if 'nes_barplot' in valid_types and 'nes' in df.columns:
+                out_file = str(plot_dir / f"{db_name}_nes_barplot.{plot_format}")
+                try:
+                    plot_gsea_nes_barplot(df, output_file=out_file, dpi=plot_dpi)
+                    generated_files.append(out_file)
+                    logger.info(f"NES条形图已生成: {out_file}")
+                except Exception as e:
+                    logger.error(f"NES条形图生成失败 ({db_name}): {e}")
+
+            # GSEA 气泡图
+            if 'dotplot' in valid_types and 'nes' in df.columns:
+                out_file = str(plot_dir / f"{db_name}_dotplot.{plot_format}")
+                try:
+                    plot_gsea_dotplot(df, output_file=out_file, dpi=plot_dpi)
+                    generated_files.append(out_file)
+                    logger.info(f"GSEA气泡图已生成: {out_file}")
+                except Exception as e:
+                    logger.error(f"GSEA气泡图生成失败 ({db_name}): {e}")
+
+            # GSEA 富集曲线图（需要 ranked_genes + gene_sets）
+            if 'enrichment' in valid_types and ranked_genes and gene_sets:
+                for set_name, gene_set in gene_sets.items():
+                    # 从结果中查找该基因集的统计数据
+                    match = None
+                    if 'pathway' in df.columns:
+                        match_rows = df[df['pathway'] == set_name]
+                        if len(match_rows) > 0:
+                            match = match_rows.iloc[0]
+
+                    if match is None:
+                        continue
+
+                    es_val = match.get('es', 0.0)
+                    nes_val = match.get('nes', 0.0)
+                    pval = match.get('pvalue', match.get('P_Value', 1.0))
+
+                    out_file = str(plot_dir / f"{set_name}_enrichment.{plot_format}")
+                    try:
+                        plot_gsea_enrichment(
+                            ranked_genes=ranked_genes,
+                            gene_weights=gene_weights or {},
+                            gene_set=gene_set,
+                            es=es_val,
+                            nes=nes_val,
+                            pvalue=pval,
+                            title=set_name,
+                            output_file=out_file,
+                            dpi=plot_dpi,
+                        )
+                        generated_files.append(out_file)
+                    except Exception as e:
+                        logger.error(f"富集曲线图生成失败 ({set_name}): {e}")
+
+    # ---- ssGSEA / GSVA 图表 ----
+    elif method in ('ssgsea', 'gsva'):
+        from allenricher.visualization.gsva_plots import (
+            plot_pathway_heatmap,
+            plot_group_comparison,
+            plot_pathway_dotplot,
+            plot_sample_correlation,
+        )
+
+        # 从结果中提取活性得分矩阵
+        # 结果 DataFrame 应为 行=通路, 列=样本 的活性得分
+        scores_df = None
+        for db_name, df in results.items():
+            if df is not None and len(df) > 0:
+                # 尝试将结果转为通路x样本的活性矩阵
+                # 如果结果本身就是活性矩阵格式，直接使用
+                if isinstance(df, pd.DataFrame):
+                    # 检查是否包含数值列（样本列）
+                    numeric_cols = df.select_dtypes(include='number').columns
+                    non_metric_cols = {'pvalue', 'P_Value', 'Adjusted_P_Value',
+                                       'nes', 'es', 'fdr', 'gene_count', 'Gene_Count'}
+                    sample_cols = [c for c in numeric_cols if c not in non_metric_cols]
+                    if sample_cols:
+                        # 尝试使用第一列作为通路名
+                        name_col = None
+                        for col in ['pathway', 'Term_Name', 'Term_ID', df.index.name]:
+                            if col and col in df.columns:
+                                name_col = col
+                                break
+                        if name_col:
+                            scores_df = df.set_index(name_col)[sample_cols]
+                        else:
+                            scores_df = df[sample_cols]
+                            scores_df.index.name = 'pathway'
+                    elif expr_matrix is not None:
+                        # 结果不是活性矩阵，使用表达矩阵
+                        scores_df = expr_matrix
+                break
+
+        if scores_df is None:
+            logger.warning("无法从分析结果中提取活性得分矩阵，跳过可视化")
+            return generated_files
+
+        # 构建分组注释 DataFrame（用于热图注释）
+        annotation_df = None
+        if groups:
+            sample_to_group = {}
+            for group_name, samples in groups.items():
+                for s in samples:
+                    sample_to_group[s] = group_name
+            common_samples = [s for s in scores_df.columns if s in sample_to_group]
+            if common_samples:
+                annotation_df = pd.DataFrame({
+                    'Group': [sample_to_group[s] for s in common_samples]
+                }, index=common_samples)
+
+        # 热图
+        if 'heatmap' in valid_types:
+            out_file = str(plot_dir / f"activity_heatmap.{plot_format}")
+            try:
+                plot_pathway_heatmap(
+                    scores_df,
+                    annotation_col=annotation_df,
+                    output_file=out_file,
+                    dpi=plot_dpi,
+                )
+                generated_files.append(out_file)
+                logger.info(f"活性热图已生成: {out_file}")
+            except Exception as e:
+                logger.error(f"活性热图生成失败: {e}")
+
+        # 组间比较图
+        if 'group_comparison' in valid_types and groups:
+            out_file = str(plot_dir / f"group_comparison.{plot_format}")
+            try:
+                plot_group_comparison(
+                    scores_df,
+                    groups=groups,
+                    output_file=out_file,
+                    dpi=plot_dpi,
+                )
+                generated_files.append(out_file)
+                logger.info(f"组间比较图已生成: {out_file}")
+            except Exception as e:
+                logger.error(f"组间比较图生成失败: {e}")
+
+        # 气泡图
+        if 'dotplot' in valid_types:
+            out_file = str(plot_dir / f"activity_dotplot.{plot_format}")
+            try:
+                plot_pathway_dotplot(
+                    scores_df,
+                    groups=groups,
+                    output_file=out_file,
+                    dpi=plot_dpi,
+                )
+                generated_files.append(out_file)
+                logger.info(f"活性气泡图已生成: {out_file}")
+            except Exception as e:
+                logger.error(f"活性气泡图生成失败: {e}")
+
+        # 样本相关性热图
+        if 'correlation' in valid_types:
+            out_file = str(plot_dir / f"sample_correlation.{plot_format}")
+            try:
+                plot_sample_correlation(
+                    scores_df,
+                    annotation_col=annotation_df,
+                    output_file=out_file,
+                    dpi=plot_dpi,
+                )
+                generated_files.append(out_file)
+                logger.info(f"样本相关性热图已生成: {out_file}")
+            except Exception as e:
+                logger.error(f"样本相关性热图生成失败: {e}")
+
+    return generated_files
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -88,7 +429,7 @@ Examples:
     analyze_parser.add_argument('-d', '--databases', default='GO,KEGG', help='Comma-separated databases')  # 逗号分隔的数据库名称列表
     analyze_parser.add_argument('-o', '--output', default='./results', help='Output directory')        # 输出目录，默认为 ./results
     analyze_parser.add_argument('-b', '--background', help='Background gene list file')                # 背景基因列表文件（可选）
-    analyze_parser.add_argument('-m', '--method', default='fisher', choices=['fisher', 'hypergeometric', 'gsea', 'ssgsea'], help='Enrichment method')  # 富集分析方法：Fisher精确检验/超几何检验/GSEA/ssGSEA
+    analyze_parser.add_argument('-m', '--method', default='fisher', choices=['fisher', 'hypergeometric', 'gsea', 'ssgsea', 'gsva'], help='Enrichment method')  # 富集分析方法：Fisher精确检验/超几何检验/GSEA/ssGSEA/GSVA
     analyze_parser.add_argument('-c', '--correction', default='BH', choices=['BH', 'BY', 'bonferroni', 'holm', 'none'], help='Multiple testing correction')  # 多重检验校正方法
     analyze_parser.add_argument('-p', '--pvalue', type=float, default=0.05, help='P-value cutoff')    # P 值阈值，默认 0.05
     analyze_parser.add_argument('-q', '--qvalue', type=float, default=0.05, help='Q-value cutoff')    # Q 值（校正后 P 值）阈值，默认 0.05
@@ -103,6 +444,13 @@ Examples:
     analyze_parser.add_argument('--ai-model', help='AI model name (override YAML config)')  # AI 模型名称
     analyze_parser.add_argument('--config', help='Configuration file (YAML/JSON)')                      # 外部配置文件路径
     analyze_parser.add_argument('--database-dir', help='Database directory')                       # 数据库目录路径
+    analyze_parser.add_argument('-e', '--expression-matrix', default=None, help='Expression matrix file (TSV/CSV, rows=genes, cols=samples) for GSEA/ssGSEA/GSVA')  # 表达矩阵文件路径（行=基因，列=样本），用于GSEA/ssGSEA/GSVA
+    analyze_parser.add_argument('-r', '--ranked-genes', default=None, help='Ranked gene list file (two columns: gene_name weight) for GSEA')  # 排序基因列表文件路径（两列: 基因名 权重），用于GSEA
+    analyze_parser.add_argument('-g', '--gmt', default=None, help='GMT format gene set file path (supports .gmt and .gmt.gz)')  # GMT格式基因集文件路径，用于GSEA/ssGSEA/GSVA的基因集定义
+    analyze_parser.add_argument('-pt', '--plot-types', default=None, help='Comma-separated plot types to generate. GSEA: enrichment,nes_barplot,dotplot; GSVA/ssGSEA: heatmap,group_comparison,dotplot,correlation')  # 要生成的图表类型，逗号分隔
+    analyze_parser.add_argument('--groups', default=None, help='Sample group definition, format: Group1:sample1,sample2;Group2:sample3,sample4')  # 样本分组定义，用于组间比较图
+    analyze_parser.add_argument('--plot-format', default='png', choices=['png', 'pdf', 'svg'], help='Plot output format (default: png)')  # 图表输出格式
+    analyze_parser.add_argument('--plot-dpi', type=int, default=300, help='Plot resolution/DPI (default: 300)')  # 图表分辨率(DPI)
     analyze_parser.add_argument('--verbose', action='store_true', help='Enable verbose (DEBUG) logging')  # 启用详细日志输出
     
     # ==================== download 子命令 ====================
@@ -244,6 +592,46 @@ def cmd_analyze(args) -> int:
         analyzer = EnrichmentAnalyzer(config)
         gene_set = analyzer.load_gene_list(input_path)
         
+        # ---- 第4.5步：加载表达矩阵或排序基因列表（GSEA/ssGSEA/GSVA专用） ----
+        # 如果使用 GSEA/ssGSEA/GSVA 方法，可以提供表达矩阵或排序基因列表
+        expression_matrix = None
+        ranked_gene_list = None
+        if hasattr(args, 'expression_matrix') and args.expression_matrix:
+            logger.info(f"Loading expression matrix from {args.expression_matrix}")
+            import pandas as pd
+            expr_path = Path(args.expression_matrix)
+            if expr_path.suffix.lower() in ('.csv',):
+                expression_matrix = pd.read_csv(expr_path, index_col=0)
+            else:
+                # 默认按TSV格式读取
+                expression_matrix = pd.read_csv(expr_path, sep='\t', index_col=0)
+            logger.info(f"Expression matrix loaded: {expression_matrix.shape[0]} genes x {expression_matrix.shape[1]} samples")
+        if hasattr(args, 'ranked_genes') and args.ranked_genes:
+            logger.info(f"Loading ranked gene list from {args.ranked_genes}")
+            ranked_gene_list = analyzer.load_ranked_gene_list(args.ranked_genes)
+            logger.info(f"Ranked gene list loaded: {len(ranked_gene_list)} genes")
+        
+        # ---- 第4.6步：加载GMT基因集文件（GSEA/ssGSEA/GSVA可视化专用） ----
+        gene_sets = None
+        if hasattr(args, 'gmt') and args.gmt:
+            gene_sets = _parse_gmt_file(args.gmt)
+        
+        # ---- 第4.7步：解析可视化参数 ----
+        # 解析 --plot-types 逗号分隔字符串为列表
+        plot_types_list = None
+        if hasattr(args, 'plot_types') and args.plot_types:
+            plot_types_list = [pt.strip() for pt in args.plot_types.split(',') if pt.strip()]
+            logger.info(f"请求生成的图表类型: {plot_types_list}")
+        
+        # 解析 --groups 分组字符串为字典
+        groups_dict = None
+        if hasattr(args, 'groups') and args.groups:
+            groups_dict = _parse_groups(args.groups)
+        
+        # 获取图表输出格式和DPI
+        plot_format = getattr(args, 'plot_format', 'png')
+        plot_dpi = getattr(args, 'plot_dpi', 300)
+        
         # ---- 第5步：加载富集分析数据库 ----
         # 根据配置中指定的数据库名称加载对应的数据库数据
         db_dir = args.database_dir if args.database_dir else config.database_dir
@@ -312,6 +700,36 @@ def cmd_analyze(args) -> int:
             for db_name, df in significant_results.items():
                 if len(df) > 0:
                     plotter.plot_all(df, db_name, top_n=config.top_terms)
+        
+        # ---- 第9.5步：生成GSEA/GSVA/ssGSEA专用可视化图表 ----
+        # 如果用户指定了 --plot-types 且方法为 GSEA/ssGSEA/GSVA，则调用专用可视化函数
+        gsea_plot_files = []
+        if (plot_types_list and config.method in _METHOD_PLOT_TYPES
+                and not args.no_plot and results):
+            logger.info(f"Generating {config.method} specific plots...")
+            # 构建基因权重字典（GSEA富集曲线需要）
+            gene_weights = None
+            if ranked_gene_list and hasattr(ranked_gene_list, 'items'):
+                gene_weights = dict(ranked_gene_list)
+            elif ranked_gene_list and isinstance(ranked_gene_list, list):
+                # ranked_gene_list 为 [(gene, weight), ...] 列表
+                gene_weights = {g: w for g, w in ranked_gene_list}
+            
+            gsea_plot_files = _generate_plots(
+                method=config.method,
+                results=results,
+                ranked_genes=list(ranked_gene_list) if ranked_gene_list else None,
+                gene_weights=gene_weights,
+                gene_sets=gene_sets,
+                expr_matrix=expression_matrix,
+                groups=groups_dict,
+                plot_types=plot_types_list,
+                output_dir=str(output_dir),
+                plot_format=plot_format,
+                plot_dpi=plot_dpi,
+            )
+            if gsea_plot_files:
+                logger.info(f"GSEA/GSVA/ssGSEA 可视化完成: {len(gsea_plot_files)} 个图表")
         
         # ---- 第10步：生成 AI 解读报告 ----
         # 如果用户指定了 AI 后端（命令行或YAML配置），则调用 AI 模型对分析结果进行智能解读

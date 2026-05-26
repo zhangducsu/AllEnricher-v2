@@ -10,6 +10,8 @@ Interactive HTML Report Generator for AllEnricher v2.0
 import os
 import json
 import logging
+import tempfile
+import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Any
@@ -40,7 +42,17 @@ class ReportGenerator:
         results: Dict[str, pd.DataFrame],
         output_file: str,
         gene_list: List[str] = None,
-        ai_interpretation: Dict[str, str] = None
+        ai_interpretation: Dict[str, str] = None,
+        pvalue_cutoff: float = 0.05,
+        qvalue_cutoff: float = 0.05,
+        gsea_results: pd.DataFrame = None,
+        gsea_ranked_genes: List[str] = None,
+        gsea_gene_weights: Dict[str, float] = None,
+        gsea_gene_sets: Dict[str, set] = None,
+        gsva_results: pd.DataFrame = None,
+        gsva_groups: Dict[str, List[str]] = None,
+        analysis_method: str = None,
+        plot_types: List[str] = None
     ) -> str:
         has_results = results and any(len(df) > 0 for df in results.values())
 
@@ -50,18 +62,53 @@ class ReportGenerator:
                 f.write(html)
             return output_file
 
-        summary = self._generate_summary(results, gene_list)
-        tables = self._generate_tables(results)
-        plots = self._generate_plot_section(results)
+        # 过滤显著结果：只保留通过 P-value 和 Q-value 阈值的条目
+        sig_results = {}
+        for db_name, df in results.items():
+            if len(df) == 0:
+                continue
+            mask = pd.Series(True, index=df.index)
+            if 'P_Value' in df.columns:
+                mask &= df['P_Value'] <= pvalue_cutoff
+            if 'Adjusted_P_Value' in df.columns:
+                mask &= df['Adjusted_P_Value'] <= qvalue_cutoff
+            sig_results[db_name] = df.loc[mask]
+
+        # 如果过滤后无结果，回退到无结果页面
+        if not sig_results or all(len(df) == 0 for df in sig_results.values()):
+            html = self._generate_no_results_page(gene_list)
+            with open(output_file, 'w', encoding='utf-8') as f:
+                f.write(html)
+            return output_file
+
+        summary = self._generate_summary(sig_results, gene_list)
+        tables = self._generate_tables(sig_results)
+        plots = self._generate_plot_section(sig_results)
         ai_section = self._generate_ai_section(ai_interpretation) if ai_interpretation else ""
 
-        active_db_names = [db for db, df in results.items() if len(df) > 0]
+        # 生成 GSEA/GSVA 可视化区域
+        gsea_plots_html = ""
+        gsva_plots_html = ""
+        if gsea_results is not None and len(gsea_results) > 0:
+            gsea_plots_html = self._generate_gsea_plots_section(
+                gsea_results, gsea_ranked_genes, gsea_gene_weights,
+                gsea_gene_sets, plot_types
+            )
+        if gsva_results is not None and len(gsva_results) > 0:
+            gsva_plots_html = self._generate_gsva_plots_section(
+                gsva_results, gsva_groups, plot_types
+            )
+
+        active_db_names = [db for db, df in sig_results.items() if len(df) > 0]
         html = self._build_html(
             summary=summary,
             tables=tables,
             plots=plots,
             ai_section=ai_section,
-            db_names=active_db_names
+            db_names=active_db_names,
+            gsea_plots_html=gsea_plots_html,
+            gsva_plots_html=gsva_plots_html,
+            analysis_method=analysis_method
         )
 
         with open(output_file, 'w', encoding='utf-8') as f:
@@ -251,7 +298,7 @@ class ReportGenerator:
         return html
 
     def _generate_tables(self, results: Dict[str, pd.DataFrame]) -> str:
-        """生成交互式数据表格"""
+        """生成交互式数据表格（含 GeneList 列）"""
         tables_html = []
 
         for db_name, df in results.items():
@@ -268,30 +315,33 @@ class ReportGenerator:
                 adjpv = f"{row.get('Adjusted_P_Value', 1):.2e}"
                 term_url = row.get('Term_URL', '')
                 genes_str = str(row.get('Genes', ''))
-                genes_short = genes_str[:60] + ('...' if len(genes_str) > 60 else '')
 
                 if term_url:
                     tid_cell = f'<a href="{term_url}" target="_blank">{tid}</a>'
                 else:
                     tid_cell = tid
 
-                rows.append(f'<tr><td>{tid_cell}</td><td>{tname}</td><td>{gcount}</td>'
-                            f'<td>{rf}</td><td>{pv}</td><td>{adjpv}</td>'
-                            f'<td class="genes" title="{genes_str}">{genes_short}</td></tr>')
+                # GeneList 作为独立可见列展示，悬停显示完整列表
+                rows.append(
+                    f'<tr><td>{tid_cell}</td><td>{tname}</td><td>{gcount}</td>'
+                    f'<td>{rf}</td><td>{pv}</td><td>{adjpv}</td>'
+                    f'<td class="genes" title="{genes_str}">{genes_str}</td></tr>'
+                )
 
             table_html = f'''
             <div class="section" id="{db_name}-table">
-                <h2>{db_name} Enrichment Results <span class="result-count">({len(df)} terms)</span></h2>
+                <h2>{db_name} Enrichment Results <span class="result-count">({len(df)} significant terms)</span></h2>
                 <div class="table-wrapper">
                     <table class="data-table" id="table-{db_name}">
                         <thead>
                             <tr>
                                 <th>Term ID</th>
                                 <th>Term Name</th>
-                                <th>Genes</th>
+                                <th>Gene Count</th>
                                 <th>Rich Factor</th>
                                 <th>P-value</th>
                                 <th>Adj. P-value</th>
+                                <th>Gene List</th>
                             </tr>
                         </thead>
                         <tbody>{"".join(rows)}</tbody>
@@ -310,10 +360,10 @@ class ReportGenerator:
         """生成图表展示区域 - 使用PNG图片直接嵌入HTML"""
         plots_html = ['<div class="section" id="plots"><h2>Visualization</h2>']
 
+        has_any_plot = False
         for db_name in results.keys():
             plot_dir = self.output_dir / "plots"
             
-            # 优先使用PNG，回退到PDF链接
             barplot_png = plot_dir / f"{db_name}_barplot.png"
             barplot_pdf = plot_dir / f"{db_name}_barplot.pdf"
             bubble_png = plot_dir / f"{db_name}_bubble.png"
@@ -323,37 +373,37 @@ class ReportGenerator:
             has_bubble = bubble_png.exists() or bubble_pdf.exists()
 
             if has_bar or has_bubble:
+                has_any_plot = True
                 plots_html.append(f'<div class="plot-group"><h3>{db_name}</h3>')
                 
-                # Bar Plot
                 if barplot_png.exists():
-                    # 使用PNG图片
                     img_data = self._encode_image_to_base64(barplot_png)
                     plots_html.append(f'''
                         <div class="plot-container">
                             <img src="data:image/png;base64,{img_data}" alt="{db_name} Bar Plot" class="plot-img">
                             <p class="plot-caption">Bar Plot (Top enriched terms by Q-value)</p>
-                        </div>
-                    ''')
+                        </div>''')
                 elif barplot_pdf.exists():
-                    # 回退到PDF链接
                     plots_html.append(f'<a href="plots/{barplot_pdf.name}" target="_blank" class="plot-link">Bar Plot (PDF)</a>')
                 
-                # Bubble Plot
                 if bubble_png.exists():
-                    # 使用PNG图片
                     img_data = self._encode_image_to_base64(bubble_png)
                     plots_html.append(f'''
                         <div class="plot-container">
                             <img src="data:image/png;base64,{img_data}" alt="{db_name} Bubble Plot" class="plot-img">
                             <p class="plot-caption">Bubble Plot (Gene count vs Rich factor)</p>
-                        </div>
-                    ''')
+                        </div>''')
                 elif bubble_pdf.exists():
-                    # 回退到PDF链接
                     plots_html.append(f'<a href="plots/{bubble_pdf.name}" target="_blank" class="plot-link">Bubble Plot (PDF)</a>')
                 
                 plots_html.append('</div>')
+
+        if not has_any_plot:
+            plots_html.append('''
+                <div class="plot-placeholder">
+                    <p>No plots generated. Plots can be created by running the analysis with the
+                    <code>--plot-formats png</code> option or by using the visualization module directly.</p>
+                </div>''')
 
         plots_html.append('</div>')
         return "\n".join(plots_html)
@@ -366,6 +416,282 @@ class ReportGenerator:
         except Exception as e:
             logger.warning(f"图片编码失败: {image_path}, {e}")
             return ""
+
+    def _generate_gsea_plots_section(
+        self,
+        gsea_results: pd.DataFrame,
+        ranked_genes: List[str] = None,
+        gene_weights: Dict[str, float] = None,
+        gene_sets: Dict[str, set] = None,
+        plot_types: List[str] = None
+    ) -> str:
+        """
+        生成GSEA可视化区域HTML
+
+        调用 gsea_plots 模块生成图表，保存为临时PNG，base64编码嵌入HTML。
+        只为前5个最显著通路生成富集曲线图。
+
+        Args:
+            gsea_results: GSEA分析结果DataFrame，需包含 pathway, nes, pvalue, gene_count 等列
+            ranked_genes: GSEA排序基因列表
+            gene_weights: GSEA基因权重字典
+            gene_sets: GSEA基因集字典 {pathway_name: set_of_genes}
+            plot_types: 要生成的图表类型列表
+
+        Returns:
+            str: GSEA可视化区域HTML字符串
+        """
+        if plot_types is None:
+            plot_types = ["enrichment", "nes_barplot", "dotplot"]
+
+        # 创建临时目录
+        temp_dir = Path(tempfile.mkdtemp(prefix="gsea_plots_"))
+        html_parts = ['<div class="section" id="gsea-plots">',
+                       '<h2>GSEA Visualization</h2>',
+                       '<div class="plot-grid">']
+
+        has_any_plot = False
+
+        try:
+            # 1. 富集曲线图（前5个最显著通路）
+            if "enrichment" in plot_types and ranked_genes and gene_weights and gene_sets:
+                top_pathways = gsea_results.head(5)
+                for _, row in top_pathways.iterrows():
+                    pw_name = row.get("pathway", "")
+                    if pw_name not in gene_sets:
+                        continue
+                    try:
+                        from allenricher.visualization.gsea_plots import plot_gsea_enrichment
+                        output_file = str(temp_dir / f"enrichment_{pw_name[:50]}.png")
+                        fig = plot_gsea_enrichment(
+                            ranked_genes=ranked_genes,
+                            gene_weights=gene_weights,
+                            gene_set=gene_sets[pw_name],
+                            es=row.get("es", 0.0),
+                            nes=row.get("nes", 0.0),
+                            pvalue=row.get("pvalue", 1.0),
+                            title=pw_name,
+                            output_file=output_file,
+                            dpi=150,
+                        )
+                        import matplotlib.pyplot as plt
+                        plt.close(fig)
+
+                        img_data = self._encode_image_to_base64(Path(output_file))
+                        if img_data:
+                            has_any_plot = True
+                            html_parts.append(
+                                f'<div class="gsea-plot-container">'
+                                f'<p class="plot-title">{pw_name}</p>'
+                                f'<img src="data:image/png;base64,{img_data}" '
+                                f'alt="GSEA Enrichment: {pw_name}" class="plot-img">'
+                                f'<p class="plot-caption">NES = {row.get("nes", 0):.2f}, '
+                                f'P-value = {row.get("pvalue", 1):.2e}</p>'
+                                f'</div>'
+                            )
+                    except Exception as e:
+                        logger.warning(f"生成GSEA富集曲线图失败 ({pw_name}): {e}")
+
+            # 2. NES 条形图
+            if "nes_barplot" in plot_types:
+                try:
+                    from allenricher.visualization.gsea_plots import plot_gsea_nes_barplot
+                    output_file = str(temp_dir / "nes_barplot.png")
+                    fig = plot_gsea_nes_barplot(
+                        results_df=gsea_results,
+                        output_file=output_file,
+                        dpi=150,
+                    )
+                    import matplotlib.pyplot as plt
+                    plt.close(fig)
+
+                    img_data = self._encode_image_to_base64(Path(output_file))
+                    if img_data:
+                        has_any_plot = True
+                        html_parts.append(
+                            f'<div class="gsea-plot-container">'
+                            f'<p class="plot-title">NES Ranking</p>'
+                            f'<img src="data:image/png;base64,{img_data}" '
+                            f'alt="GSEA NES Barplot" class="plot-img">'
+                            f'<p class="plot-caption">Normalized Enrichment Score ranking across pathways</p>'
+                            f'</div>'
+                        )
+                except Exception as e:
+                    logger.warning(f"生成GSEA NES条形图失败: {e}")
+
+            # 3. 气泡图
+            if "dotplot" in plot_types:
+                try:
+                    from allenricher.visualization.gsea_plots import plot_gsea_dotplot
+                    output_file = str(temp_dir / "gsea_dotplot.png")
+                    fig = plot_gsea_dotplot(
+                        results_df=gsea_results,
+                        output_file=output_file,
+                        dpi=150,
+                    )
+                    import matplotlib.pyplot as plt
+                    plt.close(fig)
+
+                    img_data = self._encode_image_to_base64(Path(output_file))
+                    if img_data:
+                        has_any_plot = True
+                        html_parts.append(
+                            f'<div class="gsea-plot-container">'
+                            f'<p class="plot-title">GSEA Dot Plot</p>'
+                            f'<img src="data:image/png;base64,{img_data}" '
+                            f'alt="GSEA Dotplot" class="plot-img">'
+                            f'<p class="plot-caption">NES vs gene count, colored by significance</p>'
+                            f'</div>'
+                        )
+                except Exception as e:
+                    logger.warning(f"生成GSEA气泡图失败: {e}")
+
+        finally:
+            # 清理临时目录
+            try:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+            except Exception:
+                pass
+
+        if not has_any_plot:
+            html_parts.append(
+                '<div class="plot-placeholder">'
+                '<p>Failed to generate GSEA plots. Check input data format.</p>'
+                '</div>'
+            )
+
+        html_parts.append('</div></div>')
+        return "\n".join(html_parts)
+
+    def _generate_gsva_plots_section(
+        self,
+        gsva_results: pd.DataFrame,
+        groups: Dict[str, List[str]] = None,
+        plot_types: List[str] = None
+    ) -> str:
+        """
+        生成ssGSEA/GSVA可视化区域HTML
+
+        调用 gsva_plots 模块生成图表，保存为临时PNG，base64编码嵌入HTML。
+
+        Args:
+            gsva_results: ssGSEA/GSVA活性矩阵，行为通路名，列为样本名
+            groups: 样本分组字典 {group_name: [sample_names]}
+            plot_types: 要生成的图表类型列表
+
+        Returns:
+            str: GSVA可视化区域HTML字符串
+        """
+        if plot_types is None:
+            plot_types = ["heatmap", "group_comparison", "correlation"]
+
+        # 创建临时目录
+        temp_dir = Path(tempfile.mkdtemp(prefix="gsva_plots_"))
+        html_parts = ['<div class="section" id="gsva-plots">',
+                       '<h2>ssGSEA/GSVA Visualization</h2>',
+                       '<div class="plot-grid">']
+
+        has_any_plot = False
+
+        try:
+            # 1. 通路活性热图
+            if "heatmap" in plot_types:
+                try:
+                    from allenricher.visualization.gsva_plots import plot_pathway_heatmap
+                    output_file = str(temp_dir / "pathway_heatmap.png")
+                    fig = plot_pathway_heatmap(
+                        scores_df=gsva_results,
+                        output_file=output_file,
+                        dpi=150,
+                    )
+                    import matplotlib.pyplot as plt
+                    plt.close(fig)
+
+                    img_data = self._encode_image_to_base64(Path(output_file))
+                    if img_data:
+                        has_any_plot = True
+                        html_parts.append(
+                            f'<div class="gsva-plot-container">'
+                            f'<p class="plot-title">Pathway Activity Heatmap</p>'
+                            f'<img src="data:image/png;base64,{img_data}" '
+                            f'alt="Pathway Heatmap" class="plot-img">'
+                            f'<p class="plot-caption">Sample-pathway activity scores with hierarchical clustering</p>'
+                            f'</div>'
+                        )
+                except Exception as e:
+                    logger.warning(f"生成通路活性热图失败: {e}")
+
+            # 2. 组间比较图（需要分组信息）
+            if "group_comparison" in plot_types and groups and len(groups) >= 2:
+                try:
+                    from allenricher.visualization.gsva_plots import plot_group_comparison
+                    output_file = str(temp_dir / "group_comparison.png")
+                    fig = plot_group_comparison(
+                        scores_df=gsva_results,
+                        groups=groups,
+                        output_file=output_file,
+                        dpi=150,
+                    )
+                    import matplotlib.pyplot as plt
+                    plt.close(fig)
+
+                    img_data = self._encode_image_to_base64(Path(output_file))
+                    if img_data:
+                        has_any_plot = True
+                        html_parts.append(
+                            f'<div class="gsva-plot-container">'
+                            f'<p class="plot-title">Group Comparison</p>'
+                            f'<img src="data:image/png;base64,{img_data}" '
+                            f'alt="Group Comparison" class="plot-img">'
+                            f'<p class="plot-caption">Pathway activity comparison between sample groups</p>'
+                            f'</div>'
+                        )
+                except Exception as e:
+                    logger.warning(f"生成组间比较图失败: {e}")
+
+            # 3. 样本相关性热图
+            if "correlation" in plot_types:
+                try:
+                    from allenricher.visualization.gsva_plots import plot_sample_correlation
+                    output_file = str(temp_dir / "sample_correlation.png")
+                    fig = plot_sample_correlation(
+                        scores_df=gsva_results,
+                        output_file=output_file,
+                        dpi=150,
+                    )
+                    import matplotlib.pyplot as plt
+                    plt.close(fig)
+
+                    img_data = self._encode_image_to_base64(Path(output_file))
+                    if img_data:
+                        has_any_plot = True
+                        html_parts.append(
+                            f'<div class="gsva-plot-container">'
+                            f'<p class="plot-title">Sample Correlation</p>'
+                            f'<img src="data:image/png;base64,{img_data}" '
+                            f'alt="Sample Correlation" class="plot-img">'
+                            f'<p class="plot-caption">Pearson correlation between samples based on pathway activity</p>'
+                            f'</div>'
+                        )
+                except Exception as e:
+                    logger.warning(f"生成样本相关性热图失败: {e}")
+
+        finally:
+            # 清理临时目录
+            try:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+            except Exception:
+                pass
+
+        if not has_any_plot:
+            html_parts.append(
+                '<div class="plot-placeholder">'
+                '<p>Failed to generate GSVA plots. Check input data format.</p>'
+                '</div>'
+            )
+
+        html_parts.append('</div></div>')
+        return "\n".join(html_parts)
 
     def _generate_ai_section(self, ai_interpretation: Dict[str, str]) -> str:
         """生成AI解读部分"""
@@ -391,15 +717,31 @@ class ReportGenerator:
         </div>'''
         return html
 
-    def _build_html(self, summary: str, tables: str, plots: str, ai_section: str, db_names: List[str] = None) -> str:
+    def _build_html(self, summary: str, tables: str, plots: str, ai_section: str,
+                    db_names: List[str] = None,
+                    gsea_plots_html: str = "",
+                    gsva_plots_html: str = "",
+                    analysis_method: str = None) -> str:
         """构建完整HTML文档"""
 
         nav_items = '<li><a href="#summary">Summary</a></li>'
         nav_items += '<li><a href="#plots">Plots</a></li>'
+        # GSEA/GSVA 导航链接
+        if gsea_plots_html:
+            nav_items += '<li><a href="#gsea-plots">GSEA</a></li>'
+        if gsva_plots_html:
+            nav_items += '<li><a href="#gsva-plots">GSVA</a></li>'
         if db_names:
             nav_items += ''.join([f'<li><a href="#{db}-table">{db}</a></li>' for db in db_names])
         if ai_section:
             nav_items += '<li><a href="#ai-interpretation">AI</a></li>'
+
+        # 在 plots section 之后、tables section 之前插入 GSEA/GSVA 可视化区域
+        gsea_gsva_sections = ""
+        if gsea_plots_html:
+            gsea_gsva_sections += gsea_plots_html
+        if gsva_plots_html:
+            gsea_gsva_sections += gsva_plots_html
 
         html = f'''<!DOCTYPE html>
 <html lang="en">
@@ -595,10 +937,15 @@ class ReportGenerator:
         .data-table .genes {{
             font-size: 0.8rem;
             color: var(--text-muted);
-            max-width: 200px;
+            max-width: 350px;
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
+        }}
+
+        .data-table .genes:hover {{
+            white-space: normal;
+            word-break: break-all;
         }}
 
         /* Table Actions */
@@ -745,6 +1092,23 @@ class ReportGenerator:
             font-weight: 600;
         }}
 
+        /* Plot Placeholder */
+        .plot-placeholder {{
+            padding: 2rem;
+            text-align: center;
+            color: var(--text-muted);
+            background: var(--bg-secondary);
+            border: 1px dashed var(--border-color);
+            border-radius: 4px;
+        }}
+
+        .plot-placeholder code {{
+            background: var(--bg-primary);
+            padding: 0.15rem 0.4rem;
+            border-radius: 3px;
+            font-size: 0.8rem;
+        }}
+
         /* Responsive */
         @media (max-width: 768px) {{
             .header-content {{
@@ -765,6 +1129,34 @@ class ReportGenerator:
             .stat-item {{
                 min-width: 80px;
             }}
+
+            .plot-grid {{
+                grid-template-columns: 1fr !important;
+            }}
+        }}
+
+        /* GSEA/GSVA Plot Styles */
+        .gsea-plot-container,
+        .gsva-plot-container {{
+            background: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            padding: 1rem;
+            text-align: center;
+        }}
+
+        .plot-grid {{
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 1.5rem;
+        }}
+
+        .plot-title {{
+            font-family: 'Noto Serif', Georgia, serif;
+            font-size: 0.95rem;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 0.75rem;
         }}
     </style>
 </head>
@@ -783,6 +1175,7 @@ class ReportGenerator:
     <main class="main">
         {summary}
         {plots}
+        {gsea_gsva_sections}
         {tables}
         {ai_section}
     </main>
@@ -792,14 +1185,16 @@ class ReportGenerator:
     </footer>
 
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <link rel="stylesheet" href="https://cdn.datatables.net/1.13.4/css/jquery.dataTables.min.css">
     <script src="https://cdn.datatables.net/1.13.4/js/jquery.dataTables.min.js"></script>
     <script>
         $(document).ready(function() {{
             $('.data-table').DataTable({{
-                pageLength: 25,
+                pageLength: 20,
+                lengthMenu: [10, 20, 50, 100],
                 order: [[5, 'asc']],
                 columnDefs: [
-                    {{ orderable: false, targets: [2, 6] }}
+                    {{ orderable: false, targets: [6] }}
                 ]
             }});
         }});

@@ -36,8 +36,10 @@ from typing import Dict, List, Optional, Any
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, BackgroundTasks, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from pathlib import Path
 
 from allenricher.core.config import Config
 from allenricher.core.enrichment import EnrichmentAnalyzer
@@ -75,6 +77,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 挂载静态文件目录（用于 Web 界面）
+static_dir = Path(__file__).parent / "static"
+if static_dir.exists():
+    app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
 # 任务存储字典（内存中存储所有分析任务的状态和结果）
 # 键为任务ID（UUID字符串），值为包含任务详细信息的字典
@@ -193,19 +200,25 @@ class SpeciesInfoResponse(BaseModel):
 
 # ===================== API 端点 =====================
 
-@app.get("/")
+@app.get("/", response_class=HTMLResponse)
 async def root():
     """
     根端点 (GET /)
 
-    返回 API 服务的基本信息，包括服务名称、版本号、
-    API 文档地址以及所有可用端点的列表。
-    可用于服务健康检查和 API 发现。
+    返回 Web 分析界面。如果 static/index.html 存在则返回该页面，
+    否则返回 API 基本信息（JSON 格式）。
     """
+    index_file = static_dir / "index.html"
+    if index_file.exists():
+        with open(index_file, "r", encoding="utf-8") as f:
+            return f.read()
+    
+    # 如果没有静态文件，返回 API 信息
     return {
         "name": "AllEnricher API",
         "version": "2.0.0",
         "docs": "/docs",
+        "webui": "/static/index.html (if available)",
         "endpoints": {
             "analyze": "/api/analyze",
             "upload": "/api/upload",
