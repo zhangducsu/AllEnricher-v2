@@ -32,6 +32,8 @@
 """
 
 import os
+import gzip
+import logging
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -43,6 +45,10 @@ from .parsers.do import DOParser
 from .parsers.disgenet import DisGeNETParser
 from .downloader import DataDownloader
 from .gmt_generator import GMTGenerator
+from .species_registry import SpeciesRegistry, SpeciesEntry
+from .goa_fetcher import GOAFetcher
+
+logger = logging.getLogger(__name__)
 
 
 class DatabaseBuilder:
@@ -170,6 +176,369 @@ class DatabaseBuilder:
         # 自动生成 GMT 文件
         self.generate_gmt_files(species, str(outdir))
         return str(outdir)
+
+    # ============================
+    # GO 数据库构建（GOA 来源）
+    # ============================
+    def _get_species_dir(self, taxid: int, latin_name: str) -> str:
+        """生成物种目录名: taxid.物种拉丁名（空格替换为下划线）"""
+        return f"{taxid}.{latin_name.replace(' ', '_')}"
+
+    def _get_species_prefix(self, taxid: int, latin_name: str) -> str:
+        """生成文件名前缀: taxid.物种拉丁名（空格替换为下划线）"""
+        return f"{taxid}.{latin_name.replace(' ', '_')}"
+
+    def build_go_from_goa(self, taxid: int, latin_name: str,
+                          goa_filename: str, go_version: str = None) -> str:
+        """从 UniProt GOA proteomes 构建 GO 数据库
+
+        步骤:
+        1. 确定版本号（使用 go_version 或自动检测）
+        2. 获取物种目录名: f"{taxid}.{latin_name.replace(' ', '_')}"
+        3. 创建输出目录: database/organism/v{date}/{species_dir}/
+        4. 初始化 GOAFetcher，下载 GOA 文件
+        5. 解析 GOA 文件，获取 gene_to_go 和 all_genes
+        6. 从 go-basic.obo 获取 GO term 名称
+        7. 生成 GO2gene.tab.gz（0/1矩阵）
+        8. 生成 gene2go.txt（注释列表）
+        9. 生成 GO2disc.gz（GO描述）
+        10. 生成 GMT 文件
+
+        参数:
+            taxid: NCBI Taxonomy ID
+            latin_name: 物种拉丁名
+            goa_filename: GOA 文件名（如 "9606.Homo_sapiens.goa"）
+            go_version: GO 版本号
+
+        返回: 输出目录路径
+        """
+        # Step 1: 确定 GO 版本号
+        if go_version is None:
+            downloader = DataDownloader(root_dir=str(self.root_dir))
+            go_version = downloader.get_latest_go_version()
+            if go_version is None:
+                date_str = datetime.now().strftime("%Y%m%d")
+                go_version = f"GO{date_str}"
+                logger.warning("未找到 GO 基础数据版本，使用默认版本: %s", go_version)
+
+        # Step 2: 物种目录名和文件前缀
+        species_dir = self._get_species_dir(taxid, latin_name)
+        prefix = self._get_species_prefix(taxid, latin_name)
+
+        # Step 3: 创建输出目录
+        date_str = datetime.now().strftime("%Y%m%d")
+        outdir = self.organism_dir / f"v{date_str}" / species_dir
+        outdir.mkdir(parents=True, exist_ok=True)
+
+        # 获取 go-basic.obo 路径（用于提取 GO term 名称和生成 GO2disc.gz）
+        go_basic = self.basic_dir / "go" / go_version
+        obo_path = go_basic / "go-basic.obo"
+
+        print(f"\n{'='*60}")
+        print(f"构建 GO 数据库 (GOA 来源): {species_dir} (taxid={taxid})")
+        print(f"GOA 文件: {goa_filename}")
+        print(f"GO 版本: {go_version}")
+        print(f"输出目录: {outdir}")
+        print(f"{'='*60}")
+
+        # Step 4: 初始化 GOAFetcher，下载 GOA 文件
+        goa_date = go_version.replace("GO", "") if go_version.startswith("GO") else date_str
+        goa_cache_dir = self.basic_dir / "goa" / f"GOA{goa_date}"
+        fetcher = GOAFetcher(cache_dir=str(goa_cache_dir), overwrite=False)
+
+        latin_name_underscore = latin_name.replace(" ", "_")
+        goa_file = fetcher.fetch_species_data(
+            taxid=taxid,
+            latin_name=latin_name_underscore,
+            goa_filename=goa_filename,
+        )
+        logger.info("GOA 文件已就绪: %s", goa_file)
+
+        # Step 5: 解析 GOA 文件
+        print("|--- Step 1/4: 解析 GOA 文件...")
+        gene_to_go, all_genes = fetcher.parse_goa_file(goa_file, taxid)
+
+        if not all_genes:
+            raise ValueError(
+                f"GOA 文件中未找到 taxid={taxid} 的有效基因注释"
+            )
+
+        # 收集所有 GO term
+        all_go_terms: set = set()
+        for go_set in gene_to_go.values():
+            all_go_terms.update(go_set)
+
+        logger.info("共找到 %d 个基因, %d 个 GO term", len(all_genes), len(all_go_terms))
+
+        # Step 6: 从 go-basic.obo 获取 GO term 名称
+        go_names: Dict[str, str] = {}
+        if obo_path.exists():
+            print("|--- Step 2/4: 从 go-basic.obo 提取 GO term 名称...")
+            go_names = self._extract_go_names_from_obo(str(obo_path))
+            logger.info("从 obo 提取到 %d 个 GO term 名称", len(go_names))
+        else:
+            logger.warning("go-basic.obo 不存在: %s，GO term 名称将为空", obo_path)
+
+        # Step 7: 生成 GO2gene.tab.gz
+        print("|--- Step 3/4: 生成 GO2gene.tab.gz...")
+        go2gene_path = outdir / f"{prefix}.GO2gene.tab.gz"
+        GOAFetcher.build_go2gene_matrix(
+            gene_to_go=gene_to_go,
+            all_genes=all_genes,
+            all_go_terms=all_go_terms,
+            output_path=go2gene_path,
+        )
+
+        # Step 8: 生成 gene2go.txt
+        print("|--- Step 3/4: 生成 gene2go.txt...")
+        gene2go_path = outdir / f"{prefix}.gene2go.txt"
+        GOAFetcher.build_gene2go_list(
+            gene_to_go=gene_to_go,
+            go_names=go_names,
+            output_path=gene2go_path,
+        )
+
+        # Step 9: 生成 GO2disc.gz
+        print("|--- Step 4/4: 生成 GO2disc.gz...")
+        if obo_path.exists():
+            GOParser.parse_obo(obo_path=str(obo_path), outdir=str(outdir))
+        else:
+            logger.warning("跳过 GO2disc.gz 生成（go-basic.obo 不存在）")
+
+        # 验证输出文件
+        expected_files = [
+            f"{prefix}.GO2gene.tab.gz",
+            f"{prefix}.gene2go.txt",
+            "GO2disc.gz",
+        ]
+        for fname in expected_files:
+            fpath = outdir / fname
+            if fpath.exists():
+                print(f"    [OK] {fname}")
+            else:
+                print(f"    [MISSING] {fname} - 未生成")
+
+        print(f"\nGO 数据库构建完成 (GOA 来源) -> {outdir}")
+
+        # Step 10: 生成 GMT 文件
+        self._generate_gmt_for_species_dir(species_dir, str(outdir), prefix)
+
+        return str(outdir)
+
+    def _extract_go_names_from_obo(self, obo_path: str) -> Dict[str, str]:
+        """从 go-basic.obo 提取 GO ID -> name 映射
+
+        Args:
+            obo_path: go-basic.obo 文件路径
+
+        Returns:
+            {GO_ID: GO_name}
+        """
+        import re
+
+        go_names: Dict[str, str] = {}
+        go_id_pattern = re.compile(r'^id:\s(GO:\d+)')
+        name_pattern = re.compile(r'^name:\s(.*)')
+
+        with open(obo_path, 'r', encoding='utf-8') as f:
+            current_id = None
+            for line in f:
+                line = line.strip()
+                m = go_id_pattern.match(line)
+                if m:
+                    current_id = m.group(1)
+                    continue
+                m = name_pattern.match(line)
+                if m and current_id:
+                    go_names[current_id] = m.group(1)
+                    current_id = None
+
+        return go_names
+
+    def _generate_gmt_for_species_dir(self, species_dir: str, output_dir: str,
+                                       prefix: str) -> Dict[str, str]:
+        """为 species_dir 格式的数据库目录生成 GMT 文件
+
+        与 generate_gmt_files 类似，但使用 prefix（如 9606.Homo_sapiens）
+        而非 species 缩写（如 hsa）来定位矩阵文件。
+
+        Args:
+            species_dir: 物种目录名（如 "9606.Homo_sapiens"）
+            output_dir: 数据库输出目录路径
+            prefix: 文件名前缀（如 "9606.Homo_sapiens"）
+
+        Returns:
+            {数据库名称: GMT文件路径}
+        """
+        generator = GMTGenerator(organism_dir=output_dir)
+        results: Dict[str, str] = {}
+
+        # 尝试生成 GO GMT
+        tab_path = Path(output_dir) / f"{prefix}.GO2gene.tab.gz"
+        disc_path = Path(output_dir) / "GO2disc.gz"
+        if tab_path.exists() and disc_path.exists():
+            try:
+                terms, term_to_genes = generator._read_tab_matrix(str(tab_path))
+                descriptions = generator._read_description(str(disc_path))
+                gmt_path = str(Path(output_dir) / f"{prefix}.GO.gmt.gz")
+                generator._write_gmt(term_to_genes, descriptions, gmt_path)
+                results["GO"] = gmt_path
+            except Exception as e:
+                logger.warning("GO GMT 生成失败: %s", e)
+
+        return results
+
+    # ============================
+    # GO 数据库构建（带回退）
+    # ============================
+    def build_go_with_fallback(self, taxid: int, latin_name: str,
+                               go_version: str = None) -> str:
+        """带回退的 GO 构建：先尝试 gene2go，失败则使用 GOA
+
+        步骤:
+        1. 检查 gene2go.gz 是否包含该 taxid
+        2. 如果包含，使用现有 build_go 方法
+        3. 如果不包含，查找 GOA 注册表
+        4. 使用 GOA 构建
+
+        返回: 输出目录路径
+        """
+        logger.info("build_go_with_fallback: taxid=%d, latin_name=%s", taxid, latin_name)
+
+        # Step 1: 检查 gene2go 是否包含该 taxid
+        use_gene2go = False
+        species_abbr = None
+
+        # 方法 A: 读取 supported_species.tsv 检查 go_source
+        registry_path = self.root_dir / "supported_species.tsv"
+        if registry_path.exists():
+            registry = SpeciesRegistry(registry_path=registry_path)
+            registry.load()
+            entry = registry.query_by_taxid(taxid)
+            if entry and entry.has_go and entry.go_source:
+                if entry.go_source.lower() == "gene2go":
+                    use_gene2go = True
+                    logger.info("物种 %d 在注册表中标记为 gene2go 来源", taxid)
+
+        # 方法 B: 如果注册表没有信息，尝试直接检查 gene2go.gz
+        if not use_gene2go:
+            use_gene2go = self._check_gene2go_has_taxid(taxid, go_version)
+
+        # Step 2: 如果 gene2go 有该物种，使用现有 build_go 方法
+        if use_gene2go:
+            # 尝试获取 species 缩写
+            species_abbr = self._get_species_abbr(taxid, latin_name)
+            if species_abbr:
+                logger.info("使用 gene2go 构建 GO 数据库, species=%s", species_abbr)
+                return self.build_go(species=species_abbr, taxid=taxid,
+                                     go_version=go_version)
+            else:
+                logger.warning("无法确定 species 缩写，回退到 GOA")
+
+        # Step 3: 如果 gene2go 没有，查找 GOA 注册表
+        goa_filename = self._find_goa_filename(taxid, latin_name)
+        if goa_filename is None:
+            raise ValueError(
+                f"无法为 taxid={taxid} ({latin_name}) 找到 GO 数据源。\n"
+                f"gene2go.gz 中未找到该物种，GOA 注册表中也未找到对应条目。"
+            )
+
+        # Step 4: 使用 GOA 构建
+        logger.info("使用 GOA 构建 GO 数据库, goa_filename=%s", goa_filename)
+        return self.build_go_from_goa(taxid, latin_name, goa_filename, go_version)
+
+    def _check_gene2go_has_taxid(self, taxid: int,
+                                  go_version: str = None) -> bool:
+        """检查 gene2go.gz 是否包含指定 taxid 的数据
+
+        全文件扫描以确保找到所有物种（包括人类等数据量大的物种）。
+
+        Args:
+            taxid: NCBI Taxonomy ID
+            go_version: GO 版本号
+
+        Returns:
+            True 如果找到匹配的 taxid
+        """
+        if go_version is None:
+            downloader = DataDownloader(root_dir=str(self.root_dir))
+            go_version = downloader.get_latest_go_version()
+            if go_version is None:
+                return False
+
+        gene2go_path = self.basic_dir / "go" / go_version / "gene2go.gz"
+        if not gene2go_path.exists():
+            return False
+
+        taxid_str = str(taxid)
+
+        try:
+            with gzip.open(gene2go_path, 'rt', encoding='utf-8') as f:
+                for i, line in enumerate(f, 1):
+                    line = line.strip()
+                    if not line or line.startswith('#'):
+                        continue
+                    parts = line.split('\t')
+                    if parts[0] == taxid_str:
+                        logger.info("在 gene2go.gz 中找到 taxid=%s (第 %d 行)",
+                                    taxid_str, i)
+                        return True
+        except Exception as e:
+            logger.warning("检查 gene2go.gz 失败: %s", e)
+            return False
+
+        logger.info("在 gene2go.gz 中未找到 taxid=%s", taxid_str)
+        return False
+
+    def _get_species_abbr(self, taxid: int, latin_name: str) -> Optional[str]:
+        """获取物种缩写代码
+
+        优先从 supported_species.tsv 读取 kegg_code，
+        如果没有则根据拉丁名自动生成。
+
+        Args:
+            taxid: NCBI Taxonomy ID
+            latin_name: 物种拉丁名
+
+        Returns:
+            物种缩写（如 hsa），无法确定则返回 None
+        """
+        # 优先从注册表获取
+        registry_path = self.root_dir / "supported_species.tsv"
+        if registry_path.exists():
+            registry = SpeciesRegistry(registry_path=registry_path)
+            registry.load()
+            entry = registry.query_by_taxid(taxid)
+            if entry and entry.kegg_code:
+                return entry.kegg_code
+
+        # 回退: 自动生成
+        return SpeciesRegistry.generate_kegg_abbreviation(latin_name)
+
+    def _find_goa_filename(self, taxid: int, latin_name: str) -> Optional[str]:
+        """查找物种对应的 GOA 文件名
+
+        优先从 supported_species.tsv 读取 go_filename，
+        如果没有则根据 taxid 和 latin_name 自动构造。
+
+        Args:
+            taxid: NCBI Taxonomy ID
+            latin_name: 物种拉丁名
+
+        Returns:
+            GOA 文件名（如 "9606.goa"），未找到则返回 None
+        """
+        # 优先从注册表获取
+        registry_path = self.root_dir / "supported_species.tsv"
+        if registry_path.exists():
+            registry = SpeciesRegistry(registry_path=registry_path)
+            registry.load()
+            entry = registry.query_by_taxid(taxid)
+            if entry and entry.has_go and entry.go_filename:
+                return entry.go_filename
+
+        # 回退: 自动构造 - EBI GOA 文件名格式为 {taxid}.goa（如 9606.goa）
+        return f"{taxid}.goa"
 
     # ============================
     # Reactome 数据库构建
@@ -537,7 +906,26 @@ class DatabaseBuilder:
             db_upper = db_name.upper().strip()
             try:
                 if db_upper == 'GO':
-                    self.build_go(species, taxid, go_version)
+                    # 获取 latin_name，优先从 SpeciesRegistry 查询
+                    latin_name = species  # 默认回退
+                    try:
+                        from ..core.config import SPECIES_CONFIGS
+                        if species in SPECIES_CONFIGS:
+                            latin_name = SPECIES_CONFIGS[species].name
+                    except:
+                        pass
+
+                    try:
+                        from .species_registry import SpeciesRegistry
+                        registry = SpeciesRegistry.load_default()
+                        entry = registry.query_by_taxid(taxid)
+                        if entry:
+                            latin_name = entry.latin_name
+                    except:
+                        pass
+
+                    # 使用回退构建
+                    self.build_go_with_fallback(taxid, latin_name, go_version)
                 elif db_upper == 'REACTOME':
                     self.build_reactome(species, taxid, reactome_version)
                 elif db_upper == 'KEGG':

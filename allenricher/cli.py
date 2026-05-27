@@ -429,6 +429,9 @@ Examples:
     analyze_parser.add_argument('-d', '--databases', default='GO,KEGG', help='Comma-separated databases')  # 逗号分隔的数据库名称列表
     analyze_parser.add_argument('-o', '--output', default='./results', help='Output directory')        # 输出目录，默认为 ./results
     analyze_parser.add_argument('-b', '--background', help='Background gene list file')                # 背景基因列表文件（可选）
+    analyze_parser.add_argument('--background-mode', dest='background_mode',
+                                choices=['annotated', 'genome', 'custom'], default='annotated',
+                                help='Background gene set mode: annotated (default), genome, custom')
     analyze_parser.add_argument('-m', '--method', default='fisher', choices=['fisher', 'hypergeometric', 'gsea', 'ssgsea', 'gsva'], help='Enrichment method')  # 富集分析方法：Fisher精确检验/超几何检验/GSEA/ssGSEA/GSVA
     analyze_parser.add_argument('-c', '--correction', default='BH', choices=['BH', 'BY', 'bonferroni', 'holm', 'none'], help='Multiple testing correction')  # 多重检验校正方法
     analyze_parser.add_argument('-p', '--pvalue', type=float, default=0.05, help='P-value cutoff')    # P 值阈值，默认 0.05
@@ -472,6 +475,21 @@ Examples:
     build_parser.add_argument('--database-dir', default='./database', help='Database directory')        # 数据库存储目录
     build_parser.add_argument('--gene-info', help='Path to NCBI gene_info.gz file')                    # NCBI gene_info.gz 文件路径（GO和Reactome构建需要）
     
+    # 自定义注释文件参数
+    build_parser.add_argument('--go-annot',
+        help='Path to GO annotation file (TSV: gene<TAB>go_id<TAB>go_name[<TAB>hierarchy])')
+    build_parser.add_argument('--kegg-annot',
+        help='Path to KEGG annotation file (TSV: gene<TAB>pathway_id<TAB>pathway_name[<TAB>hierarchy])')
+    build_parser.add_argument('--custom-annot',
+        help='Path to custom annotation file (TSV format with hierarchy support)')
+    build_parser.add_argument('--custom-db-name', default='CUSTOM',
+        help='Database name for custom annotation (default: CUSTOM)')
+    build_parser.add_argument('--annot-format',
+        choices=['three_column', 'four_column', 'two_column', 'auto'],
+        default='auto', help='Annotation file format (default: auto-detect)')
+    build_parser.add_argument('--hierarchy-sep', default='|',
+        help='Hierarchy level separator (default: |)')
+    
     # ==================== serve 子命令 ====================
     # 启动 RESTful API 服务器，提供在线富集分析服务
     serve_parser = subparsers.add_parser('serve', help='Start API server')
@@ -488,7 +506,24 @@ Examples:
     # 生成默认的 YAML 配置文件，用户可在此基础上修改
     config_parser = subparsers.add_parser('config', help='Generate configuration file')
     config_parser.add_argument('-o', '--output', default='allenricher.yaml', help='Output config file')  # 输出配置文件路径
-    
+
+    # ==================== list-species 子命令 ====================
+    # 列出物种注册表中支持的物种信息
+    list_species_parser = subparsers.add_parser('list-species', help='List supported species from registry')
+    list_species_parser.add_argument('--go', action='store_true', default=False, help='Filter by GO support')
+    list_species_parser.add_argument('--kegg', action='store_true', default=False, help='Filter by KEGG support')
+    list_species_parser.add_argument('--reactome', action='store_true', default=False, help='Filter by Reactome support')
+    list_species_parser.add_argument('--do', action='store_true', default=False, help='Filter by DO support')
+    list_species_parser.add_argument('--format', choices=['table', 'tsv', 'json'], default='table', help='Output format (default: table)')
+    list_species_parser.add_argument('--summary', action='store_true', default=False, help='Show summary statistics')
+
+    # ==================== query-species 子命令 ====================
+    # 查询特定物种的详细信息
+    query_species_parser = subparsers.add_parser('query-species', help='Query species detail from registry')
+    query_species_parser.add_argument('--taxid', type=int, default=None, help='Query by NCBI Taxonomy ID')
+    query_species_parser.add_argument('--name', type=str, default=None, help='Query by Latin name')
+    query_species_parser.add_argument('--kegg', type=str, default=None, help='Query by KEGG organism code')
+
     return parser
 
 
@@ -640,11 +675,38 @@ def cmd_analyze(args) -> int:
         db_manager.load_databases(config.databases)
         
         # ---- 第6步：确定背景基因集 ----
-        # 如果用户提供了背景基因文件则使用之，否则使用数据库中所有基因作为背景
+        # 根据 --background 和 --background-mode 参数确定背景基因集
+        background_mode = getattr(args, 'background_mode', 'annotated')
+
         if config.background_file:
+            # 用户提供了 --background 参数，直接使用（忽略 background_mode）
             logger.info(f"Loading background genes from {config.background_file}")
             background_set = analyzer.load_gene_list(config.background_file)
+        elif background_mode == 'annotated':
+            # 使用注释基因作为背景
+            logger.info("Using annotated genes as background (background_mode='annotated')")
+            background_set = db_manager.get_background_genes()
+        elif background_mode == 'genome':
+            # 使用全基因组基因作为背景（来自 gene_info.gz）
+            logger.info("Using genome genes as background (background_mode='genome')")
+            try:
+                # 直接使用物种代码获取全基因组基因
+                # manager.py 中的 KEGG_CODE_TO_TAXID 映射会自动处理
+                background_set = db_manager.get_genome_genes(species_code=config.species)
+                if background_set:
+                    logger.info(f"Loaded {len(background_set)} genome genes from gene_info.gz")
+                else:
+                    logger.warning("No genome genes found in gene_info.gz, falling back to annotated genes")
+                    background_set = db_manager.get_background_genes()
+            except Exception as e:
+                logger.warning(f"Failed to load genome genes: {e}, falling back to annotated genes")
+                background_set = db_manager.get_background_genes()
+        elif background_mode == 'custom':
+            # custom 模式要求必须提供 --background
+            logger.error("Background mode 'custom' requires --background parameter")
+            return 1
         else:
+            # 默认回退
             logger.info("Using all database genes as background")
             background_set = db_manager.get_background_genes()
         
@@ -876,7 +938,76 @@ def cmd_build(args) -> int:
     databases = [d.strip().upper() for d in args.databases.split(',')]
     build_dir = args.database_dir or "./database"
 
-    logger.info(f"构建物种专属数据库: {args.species} (TaxID: {args.taxonomy})")
+    species = args.species
+    taxid = args.taxonomy
+
+    # ---- 自定义注释文件构建（优先于标准构建流程） ----
+    has_custom_annotation = getattr(args, 'go_annot', None) or \
+                           getattr(args, 'kegg_annot', None) or \
+                           getattr(args, 'custom_annot', None)
+
+    if has_custom_annotation:
+        try:
+            from allenricher.database.custom_builder import CustomDatabaseBuilder
+            custom_builder = CustomDatabaseBuilder(root_dir=build_dir)
+
+            if getattr(args, 'go_annot', None):
+                fmt = None if getattr(args, 'annot_format', 'auto') == 'auto' else args.annot_format
+                custom_builder.build_from_annotation(
+                    annotation_file=args.go_annot,
+                    species=species,
+                    taxid=taxid,
+                    db_name='GO',
+                    format_type=fmt,
+                    hierarchy_separator=getattr(args, 'hierarchy_sep', '|')
+                )
+
+            if getattr(args, 'kegg_annot', None):
+                fmt = None if getattr(args, 'annot_format', 'auto') == 'auto' else args.annot_format
+                custom_builder.build_from_annotation(
+                    annotation_file=args.kegg_annot,
+                    species=species,
+                    taxid=taxid,
+                    db_name='KEGG',
+                    format_type=fmt,
+                    hierarchy_separator=getattr(args, 'hierarchy_sep', '|')
+                )
+
+            if getattr(args, 'custom_annot', None):
+                db_name = getattr(args, 'custom_db_name', 'CUSTOM')
+                fmt = None if getattr(args, 'annot_format', 'auto') == 'auto' else args.annot_format
+                custom_builder.build_from_annotation(
+                    annotation_file=args.custom_annot,
+                    species=species,
+                    taxid=taxid,
+                    db_name=db_name,
+                    format_type=fmt,
+                    hierarchy_separator=getattr(args, 'hierarchy_sep', '|')
+                )
+        except ImportError:
+            print("Warning: CustomDatabaseBuilder not available. Skipping custom annotation build.")
+
+    # ---- 标准构建流程 ----
+    # 尝试从 SpeciesRegistry 查询物种信息
+    try:
+        from .database.species_registry import SpeciesRegistry
+        registry = SpeciesRegistry.load_default()
+        entry = registry.query_by_taxid(taxid)
+        if entry:
+            logger.info(f"Species found in registry: {entry.latin_name} (TaxID: {entry.taxid})")
+            logger.info(f"  Database support - GO: {'Yes' if entry.has_go else 'No'}, "
+                       f"KEGG: {'Yes' if entry.has_kegg else 'No'}, "
+                       f"DO: {'Yes' if entry.has_do else 'No'}, "
+                       f"Reactome: {'Yes' if entry.has_reactome else 'No'}")
+            # 使用注册表中的 latin_name
+            species_display_name = entry.latin_name
+        else:
+            species_display_name = species
+    except Exception:
+        # 静默回退，使用命令行提供的物种代码
+        species_display_name = species
+
+    logger.info(f"构建物种专属数据库: {species_display_name} (TaxID: {taxid})")
     logger.info(f"数据库根目录: {build_dir}")
     logger.info(f"要构建的数据库: {', '.join(databases)}")
 
@@ -884,8 +1015,8 @@ def cmd_build(args) -> int:
 
     try:
         outdir = builder.build_species_db(
-            species=args.species,
-            taxid=args.taxonomy,
+            species=species,
+            taxid=taxid,
             databases=databases
         )
         logger.info(f"构建完成！输出目录: {outdir}")
@@ -939,14 +1070,37 @@ def cmd_list(args) -> int:
     """
     if args.resource == 'species':
         # 列出支持的物种列表
-        from allenricher.core.config import SPECIES_CONFIGS
-        
-        print("\nSupported Species:")
-        print("-" * 50)
-        print(f"{'Code':<10} {'Name':<25} {'Taxonomy ID':<12}")
-        print("-" * 50)
-        for code, config in SPECIES_CONFIGS.items():
-            print(f"{code:<10} {config.display_name:<25} {config.taxonomy_id:<12}")
+        # 优先尝试从 SpeciesRegistry 加载，失败时回退到 SPECIES_CONFIGS
+        registry_loaded = False
+        try:
+            from .database.species_registry import SpeciesRegistry
+            registry = SpeciesRegistry.load_default()
+            if registry and registry.entries:
+                registry_loaded = True
+                print("\nSupported Species (from SpeciesRegistry):")
+                print("-" * 70)
+                print(f"{'Code':<10} {'Name':<30} {'TaxID':<10} {'GO':<5} {'KEGG':<5}")
+                print("-" * 70)
+                for entry in registry.entries.values():
+                    # 使用 kegg_code 作为代码，如果没有则显示 taxid
+                    code = entry.kegg_code if entry.has_kegg else str(entry.taxid)
+                    go_status = 'Yes' if entry.has_go else 'No'
+                    kegg_status = 'Yes' if entry.has_kegg else 'No'
+                    name = entry.latin_name if entry.latin_name else f"TaxID {entry.taxid}"
+                    print(f"{code:<10} {name:<30} {entry.taxid:<10} {go_status:<5} {kegg_status:<5}")
+        except Exception:
+            # 静默回退到 SPECIES_CONFIGS
+            pass
+
+        if not registry_loaded:
+            from allenricher.core.config import SPECIES_CONFIGS
+
+            print("\nSupported Species:")
+            print("-" * 50)
+            print(f"{'Code':<10} {'Name':<25} {'Taxonomy ID':<12}")
+            print("-" * 50)
+            for code, config in SPECIES_CONFIGS.items():
+                print(f"{code:<10} {config.display_name:<25} {config.taxonomy_id:<12}")
         
     elif args.resource == 'databases':
         # 列出支持的数据库类型
@@ -1009,7 +1163,9 @@ def main():
         'build': cmd_build,
         'serve': cmd_serve,
         'list': cmd_list,
-        'config': cmd_config
+        'config': cmd_config,
+        'list-species': _cmd_list_species,
+        'query-species': _cmd_query_species,
     }
     
     # 根据用户输入的子命令查找并调用对应的处理函数
@@ -1019,6 +1175,102 @@ def main():
     else:
         parser.print_help()   # 未知命令，打印帮助信息
         return 1
+
+
+def _cmd_list_species(args) -> int:
+    """列出支持的物种"""
+    from .database.species_registry import SpeciesRegistry
+    import json
+
+    registry = SpeciesRegistry.load_default()
+
+    if args.summary:
+        summary = registry.get_summary()
+        print(f"\n{'='*50}")
+        print("Species Registry Summary")
+        print(f"{'='*50}")
+        print(f"Total species: {summary['total_species']:,}")
+        print(f"\nBy Database:")
+        for db, stats in summary.items():
+            if db != 'total_species':
+                print(f"  - {db.upper()}: {stats['count']:,} species")
+        print(f"{'='*50}\n")
+        return 0
+
+    entries = registry.filter_by_databases(
+        go=args.go or None,
+        kegg=args.kegg or None,
+        reactome=args.reactome or None,
+        do=args.do or None
+    )
+
+    if args.format == "table":
+        print(f"{'TaxID':<10} {'Latin Name':<30} {'GO':<5} {'KEGG':<6} {'Reactome':<9} {'DO':<4}")
+        print("-" * 70)
+        for e in entries[:100]:
+            print(f"{e.taxid:<10} {e.latin_name:<30} {'Y' if e.has_go else 'N':<5} {'Y' if e.has_kegg else 'N':<6} {'Y' if e.has_reactome else 'N':<9} {'Y' if e.has_do else 'N':<4}")
+        if len(entries) > 100:
+            print(f"... and {len(entries) - 100} more species")
+    elif args.format == "tsv":
+        print("taxid\tlatin_name\thas_go\thas_kegg\thas_reactome\thas_do")
+        for e in entries:
+            print(f"{e.taxid}\t{e.latin_name}\t{e.has_go}\t{e.has_kegg}\t{e.has_reactome}\t{e.has_do}")
+    elif args.format == "json":
+        data = [{"taxid": e.taxid, "latin_name": e.latin_name, "has_go": e.has_go,
+                 "has_kegg": e.has_kegg, "has_reactome": e.has_reactome, "has_do": e.has_do}
+                for e in entries]
+        print(json.dumps(data, indent=2))
+
+    return 0
+
+
+def _cmd_query_species(args) -> int:
+    """查询物种详细信息"""
+    from .database.species_registry import SpeciesRegistry
+
+    registry = SpeciesRegistry.load_default()
+
+    entry = None
+    if args.taxid:
+        entry = registry.query_by_taxid(args.taxid)
+    elif args.name:
+        entries = registry.query_by_latin_name(args.name)
+        if entries:
+            entry = entries[0]
+            if len(entries) > 1:
+                print(f"Found {len(entries)} matches, showing first:")
+    elif args.kegg:
+        entry = registry.query_by_kegg_code(args.kegg)
+
+    if not entry:
+        print("Species not found in registry.")
+        return 1
+
+    detail = registry.get_species_detail(entry.taxid)
+
+    print(f"\n{'='*60}")
+    print(f"Species Information")
+    print(f"{'='*60}")
+    print(f"Taxonomy ID: {detail['taxid']}")
+    print(f"Latin Name:  {detail['latin_name']}")
+    if detail.get('common_name') and detail['common_name'] != '-':
+        print(f"Common Name: {detail['common_name']}")
+    print(f"\nDatabase Support:")
+    print(f"-" * 60)
+
+    for db_name, db_key in [("GO", "has_go"), ("KEGG", "has_kegg"), ("Reactome", "has_reactome"), ("DO", "has_do")]:
+        if detail.get(db_key):
+            print(f"\n{db_name}: Supported")
+            if db_name == "GO" and detail.get('go_source') and detail['go_source'] != '-':
+                print(f"  Source: {detail['go_source']}")
+            if db_name == "KEGG" and detail.get('kegg_code') and detail['kegg_code'] != '-':
+                print(f"  Code: {detail['kegg_code']} (source: {detail.get('kegg_code_source', '-')})")
+
+    print(f"\nBuild Command:")
+    print(f"  allenricher build --taxonomy {detail['taxid']}")
+    print(f"{'='*60}\n")
+
+    return 0
 
 
 if __name__ == '__main__':

@@ -5,6 +5,13 @@ Species lookup module for AllEnricher v2.0
 支持通过 KEGG 代码、拉丁名、TaxID 等方式检索物种配置信息。
 """
 
+import warnings
+warnings.warn(
+    "species_lookup is deprecated, use species_registry instead",
+    DeprecationWarning,
+    stacklevel=2
+)
+
 from dataclasses import dataclass
 from typing import Optional, Dict, List
 

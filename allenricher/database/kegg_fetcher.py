@@ -382,6 +382,39 @@ class KEGGFetcher:
         cleaned = re.sub(r"\s*-\s*[\w\s]+\(\w+\)\s*$", "", name)
         return cleaned.strip()
 
+    def fetch_organism_list(self) -> List[Tuple[str, str, int, int]]:
+        """获取KEGG全部物种列表（用于构建注册表）
+
+        调用 KEGG API: list/organism
+        返回: [(kegg_code, latin_name, taxid, gene_count), ...]
+
+        API 返回格式 (TSV):
+            第1列: kegg_code (如 "hsa")
+            第2列: name (如 "Homo sapiens (human)", 需要去掉括号部分)
+            第3列: taxid (如 "9606")
+            第4列: classification (不需要)
+            第5列: definition (不需要)
+            第6列: gene_count (如 "22345")
+        """
+        import re
+
+        data = self._api_get("list/organism")
+        result: List[Tuple[str, str, int, int]] = []
+
+        for line in data.strip().split("\n"):
+            cols = line.split("\t")
+            if len(cols) < 6:
+                continue
+            kegg_code = cols[0]
+            name = cols[1]
+            taxid = int(cols[2])
+            gene_count = int(cols[5])
+            # 去掉括号部分 (如 "Homo sapiens (human)" -> "Homo sapiens")
+            latin_name = re.sub(r"\s*\(.*?\)\s*$", "", name).strip()
+            result.append((kegg_code, latin_name, taxid, gene_count))
+
+        return result
+
     def _get_brite_categories(self, species: str, pathways: List[Tuple[str, str]]) -> Dict[str, Tuple[str, str]]:
         """获取 KEGG 通路分类映射
 

@@ -25,6 +25,8 @@ Core enrichment analysis engine for AllEnricher v2.0
     确保 p 值计算结果与旧版本一致。
 """
 
+from __future__ import annotations
+
 import os
 import csv
 import logging
@@ -1838,3 +1840,61 @@ class EnrichmentAnalyzer:
                 df = pd.DataFrame(data)
                 df.to_csv(output_file, sep='\t', index=False)
                 logger.info(f"Saved {database} results to {output_file}")
+
+    def get_annotated_genes(self, gene_set_data: Dict[str, Dict[str, Any]]) -> Set[str]:
+        """
+        从注释数据中提取所有有注释的基因（clusterProfiler方案）
+        
+        遍历所有 term 的 gene_list，收集所有出现过的基因
+        
+        参数:
+            gene_set_data: 注释数据，格式为 {term_id: {"genes": set, "name": str, ...}}
+        
+        返回:
+            所有有注释的基因集合
+        """
+        annotated = set()
+        for term_data in gene_set_data.values():
+            genes = term_data.get("genes", set())
+            if isinstance(genes, set):
+                annotated.update(genes)
+            elif isinstance(genes, (list, tuple)):
+                annotated.update(genes)
+        return annotated
+
+    def resolve_background(self, 
+                           gene_set_data: Dict[str, Dict[str, Any]],
+                           user_background: Optional[Set[str]] = None,
+                           background_mode: str = "annotated") -> Set[str]:
+        """
+        解析背景基因集
+        
+        参数:
+            gene_set_data: 注释数据
+            user_background: 用户自定义背景基因集
+            background_mode: 背景模式
+                - "annotated": 使用有注释的基因（默认，clusterProfiler方案）
+                - "genome": 使用全基因组基因（需要外部提供，通过 user_background）
+                - "custom": 使用用户提供的 user_background
+        
+        返回:
+            背景基因集合
+        
+        异常:
+            ValueError: 当 background_mode="custom" 但未提供 user_background 时
+        """
+        if background_mode == "custom":
+            if not user_background:
+                raise ValueError("background_mode='custom' requires user_background to be provided")
+            return user_background
+        elif background_mode == "annotated":
+            return self.get_annotated_genes(gene_set_data)
+        elif background_mode == "genome":
+            if not user_background:
+                # genome 模式下如果没有提供 user_background，
+                # 回退到 annotated 模式
+                logger.warning("background_mode='genome' but no user_background provided, falling back to 'annotated'")
+                return self.get_annotated_genes(gene_set_data)
+            return user_background
+        else:
+            raise ValueError(f"Unknown background_mode: {background_mode}. Expected 'annotated', 'genome', or 'custom'")

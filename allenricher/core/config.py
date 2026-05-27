@@ -500,7 +500,31 @@ class Config:
 
         # Validate species
         # 验证物种代码是否有效
-        if self.species not in SPECIES_CONFIGS:
+        species_valid = False
+        
+        # 1. 先检查 SPECIES_CONFIGS（保持向后兼容）
+        if self.species in SPECIES_CONFIGS:
+            species_valid = True
+        else:
+            # 2. 尝试从注册表查询（延迟导入避免循环依赖）
+            try:
+                from ..database.species_registry import SpeciesRegistry
+                registry = SpeciesRegistry.load_default()
+                
+                # 尝试按 kegg_code 查询
+                entry = registry.query_by_kegg_code(self.species)
+                if entry:
+                    species_valid = True
+                else:
+                    # 尝试按 taxid 查询（如果 species 是数字）
+                    if self.species.isdigit():
+                        entry = registry.query_by_taxid(int(self.species))
+                        if entry:
+                            species_valid = True
+            except Exception:
+                pass  # 注册表查询失败，静默回退到原有逻辑
+        
+        if not species_valid:
             errors.append(f"Unknown species: {self.species}")
 
         # Validate method

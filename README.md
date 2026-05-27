@@ -17,6 +17,7 @@
 - [详细使用说明](#详细使用说明)
   - [CLI 命令详解](#31-cli-命令详解)
   - [本地 Web 服务](#serve---启动本地-web-分析服务)
+  - [自定义数据库构建](#自定义数据库构建)
   - [Python API 使用](#32-python-api-使用)
   - [GSEA/GSVA/ssGSEA 使用示例](#33-gseagsvasssgsea-使用示例)
 - [测试指南](#测试指南)
@@ -337,6 +338,82 @@ allenricher build -s hsa -t 9606 -d GO,Reactome
 # 然后可用于 analyze
 allenricher analyze -i genes.txt -s hsa --database-dir database/organism/v{date}/hsa/
 ```
+
+#### 自定义数据库构建
+
+`allenricher build` 支持通过用户提供的注释文件构建自定义数据库，并自动生成 GMT 文件，可直接用于后续的富集分析（包括 GSEA/ssGSEA/GSVA）。
+
+**支持的注释文件格式（TSV，Tab 分隔）：**
+
+| 格式 | 列定义 | 示例 |
+|------|--------|------|
+| 四列（带层级） | `gene<TAB>term_id<TAB>term_name<TAB>hierarchy` | `BRCA1<TAB>TERM001<TAB>Cell Cycle<TAB>Biology\|Cell Biology\|Cell Cycle` |
+| 三列 | `gene<TAB>term_id<TAB>term_name` | `BRCA1<TAB>TERM001<TAB>Cell Cycle` |
+| 两列 | `gene<TAB>term` | `BRCA1<TAB>Cell Cycle`（term 同时作为 term_id 和 term_name） |
+
+> 默认自动检测文件格式（根据首行列数），也可通过 `--annot-format` 手动指定。
+
+**CLI 用法示例：**
+
+```bash
+# 基本用法（自动检测格式）
+allenricher build \
+    --species hsa \
+    --taxid 9606 \
+    --custom-annot annotation.txt \
+    --custom-db-name MyDB
+
+# 指定四列格式和层级分隔符
+allenricher build \
+    --species hsa \
+    --taxid 9606 \
+    --custom-annot annotation.txt \
+    --custom-db-name MyDB \
+    --annot-format four_column \
+    --hierarchy-sep "|"
+```
+
+**Python API 用法：**
+
+```python
+from allenricher.database.custom_builder import CustomDatabaseBuilder
+
+# 创建构建器
+builder = CustomDatabaseBuilder(root_dir="./database")
+
+# 从注释文件构建自定义数据库
+output_dir = builder.build_from_annotation(
+    annotation_file="annotation.txt",
+    species="hsa",
+    taxid=9606,
+    db_name="MyDB"
+)
+
+# 指定格式和层级分隔符
+output_dir = builder.build_from_annotation(
+    annotation_file="annotation.txt",
+    species="hsa",
+    taxid=9606,
+    db_name="MyDB",
+    format_type="four_column",
+    hierarchy_separator="|"
+)
+
+# 构建完成后即可用于分析
+# allenricher analyze -i genes.txt -s hsa -d MyDB --database-dir <output_dir>
+```
+
+**输出文件说明：**
+
+构建完成后，在 `database/organism/v{YYYYMMDD}/{species}/` 目录下生成以下 3 个文件：
+
+| 文件 | 说明 |
+|------|------|
+| `{species}.{db_name}2gene.tab.gz` | 基因-条目 0/1 矩阵（TSV 格式，gzip 压缩） |
+| `{db_name}2disc.gz` | 条目描述文件（含层级信息，gzip 压缩） |
+| `{species}.{db_name}.gmt.gz` | GMT 基因集文件（**程序自动生成，用户无需提供**） |
+
+> **关键说明**：GMT 文件由程序在构建时自动生成，用户只需提供注释文件即可。生成的自定义数据库可直接用于 `allenricher analyze` 的 `-d` 参数，也支持 GSEA/ssGSEA/GSVA 分析。
 
 #### serve - 启动本地 Web 分析服务
 
@@ -838,7 +915,19 @@ MIT License
 
 ---
 
-## 最近更新 (v2.0.2)
+## 最近更新 (v2.0.3)
+
+### 2026-05-27: 统一物种注册表与数据库管理优化
+
+- **🧬 统一物种注册表**: 新增 `SpeciesRegistry` 模块，支持 31,822 个物种的统一查询和管理
+- **🔍 CLI 物种查询**: 新增 `list-species` 和 `query-species` 命令，支持按 taxid/KEGG 代码/拉丁名查询
+- **🌐 NCBI Taxonomy 集成**: 自动下载 NCBI Taxonomy 数据库，确保物种拉丁名准确可靠
+- **📦 数据库自动查找**: `DatabaseManager` 支持自动查找 `organism/v{date}/{species}/` 目录结构，无需手动指定 `--database-dir`
+- **🧬 GOA 文件名修复**: 修正 EBI GOA 文件名格式（`{taxid}.goa`），确保下载和构建流程正常
+- **🔄 gene2go 全文件扫描**: 修复 `_check_gene2go_has_taxid()` 仅检查前 10000 行的 bug，支持人类等大数据集物种
+- **🧬 Genome 背景基因集**: 新增 `get_genome_genes()` 方法，支持 `gene_info.gz` 全基因组基因作为背景集
+- **🔗 数据合并去重优化**: gene2go 与 GOA 合并以 taxid 为唯一标识去重，优先使用 gene2go 数据
+- **✅ 全量测试通过**: 628 个 pytest 测试全部通过，E2E 验证三种 background-mode 均正常
 
 ### 2026-05-26: GSEA/GSVA/ssGSEA 功能扩展
 
@@ -861,4 +950,4 @@ MIT License
 
 ---
 
-*最后更新：2026-05-26*
+*最后更新：2026-05-27*

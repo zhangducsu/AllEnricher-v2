@@ -21,7 +21,7 @@ build-backend = "setuptools.build_meta"
 # --------------------------------------------------
 [project]
 name = "allenricher"                                              # 包名（pip install allenricher）
-version = "2.0.0"                                                 # 版本号
+version = "2.0.3"                                                 # 版本号
 description = "A comprehensive gene set function enrichment tool for multiple species"  # 项目简介
 readme = "README.md"                                              # README 文件
 license = {text = "MIT"}                                          # 开源许可证

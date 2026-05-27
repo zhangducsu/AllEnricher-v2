@@ -11,6 +11,37 @@ from pathlib import Path
 from typing import Dict, List, Optional, Set
 
 
+# KEGG 物种代码到 NCBI Gene taxid 的映射
+# 注意：gene_info.gz 使用 NCBI Gene taxid，而非 GOA 的 taxid
+KEGG_CODE_TO_TAXID: Dict[str, int] = {
+    # 常见模式生物
+    'hsa': 9606,   # Homo sapiens (Human)
+    'hpy': 835,    # Helicobacter pylori 26695
+    'mta': 4530,   # Oryza sativa (Rice)
+    'ath': 3702,   # Arabidopsis thaliana
+    'bta': 9913,   # Bos taurus (Bovine)
+    'cel': 6239,   # Caenorhabditis elegans
+    'cfa': 9615,   # Canis familiaris (Dog)
+    'dre': 7955,   # Danio rerio (Zebrafish)
+    'dme': 7227,   # Drosophila melanogaster (Fruit fly)
+    'gga': 9031,   # Gallus gallus (Chicken)
+    'mcf': 594,    # Mycobacterium tuberculosis CDC1551
+    'mmu': 10090,  # Mus musculus (Mouse)
+    'rno': 10116,  # Rattus norvegicus (Rat)
+    'sce': 4932,   # Saccharomyces cerevisiae (Yeast)
+    'spo': 4896,   # Schizosaccharomyces pombe (Fission yeast)
+    'xla': 8355,   # Xenopus laevis (African clawed frog)
+    'xtr': 8364,   # Xenopus tropicalis
+    # 其他常见物种
+    'eco': 562,    # Escherichia coli K-12
+    'bsu': 224308, # Bacillus subtilis 168
+    'pae': 208964, # Pseudomonas aeruginosa PAO1
+    'syf': 1148,   # Synechococcus elongatus PCC 7942
+    'syn': 1140,   # Synechocystis sp. PCC 6803
+    'mtu': 83332,  # Mycobacterium tuberculosis H37Rv
+}
+
+
 class DatabaseManager:
     """数据库管理器
 
@@ -36,6 +67,36 @@ class DatabaseManager:
         self.databases: Dict[str, Dict] = {}
         self.term_names: Dict[str, Dict[str, str]] = {}  # {db_name: {term_id: term_name}}
 
+    def _find_species_dir(self, database_dir: Path, species: str) -> Path:
+        """自动查找物种数据库目录
+
+        支持两种目录结构:
+        1. v2 格式: database/organism/v{date}/{species}/  (如 database/organism/2024-01-01/hsa/)
+        2. v1 格式: database/  (直接在该目录下查找文件)
+
+        Args:
+            database_dir: 基础数据库目录
+            species: 物种代码
+
+        Returns:
+            实际的物种数据库目录路径
+        """
+        # 模式 1: database/organism/v{date}/{species}/ (v2 结构)
+        organism_dir = database_dir / "organism"
+        if organism_dir.exists():
+            for version_dir in sorted(organism_dir.iterdir(), reverse=True):
+                if version_dir.is_dir():
+                    species_dir = version_dir / species
+                    if species_dir.exists():
+                        return species_dir
+
+        # 模式 2: 直接在 database_dir 下 (v1 结构)
+        if (database_dir / f"{species}.GO2gene.tab.gz").exists():
+            return database_dir
+
+        # 未找到，返回原目录
+        return database_dir
+
     def load_databases(self, database_names: List[str]) -> None:
         """加载指定的数据库
 
@@ -55,6 +116,9 @@ class DatabaseManager:
         Args:
             name: 数据库名称（如 "GO"、"KEGG"）
         """
+        # 自动查找物种目录（支持 v2 的 organism/v{date}/{species}/ 结构）
+        self.database_dir = self._find_species_dir(self.database_dir, self.species)
+
         # 先加载 Term 名称映射（从 .tab.id.gz 或 .2disc.gz）
         self._load_term_names(name)
 
@@ -330,4 +394,68 @@ class DatabaseManager:
         genes = set()
         for term_info in self.databases[db_name].values():
             genes.update(term_info["genes"])
+        return genes
+
+    def get_genome_genes(self, taxid: Optional[int] = None, species_code: Optional[str] = None) -> Set[str]:
+        """获取该物种的全基因组基因（来自 gene_info.gz）
+
+        gene_info.gz 包含该物种的所有基因（无论是否有 GO 注释），
+        与 gene2go.gz（只有 GO 注释的基因）不同。
+
+        Args:
+            taxid: NCBI Gene 分类学 ID，如果为 None 则从 species_code 推断
+            species_code: KEGG 物种代码（如 'hsa'），用于从 KEGG_CODE_TO_TAXID 推断 taxid
+
+        Returns:
+            Set[str]: 全基因组基因 ID 集合
+        """
+        # 如果提供了 species_code，尝试从中推断 taxid
+        if taxid is None and species_code is not None:
+            taxid = KEGG_CODE_TO_TAXID.get(species_code.lower())
+
+        if taxid is None:
+            # 如果仍然没有 taxid，返回空集合
+            return set()
+
+        genome_file = self.database_dir / "gene_info.gz"
+        if not genome_file.exists():
+            # 尝试在 basic/go 目录下查找
+            # 向上查找 database 根目录
+            db_root = self.database_dir
+            for _ in range(5):
+                if db_root.parent:
+                    db_root = db_root.parent
+                if db_root.name in ('database', 'AllEnricher-v2', 'AllEnricher'):
+                    break
+
+            basic_go_dir = db_root / "basic" / "go"
+            if basic_go_dir.exists():
+                # 使用最新版本
+                versions = sorted([d for d in basic_go_dir.iterdir() if d.is_dir()], reverse=True)
+                for version_dir in versions:
+                    genome_file = version_dir / "gene_info.gz"
+                    if genome_file.exists():
+                        break
+                    genome_file = self.database_dir / "gene_info.gz"  # 重置
+                if not genome_file.exists():
+                    return set()
+            else:
+                return set()
+
+        genes = set()
+        with gzip.open(genome_file, "rt", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                parts = line.split("\t")
+                if len(parts) >= 2:
+                    file_taxid = parts[0]
+                    gene_id = parts[1]
+                    # 过滤只保留指定 taxid 的基因
+                    try:
+                        if int(file_taxid) == taxid:
+                            genes.add(gene_id)
+                    except ValueError:
+                        continue
         return genes
