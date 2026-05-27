@@ -7,8 +7,12 @@ Database management for AllEnricher v2.0
 
 import gzip
 import csv
+import json
+import logging
 from pathlib import Path
 from typing import Dict, List, Optional, Set
+
+logger = logging.getLogger(__name__)
 
 
 # KEGG 物种代码到 NCBI Gene taxid 的映射
@@ -66,8 +70,9 @@ class DatabaseManager:
         self.species = species
         self.databases: Dict[str, Dict] = {}
         self.term_names: Dict[str, Dict[str, str]] = {}  # {db_name: {term_id: term_name}}
+        self._active_version: Optional[str] = None
 
-    def _find_species_dir(self, database_dir: Path, species: str) -> Path:
+    def _find_species_dir(self, database_dir: Path, species: str, version: Optional[str] = None) -> Path:
         """自动查找物种数据库目录
 
         支持两种目录结构:
@@ -77,36 +82,88 @@ class DatabaseManager:
         Args:
             database_dir: 基础数据库目录
             species: 物种代码
+            version: 指定使用的数据库版本（如 v20260515），为 None 时自动使用最新版本
 
         Returns:
             实际的物种数据库目录路径
         """
         # 模式 1: database/organism/v{date}/{species}/ (v2 结构)
         organism_dir = database_dir / "organism"
+
+        # 如果指定了版本，直接使用
+        if version and organism_dir.exists():
+            species_dir = organism_dir / version / species
+            if species_dir.exists():
+                self._active_version = version
+                return species_dir
+            # 版本不存在时列出可用版本
+            available = sorted(
+                d.name for d in organism_dir.iterdir()
+                if d.is_dir() and (d / species).exists()
+            )
+            if available:
+                logger.error("版本 '%s' 的物种 '%s' 不存在。可用版本: %s", version, species, ", ".join(available))
+            else:
+                logger.error("物种 '%s' 没有任何已构建的版本。", species)
+
+        # 自动查找最新版本
         if organism_dir.exists():
             for version_dir in sorted(organism_dir.iterdir(), reverse=True):
                 if version_dir.is_dir():
                     species_dir = version_dir / species
                     if species_dir.exists():
+                        self._active_version = version_dir.name
                         return species_dir
 
-        # 模式 2: 直接在 database_dir 下 (v1 结构)
+        # v1 兼容
         if (database_dir / f"{species}.GO2gene.tab.gz").exists():
+            self._active_version = "v1-legacy"
             return database_dir
 
-        # 未找到，返回原目录
+        self._active_version = None
         return database_dir
 
-    def load_databases(self, database_names: List[str]) -> None:
+    @property
+    def active_version(self) -> Optional[str]:
+        """当前活跃的数据库版本号
+
+        Returns:
+            版本号字符串（如 'v20260515'、'v1-legacy'），未加载时为 None
+        """
+        return self._active_version
+
+    def get_build_metadata(self) -> Optional[Dict]:
+        """获取当前活跃版本的构建元数据
+
+        从 build_manifest.json 读取构建时记录的元信息，
+        包含构建时间、依赖版本等。
+
+        Returns:
+            元数据字典，文件不存在或未加载版本时返回 None
+        """
+        if not self._active_version:
+            return None
+        manifest_path = Path(self.database_dir) / "organism" / self._active_version / self.species / "build_manifest.json"
+        if not manifest_path.exists():
+            return None
+        try:
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            logger.warning("读取 build_manifest.json 失败: %s", e)
+            return None
+
+    def load_databases(self, database_names: List[str], version: Optional[str] = None) -> None:
         """加载指定的数据库
 
         Args:
             database_names: 数据库名称列表，如 ["GO", "KEGG"]
+            version: 指定使用的数据库版本，为 None 时自动使用最新版本
         """
         for name in database_names:
-            self.load_database(name)
+            self.load_database(name, version=version)
 
-    def load_database(self, name: str) -> None:
+    def load_database(self, name: str, version: Optional[str] = None) -> None:
         """加载单个数据库
 
         从 v1 格式的 .tab.gz 文件加载数据库。
@@ -115,9 +172,10 @@ class DatabaseManager:
 
         Args:
             name: 数据库名称（如 "GO"、"KEGG"）
+            version: 指定使用的数据库版本，为 None 时自动使用最新版本
         """
         # 自动查找物种目录（支持 v2 的 organism/v{date}/{species}/ 结构）
-        self.database_dir = self._find_species_dir(self.database_dir, self.species)
+        self.database_dir = self._find_species_dir(self.database_dir, self.species, version=version)
 
         # 先加载 Term 名称映射（从 .tab.id.gz 或 .2disc.gz）
         self._load_term_names(name)

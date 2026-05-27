@@ -948,4 +948,87 @@ class DatabaseBuilder:
         print(f"\n{'#'*60}")
         print(f"# 物种数据库构建完成 → {outdir}")
         print(f"{'#'*60}")
+
+        # 写入构建清单（血缘追踪）
+        import json as _json
+        from datetime import timezone as _tz
+
+        try:
+            _downloader = DataDownloader(root_dir=str(self.root_dir))
+
+            _build_manifest = {
+                "schema_version": "1.0",
+                "built_at": datetime.now(_tz.utc).isoformat(),
+                "allenricher_version": __import__("allenricher").__version__,
+                "species": species,
+                "taxid": taxid,
+                "databases": sorted(databases),
+                "dependencies": {},
+                "source_versions": {},
+            }
+
+            # 从 DatabaseVersionManager 填充 source_versions
+            try:
+                from allenricher.database.version import DatabaseVersionManager
+                _vm = DatabaseVersionManager(database_dir=str(self.root_dir))
+
+                if "GO" in databases:
+                    _go_obo_ver = _vm.get_local_version("go_obo")
+                    if _go_obo_ver and _go_obo_ver.remote_version:
+                        _build_manifest["source_versions"]["go_obo"] = _go_obo_ver.remote_version
+                    _gene2go_ver = _vm.get_local_version("gene2go")
+                    if _gene2go_ver and _gene2go_ver.remote_last_modified:
+                        _build_manifest["source_versions"]["gene2go"] = _gene2go_ver.remote_last_modified
+
+                if "Reactome" in databases:
+                    _reactome_ver = _vm.get_local_version("reactome")
+                    if _reactome_ver and _reactome_ver.remote_version:
+                        _build_manifest["source_versions"]["reactome"] = _reactome_ver.remote_version
+
+                if "KEGG" in databases:
+                    _kegg_ver = _vm.get_local_version("kegg")
+                    if _kegg_ver and _kegg_ver.remote_version:
+                        _build_manifest["source_versions"]["kegg"] = _kegg_ver.remote_version
+            except Exception as _sv_err:
+                logger.warning("填充 source_versions 失败: %s", _sv_err)
+
+            # GO 依赖
+            if "GO" in databases:
+                _go_ver = go_version if go_version else _downloader.get_latest_go_version()
+                _build_manifest["dependencies"]["GO"] = {
+                    "basic_dir": f"basic/go/{_go_ver}",
+                    "files": ["gene2go.gz", "gene_info.gz", "go-basic.obo"],
+                }
+
+            # Reactome 依赖
+            if "Reactome" in databases:
+                _reactome_ver = reactome_version if reactome_version else _downloader.get_latest_reactome_version()
+                _build_manifest["dependencies"]["Reactome"] = {
+                    "basic_dir": f"basic/reactome/{_reactome_ver}",
+                    "files": ["NCBI2Reactome_All_Levels.txt.gz", "gene_info.gz"],
+                }
+
+            # KEGG 依赖
+            if "KEGG" in databases:
+                _build_manifest["dependencies"]["KEGG"] = {
+                    "source": "REST API (real-time)",
+                    "gene_info_from": f"basic/go/{go_version or _downloader.get_latest_go_version()}/gene_info.gz",
+                }
+
+            # DO 依赖
+            if "DO" in databases:
+                _build_manifest["dependencies"]["DO"] = {
+                    "basic_dir": "basic/do",
+                    "files": ["human_disease_knowledge_filtered.tsv.gz",
+                               "human_disease_experiments_filtered.tsv.gz",
+                               "human_disease_textmining_filtered.tsv.gz"],
+                }
+
+            _manifest_path = outdir / "build_manifest.json"
+            with open(_manifest_path, "w", encoding="utf-8") as _mf:
+                _json.dump(_build_manifest, _mf, indent=2, ensure_ascii=False)
+            logger.info("构建清单已保存: %s", _manifest_path)
+        except Exception as _e:
+            logger.warning("写入构建清单失败: %s", _e)
+
         return str(outdir)

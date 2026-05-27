@@ -21,7 +21,7 @@ build-backend = "setuptools.build_meta"
 # --------------------------------------------------
 [project]
 name = "allenricher"                                              # 包名（pip install allenricher）
-version = "2.0.3"                                                 # 版本号
+version = "2.1.0"                                                 # 版本号
 description = "A comprehensive gene set function enrichment tool for multiple species"  # 项目简介
 readme = "README.md"                                              # README 文件
 license = {text = "MIT"}                                          # 开源许可证
@@ -202,6 +202,9 @@ testpaths = ["tests"]                # 测试文件目录
 python_files = ["test_*.py"]         # 测试文件命名模式
 python_classes = ["Test*"]           # 测试类命名模式
 python_functions = ["test_*"]        # 测试函数命名模式
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+]
 
 # --------------------------------------------------
 # 代码覆盖率配置 - 运行时

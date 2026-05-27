@@ -129,6 +129,43 @@ class DataDownloader:
         )
 
         print(f"GO 基础数据下载完成 → {go_dir}")
+
+        # 记录版本元数据到 versions.json
+        try:
+            from allenricher.database.version import DatabaseVersionManager, RemoteVersionChecker
+            _vm = DatabaseVersionManager(database_dir=str(self.root_dir))
+            _checker = RemoteVersionChecker()
+
+            # 记录 gene2go
+            _g2g_info = _checker.check_head("https://ftp.ncbi.nlm.nih.gov/gene/DATA/gene2go.gz")
+            if _g2g_info:
+                _vm.record_download(
+                    source="gene2go", local_version=version,
+                    local_path=f"basic/go/{version}",
+                    remote_last_modified=_g2g_info.get("last_modified"),
+                )
+
+            # 记录 go_obo
+            _obo_info = _checker.check_go_obo_version()
+            if _obo_info:
+                _vm.record_download(
+                    source="go_obo", local_version=version,
+                    local_path=f"basic/go/{version}/go-basic.obo",
+                    remote_version=_obo_info.get("remote_version"),
+                    remote_last_modified=_obo_info.get("last_modified"),
+                )
+
+            # 记录 gene_info
+            _gi_info = _checker.check_head("https://ftp.ncbi.nlm.nih.gov/gene/DATA/gene_info.gz")
+            if _gi_info:
+                _vm.record_download(
+                    source="gene_info", local_version=version,
+                    local_path=f"basic/go/{version}",
+                    remote_last_modified=_gi_info.get("last_modified"),
+                )
+        except Exception as _e:
+            logger.warning("记录 GO 版本元数据失败: %s", _e)
+
         return str(go_dir)
 
     # ============================
@@ -200,6 +237,9 @@ class DataDownloader:
                 if valid:
                     print(f"|--- 已存在且有效，跳过: {gz_file.name}")
                     print(f"Reactome 基础数据下载完成 → {re_dir}")
+
+                    self._record_reactome_version(version)
+
                     return str(re_dir)
 
         self.manager.download_with_mirror_fallback(
@@ -215,7 +255,27 @@ class DataDownloader:
             raw_file.unlink()
 
         print(f"Reactome 基础数据下载完成 → {re_dir}")
+
+        self._record_reactome_version(version)
+
         return str(re_dir)
+
+    def _record_reactome_version(self, version: str) -> None:
+        """记录 Reactome 版本元数据到 versions.json"""
+        try:
+            from allenricher.database.version import DatabaseVersionManager, RemoteVersionChecker
+            _vm = DatabaseVersionManager(database_dir=str(self.root_dir))
+            _checker = RemoteVersionChecker()
+            _re_info = _checker.check_reactome_version()
+            if _re_info:
+                _vm.record_download(
+                    source="reactome", local_version=version,
+                    local_path=f"basic/reactome/{version}",
+                    remote_version=_re_info.get("remote_version"),
+                    remote_last_modified=_re_info.get("last_modified"),
+                )
+        except Exception as _e:
+            logger.warning("记录 Reactome 版本元数据失败: %s", _e)
 
     # ============================
     # DO / DisGeNET（仅人类）
@@ -265,6 +325,18 @@ class DataDownloader:
                 files[fname] = str(gz_dest)
             else:
                 files[fname] = str(raw_dest)
+
+        # 记录 DO 版本元数据到 versions.json
+        try:
+            from allenricher.database.version import DatabaseVersionManager
+            _vm = DatabaseVersionManager(database_dir=str(self.root_dir))
+            _vm.record_download(
+                source="do",
+                local_version="cached",
+                local_path="basic/do",
+            )
+        except Exception as _e:
+            logger.warning("记录 DO 版本元数据失败: %s", _e)
 
         return files
 
@@ -533,6 +605,22 @@ class DataDownloader:
                 writer.writerow([taxid, taxid_to_name[taxid]])
 
         logger.info("NCBI Taxonomy 物种名称已生成: %s (%d 物种)", output_path, len(taxid_to_name))
+
+        # 记录版本元数据到 versions.json
+        try:
+            from allenricher.database.version import DatabaseVersionManager, RemoteVersionChecker
+            _vm = DatabaseVersionManager(database_dir=str(self.root_dir))
+            _checker = RemoteVersionChecker()
+            _tax_info = _checker.check_head("https://ftp.ncbi.nlm.nih.gov/pub/taxonomy/taxdump.tar.gz")
+            if _tax_info:
+                _vm.record_download(
+                    source="taxonomy", local_version="cached",
+                    local_path="basic/taxonomy",
+                    remote_last_modified=_tax_info.get("last_modified"),
+                )
+        except Exception as _e:
+            logger.warning("记录 Taxonomy 版本元数据失败: %s", _e)
+
         return output_path
 
     def _load_taxid_to_name_map(self, taxonomy_dir: Path) -> Dict[int, str]:

@@ -20,6 +20,7 @@
   - [自定义数据库构建](#自定义数据库构建)
   - [Python API 使用](#32-python-api-使用)
   - [GSEA/GSVA/ssGSEA 使用示例](#33-gseagsvasssgsea-使用示例)
+- [数据库版本管理](#数据库版本管理)
 - [测试指南](#测试指南)
 - [输出文件说明](#输出文件说明)
 - [配置文件](#配置文件)
@@ -603,6 +604,72 @@ allenricher analyze \
 
 ---
 
+## 数据库版本管理
+
+v2.1.0 新增完整的数据库版本管理体系，支持远程更新检测、本地版本追溯、构建血缘追踪、版本锁定和冗余清理。
+
+### check-update - 检查远程数据源更新
+
+```bash
+# 检查所有数据源是否有更新
+allenricher check-update
+
+# 指定数据库目录
+allenricher check-update --database-dir ./database
+
+# JSON 格式输出
+allenricher check-update --json
+```
+
+支持检测 7 个数据源：NCBI gene2go、NCBI gene_info、GO Ontology、EBI GOA、KEGG、Reactome、NCBI Taxonomy。
+
+### list-versions - 查看本地已安装版本
+
+```bash
+# 查看所有已安装的基础数据和物种数据库版本
+allenricher list-versions
+
+# 查看构建血缘追踪（依赖链 + 源数据版本）
+allenricher list-versions --lineage
+
+# JSON 格式输出
+allenricher list-versions --json
+```
+
+### cleanup - 清理旧版本
+
+```bash
+# 预览将删除的旧版本（保留最新 2 个版本）
+allenricher cleanup --dry-run
+
+# 保留最新 1 个版本
+allenricher cleanup --keep 1
+
+# 实际执行清理
+allenricher cleanup --keep 2
+```
+
+### download --force - 强制重新下载
+
+```bash
+# 下载前自动检查更新，无更新时跳过
+allenricher download -d go
+
+# 强制重新下载，跳过更新检查
+allenricher download -d go --force
+```
+
+### analyze --use-version - 使用指定版本分析
+
+```bash
+# 使用指定版本的数据库进行分析（确保结果可复现）
+allenricher analyze -i genes.txt -s hsa -d GO --use-version v20260515 -o results/
+```
+
+分析结果（TSV/HTML）自动嵌入数据库版本信息，确保分析结果可追溯和可复现。
+
+---
+
 ## 测试指南
 
 ### 4.1 运行所有测试
@@ -915,7 +982,18 @@ MIT License
 
 ---
 
-## 最近更新 (v2.0.3)
+## 最近更新 (v2.1.0)
+
+### 2026-05-28: 数据库版本管理系统
+
+- **🔄 远程更新检测**: 新增 `check-update` 命令，支持 7 个数据源的远程版本检测（NCBI gene2go/gene_info、GO Ontology、KEGG、Reactome、EBI GOA、NCBI Taxonomy）
+- **📋 本地版本清单**: 新增 `list-versions` 命令，查看已安装的基础数据和物种数据库版本，支持 `--lineage` 血缘追踪和 `--json` 输出
+- **🧹 旧版本清理**: 新增 `cleanup` 命令，支持 `--dry-run` 预览和 `--keep N` 保留策略
+- **📥 智能下载**: `download` 命令自动检查远程更新，无更新时跳过；新增 `--force` 强制重新下载
+- **🔒 版本锁定**: `analyze` 命令新增 `--use-version` 参数，支持指定任意已安装版本进行分析，确保结果可复现
+- **📝 构建血缘追踪**: 每次 `build` 自动生成 `build_manifest.json`，记录完整的源数据依赖链和版本号
+- **📊 分析结果版本记录**: TSV 输出文件头部自动嵌入版本注释（AllEnricher 版本、数据库版本、源数据版本），HTML 报告动态显示版本信息
+- **🧪 测试覆盖**: 版本管理模块 25 个单元测试全部通过，全量 651 个测试 0 失败
 
 ### 2026-05-27: 统一物种注册表与数据库管理优化
 
@@ -950,4 +1028,4 @@ MIT License
 
 ---
 
-*最后更新：2026-05-27*
+*最后更新：2026-05-28*

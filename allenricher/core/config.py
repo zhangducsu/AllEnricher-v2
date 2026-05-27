@@ -271,6 +271,7 @@ class Config:
     # 数据库设置
     database_dir: str = "./database"       # 本地数据库文件存储目录
     auto_update: bool = False              # 是否自动更新本地数据库
+    use_version: Optional[str] = None      # 指定使用的数据库版本（如 v20260515），默认使用最新版本
 
     @classmethod
     def from_file(cls, config_file: str) -> "Config":

@@ -1819,15 +1819,19 @@ class EnrichmentAnalyzer:
         
         return dataframes
     
-    def save_results(self, output_dir: str) -> None:
+    def save_results(self, output_dir: str, metadata: dict = None) -> None:
         """
         将分析结果保存为 TSV 文件
 
         每个数据库的结果保存为单独的 TSV 文件，文件名格式为：
         {database_name}_enrichment.tsv
 
+        当提供 metadata 时，会在 TSV 文件头部写入以 # 开头的注释行，
+        记录 AllEnricher 版本、分析日期、数据库版本等信息。
+
         参数:
             output_dir: 输出目录路径，如果不存在会自动创建
+            metadata: 可选的元数据字典，包含版本和分析信息
         """
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)  # 自动创建输出目录
@@ -1838,7 +1842,26 @@ class EnrichmentAnalyzer:
                 output_file = output_path / f"{database}_enrichment.tsv"
                 data = [r.to_dict() for r in results]
                 df = pd.DataFrame(data)
-                df.to_csv(output_file, sep='\t', index=False)
+
+                if metadata:
+                    # 写入元数据注释行
+                    header_lines = []
+                    header_lines.append(f"# AllEnricher version: {metadata.get('allenricher_version', 'unknown')}")
+                    header_lines.append(f"# Analysis date: {metadata.get('analysis_date', 'unknown')}")
+                    header_lines.append(f"# Database version: {metadata.get('database_version', 'unknown')}")
+                    header_lines.append(f"# Species: {metadata.get('species', 'unknown')}")
+                    header_lines.append("# Source data versions:")
+                    source_versions = metadata.get("source_versions", {})
+                    if source_versions:
+                        for src_name, src_ver in source_versions.items():
+                            header_lines.append(f"#   {src_name}: {src_ver}")
+                    header_lines.append("#")
+                    with open(output_file, 'w', encoding='utf-8') as f:
+                        f.write("\n".join(header_lines) + "\n")
+                        df.to_csv(f, sep='\t', index=False)
+                else:
+                    df.to_csv(output_file, sep='\t', index=False)
+
                 logger.info(f"Saved {database} results to {output_file}")
 
     def get_annotated_genes(self, gene_set_data: Dict[str, Dict[str, Any]]) -> Set[str]:

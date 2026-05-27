@@ -447,6 +447,8 @@ Examples:
     analyze_parser.add_argument('--ai-model', help='AI model name (override YAML config)')  # AI 模型名称
     analyze_parser.add_argument('--config', help='Configuration file (YAML/JSON)')                      # 外部配置文件路径
     analyze_parser.add_argument('--database-dir', help='Database directory')                       # 数据库目录路径
+    analyze_parser.add_argument('--use-version', type=str, default=None,
+                                help='指定使用的数据库版本（如 v20260515），默认使用最新版本')
     analyze_parser.add_argument('-e', '--expression-matrix', default=None, help='Expression matrix file (TSV/CSV, rows=genes, cols=samples) for GSEA/ssGSEA/GSVA')  # 表达矩阵文件路径（行=基因，列=样本），用于GSEA/ssGSEA/GSVA
     analyze_parser.add_argument('-r', '--ranked-genes', default=None, help='Ranked gene list file (two columns: gene_name weight) for GSEA')  # 排序基因列表文件路径（两列: 基因名 权重），用于GSEA
     analyze_parser.add_argument('-g', '--gmt', default=None, help='GMT format gene set file path (supports .gmt and .gmt.gz)')  # GMT格式基因集文件路径，用于GSEA/ssGSEA/GSVA的基因集定义
@@ -465,6 +467,7 @@ Examples:
     download_parser.add_argument('--workers', type=int, default=4, help='Multi-thread download workers (default: 4)')  # 多线程下载数
     download_parser.add_argument('--no-multi-thread', action='store_true', help='Disable multi-thread download')       # 禁用多线程
     download_parser.add_argument('--no-verify', action='store_true', help='Skip post-download integrity check')        # 跳过完整性校验
+    download_parser.add_argument('--force', action='store_true', help='强制重新下载，即使本地已是最新版本')
     
     # ==================== build 子命令 ====================
     # 为指定物种构建本地富集分析数据库，需要提供物种代码和分类学 ID
@@ -507,6 +510,26 @@ Examples:
     config_parser = subparsers.add_parser('config', help='Generate configuration file')
     config_parser.add_argument('-o', '--output', default='allenricher.yaml', help='Output config file')  # 输出配置文件路径
 
+    # ==================== check-update 子命令 ====================
+    # 检查远程数据源是否有更新
+    check_update_parser = subparsers.add_parser('check-update', help='检查远程数据源是否有更新')
+    check_update_parser.add_argument('--database-dir', default=None, help='数据库目录路径')
+    check_update_parser.add_argument('--json', action='store_true', help='以 JSON 格式输出结果')
+
+    # ==================== cleanup 子命令 ====================
+    # 清理旧版本的数据库文件
+    cleanup_parser = subparsers.add_parser('cleanup', help='清理旧版本的数据库文件')
+    cleanup_parser.add_argument('--keep', type=int, default=2, help='保留的最新版本数量（默认: 2）')
+    cleanup_parser.add_argument('--dry-run', action='store_true', help='仅预览，不实际删除')
+    cleanup_parser.add_argument('--database-dir', default=None, help='数据库目录路径')
+
+    # ==================== list-versions 子命令 ====================
+    # 查看本地已安装的数据库版本
+    list_versions_parser = subparsers.add_parser('list-versions', help='查看本地已安装的数据库版本')
+    list_versions_parser.add_argument('--database-dir', default=None, help='数据库目录路径')
+    list_versions_parser.add_argument('--json', action='store_true', help='以 JSON 格式输出')
+    list_versions_parser.add_argument('--lineage', action='store_true', help='显示构建血缘追踪')
+
     # ==================== list-species 子命令 ====================
     # 列出物种注册表中支持的物种信息
     list_species_parser = subparsers.add_parser('list-species', help='List supported species from registry')
@@ -525,6 +548,13 @@ Examples:
     query_species_parser.add_argument('--kegg', type=str, default=None, help='Query by KEGG organism code')
 
     return parser
+
+
+def _resolve_db_dir(args) -> str:
+    """统一解析数据库目录路径"""
+    if hasattr(args, 'database_dir') and args.database_dir:
+        return args.database_dir
+    return "./database"
 
 
 def cmd_analyze(args) -> int:
@@ -672,7 +702,11 @@ def cmd_analyze(args) -> int:
         db_dir = args.database_dir if args.database_dir else config.database_dir
         logger.info(f"Loading databases: {config.databases} from {db_dir}")
         db_manager = DatabaseManager(db_dir, config.species)
-        db_manager.load_databases(config.databases)
+        # 版本锁定：CLI --use-version 优先于 YAML config.use_version
+        use_ver = getattr(args, 'use_version', None) or getattr(config, 'use_version', None)
+        if use_ver:
+            logger.info(f"使用指定数据库版本: {use_ver}")
+        db_manager.load_databases(config.databases, version=use_ver)
         
         # ---- 第6步：确定背景基因集 ----
         # 根据 --background 和 --background-mode 参数确定背景基因集
@@ -735,7 +769,22 @@ def cmd_analyze(args) -> int:
         # ---- 第8步：保存分析结果 ----
         # 将富集分析结果保存到输出目录（保存全部条目）
         logger.info("Saving results...")
-        analyzer.save_results(str(output_dir))
+
+        # 构建元数据字典，记录版本和分析信息
+        from datetime import datetime, timezone
+        metadata = {
+            "allenricher_version": __version__,
+            "analysis_date": datetime.now(timezone.utc).isoformat(),
+            "database_version": db_manager.active_version or "unknown",
+            "species": config.species,
+            "databases": config.databases,
+        }
+        build_meta = db_manager.get_build_metadata()
+        if build_meta:
+            metadata["source_versions"] = build_meta.get("source_versions", {})
+            metadata["built_at"] = build_meta.get("built_at", "")
+
+        analyzer.save_results(str(output_dir), metadata=metadata)
         
         # ---- 第8.5步：筛选显著结果用于绘图和报告 ----
         # 按 p/q 阈值过滤，只保留显著富集的条目用于后续可视化和报告
@@ -833,7 +882,8 @@ def cmd_analyze(args) -> int:
                 significant_results,
                 str(output_dir / "report.html"),
                 gene_list=list(gene_set),
-                ai_interpretation=ai_interpretation
+                ai_interpretation=ai_interpretation,
+                metadata=metadata
             )
         
         # ---- 打印分析摘要 ----
@@ -895,6 +945,28 @@ def cmd_download(args) -> int:
 
     databases = [d.strip().lower() for d in args.databases.split(',')]
     download_dir = args.database_dir or "./database"
+
+    # ---- 非强制模式下先检查更新 ----
+    if not getattr(args, 'force', False):
+        try:
+            from allenricher.database.version import RemoteVersionChecker, DatabaseVersionManager
+            checker = RemoteVersionChecker()
+            vm = DatabaseVersionManager(download_dir)
+            update_status = checker.check_updates(vm)
+
+            # 检查是否有任何数据源需要更新
+            sources_with_update = [s for s, info in update_status.items() if info["has_update"]]
+            sources_checked = list(update_status.keys())
+
+            if sources_checked and not sources_with_update:
+                logger.info("所有数据源均为最新版本，无需重新下载。")
+                logger.info("如需强制重新下载，请使用 --force 参数。")
+                return 0
+            elif sources_with_update:
+                logger.info(f"以下数据源有更新: {', '.join(sources_with_update)}")
+                logger.info("继续下载...")
+        except Exception as e:
+            logger.warning(f"更新检查失败，继续执行下载: {e}")
 
     logger.info(f"下载全体物种通用数据 → {download_dir}")
     logger.info(f"数据库类型: {', '.join(databases)}")
@@ -1131,6 +1203,134 @@ def cmd_config(args) -> int:
     return 0
 
 
+def cmd_check_update(args) -> int:
+    """检查远程数据源是否有更新
+
+    检测所有远程数据源（gene2go, gene_info, go_obo, kegg, reactome 等）的版本，
+    与本地 versions.json 中记录的版本比较，输出更新状态表格。
+
+    Args:
+        args: 命令行参数命名空间
+
+    Returns:
+        int: 0 表示执行成功
+    """
+    import json
+    from allenricher.database.version import RemoteVersionChecker, DatabaseVersionManager
+
+    db_dir = _resolve_db_dir(args)
+    checker = RemoteVersionChecker()
+    vm = DatabaseVersionManager(db_dir)
+
+    logger.info(f"正在检查远程数据源更新 (数据库目录: {db_dir}) ...")
+    update_status = checker.check_updates(vm)
+
+    # 打印格式化表格
+    print("\n远程数据源更新检查")
+    print("=" * 80)
+    print(f"  {'数据源':<20} {'状态':<10} {'本地版本':<25} {'远程版本'}")
+    print(f"  {'-'*20} {'-'*10} {'-'*25} {'-'*25}")
+
+    has_any_update = False
+    for source, info in sorted(update_status.items()):
+        if info["has_update"]:
+            status = "🔄 有更新"
+            has_any_update = True
+        else:
+            status = "✅ 已最新"
+        local_ver = info["local"].get("remote_version") or info["local"].get("version") or "-"
+        remote_ver = info["remote"].get("remote_version") or "-"
+        print(f"  {source:<20} {status:<10} {local_ver:<25} {remote_ver}")
+
+    print("=" * 80)
+
+    if has_any_update:
+        print("提示: 有数据源存在更新，可运行 `allenricher download --force` 重新下载。")
+    else:
+        print("所有数据源均为最新版本。")
+
+    # 如果指定 --json，额外输出 JSON
+    if args.json:
+        print("\n--- JSON Output ---")
+        print(json.dumps(update_status, indent=2, ensure_ascii=False))
+
+    return 0
+
+
+def cmd_cleanup(args) -> int:
+    """清理旧版本的数据库文件
+
+    扫描 database/basic/ 和 database/organism/ 目录，找出旧版本并删除。
+    默认保留每个数据源最新的 2 个版本。
+
+    Args:
+        args: 命令行参数命名空间
+
+    Returns:
+        int: 0 表示执行成功
+    """
+    from allenricher.database.version import DatabaseVersionManager
+
+    db_dir = _resolve_db_dir(args)
+    vm = DatabaseVersionManager(db_dir)
+
+    if args.dry_run:
+        logger.info(f"[dry-run] 预览清理操作 (数据库目录: {db_dir}, 保留最新 {args.keep} 个版本)")
+    else:
+        logger.info(f"执行清理操作 (数据库目录: {db_dir}, 保留最新 {args.keep} 个版本)")
+
+    removed = vm.remove_stale_versions(keep_count=args.keep, dry_run=args.dry_run)
+
+    if not removed:
+        print("没有需要清理的旧版本。")
+        return 0
+
+    print("\n清理结果:")
+    print("-" * 60)
+    total_count = 0
+    for source, versions in removed.items():
+        if versions:
+            action = "将删除" if args.dry_run else "已删除"
+            print(f"  [{source}] {action}: {', '.join(versions)}")
+            total_count += len(versions)
+
+    print("-" * 60)
+    action = "将删除" if args.dry_run else "已删除"
+    print(f"共 {action} {total_count} 个旧版本目录。")
+
+    if args.dry_run:
+        print("\n提示: 这是预览模式。去掉 --dry-run 参数以实际执行清理。")
+
+    return 0
+
+
+def cmd_list_versions(args) -> int:
+    """查看本地已安装的数据库版本
+
+    显示本地数据库目录中已安装的基础数据和物种数据库版本信息。
+
+    Args:
+        args: 命令行参数命名空间
+
+    Returns:
+        int: 0 表示执行成功
+    """
+    import json
+    from allenricher.database.version import DatabaseVersionManager
+
+    db_dir = _resolve_db_dir(args)
+    vm = DatabaseVersionManager(db_dir)
+
+    if args.json:
+        print(json.dumps(vm.get_summary_json(), indent=2, ensure_ascii=False))
+    elif args.lineage:
+        print(vm.get_full_lineage_report())
+    else:
+        print(vm.get_summary_table())
+
+    return 0
+
+
 def main():
     """程序主入口函数（命令分发逻辑）
 
@@ -1166,6 +1366,9 @@ def main():
         'config': cmd_config,
         'list-species': _cmd_list_species,
         'query-species': _cmd_query_species,
+        'check-update': cmd_check_update,
+        'cleanup': cmd_cleanup,
+        'list-versions': cmd_list_versions,
     }
     
     # 根据用户输入的子命令查找并调用对应的处理函数
