@@ -12,8 +12,8 @@
 - **版本**: 2.0.0 (Beta)
 - **许可证**: MIT
 - **Python**: >=3.8
-- **代码量**: ~10,667 行 Python 代码（16 个源文件 + 3 个测试文件）
-- **测试**: 84 个测试全部通过
+- **代码量**: ~12,000 行 Python 代码（22 个源文件 + 12 个测试文件）
+- **测试**: 679 个测试全部通过
 
 ---
 
@@ -26,7 +26,7 @@
 | 数据处理 | pandas | DataFrame 操作、TSV/Excel 读写 |
 | CLI | argparse | 命令行接口 |
 | Web API | FastAPI + uvicorn | REST API 服务 |
-| 可视化 | R (ggplot2/pheatmap/UpSetR) | 通过 subprocess 调用 R 脚本生成 PDF |
+| 可视化 | matplotlib, seaborn, cutecharts | Python 原生实现，支持 PNG/PDF 双输出 |
 | 报告 | Jinja2 风格 HTML 模板 | 交互式 HTML 报告 |
 | AI | OpenAI SDK >=1.0, Anthropic SDK | GPT-4 / Claude 结果解读 |
 | 配置 | PyYAML + dataclass | YAML 配置文件 + Python 类型安全 |
@@ -68,7 +68,16 @@ AllEnricher-v2/
 │   │   ├── manager.py          # DatabaseManager + 7个数据库子类
 │   │   └── species_lookup.py   # SpeciesLookup 物种检索（内置16种 + KEGG API）
 │   ├── visualization/
-│   │   └── plotter.py          # Plotter 绑图类（通过 R 脚本生成 PDF）
+│   │   ├── __init__.py         # 可视化模块入口
+│   │   ├── barplot.py          # 柱状图（matplotlib实现）
+│   │   ├── bubble.py           # 气泡图（matplotlib实现）
+│   │   ├── color_config.py     # 颜色配置（36组风格+暗色模式）
+│   │   ├── common_plots.py     # 通用图表（网络图/火山图等）
+│   │   ├── gsea_plots.py       # GSEA专属图表（富集曲线/NES条形图）
+│   │   ├── gsva_plots.py       # GSVA/ssGSEA专属图表（热图/组间比较）
+│   │   ├── plot_config.py      # 图表配置参数
+│   │   ├── plot_theme.py       # 主题系统（10种预置主题+自定义）
+│   │   └── plotter.py          # Plotter 统一调度类（Python原生实现）
 │   ├── report/
 │   │   └── generator.py        # ReportGenerator HTML 报告生成
 │   ├── ai/
@@ -76,9 +85,16 @@ AllEnricher-v2/
 │   └── api/
 │       └── server.py           # FastAPI REST API 服务器
 └── tests/
-    ├── test_enrichment.py      # 基础单元测试（14个）
+    ├── test_enrichment.py           # 基础单元测试（14个）
     ├── test_enrichment_extended.py  # 扩展单元测试（50个）
-    ├── test_integration.py     # 集成测试（20个，使用 v1 真实数据）
+    ├── test_database.py             # 数据库模块测试（8个）
+    ├── test_cli.py                  # CLI测试（15个）
+    ├── test_phase5.py               # API/AI/报告模块测试（19个）
+    ├── test_e2e_gsea.py             # GSEA端到端测试（7个）
+    ├── test_e2e_ssgsea.py           # ssGSEA端到端测试（8个）
+    ├── test_e2e_gsva.py             # GSVA端到端测试（14个）
+    ├── test_e2e_visualization.py    # 可视化集成测试（26个）
+    ├── test_gmt_generation_e2e.py   # GMT生成测试（8个）
     └── fixtures/
         ├── test_genes.txt      # 测试基因列表（200个，来自 v1 example.glist）
         └── database/hsa/       # 测试数据库（截取自 v1）
@@ -149,12 +165,20 @@ EnrichmentMethodBase (ABC)
 - 支持按拉丁名、KEGG 代码、taxid 搜索
 - `_load_builtin_species()` 和 `BUILTIN_TAXID_MAP` 中的 taxid 必须保持一致
 
-### 4.5 可视化 (`visualization/plotter.py`)
+### 4.5 可视化 (`visualization/` 模块)
 
-- 通过 `subprocess.run(["Rscript", script_file])` 调用 R 脚本
-- 支持 7 种图表：barplot, bubble, dotplot, enrichment_map, cnet, heatmap, upset
-- `plot_all()` 方法：为每个数据库生成所有图表
-- 热图生成时从 DataFrame 构建 `EnrichmentResult` 对象（注意列名必须与 `to_dict()` 一致）
+- **Python 原生实现**：使用 matplotlib + seaborn + cutecharts，完全替代 R/ggplot2
+- **模块化设计**：9 个 Python 源文件按职责拆分，各司其职
+  - `plotter.py` — 统一调度入口，协调各图表生成
+  - `barplot.py` / `bubble.py` — 基础富集分析图表
+  - `gsea_plots.py` / `gsva_plots.py` — GSEA/GSVA/ssGSEA 专属图表
+  - `common_plots.py` — 通用图表（网络图、火山图、UpSet图等）
+  - `plot_theme.py` — 主题系统（10种预置主题 + 自定义主题）
+  - `color_config.py` — 36组颜色风格配置 + 暗色模式支持
+  - `plot_config.py` — 图表参数配置
+- **支持图表**：barplot, bubble, dotplot, enrichment_map, cnet, heatmap, upset, 火山图等 12+ 种
+- **输出格式**：PNG + PDF 双输出，支持 300DPI 发表级分辨率
+- **`plot_all()` 方法**：为每个数据库生成所有图表类型
 
 ### 4.6 报告生成 (`report/generator.py`)
 
@@ -192,7 +216,7 @@ EnrichmentMethodBase (ABC)
 
 ## 6. 开发进度
 
-### 已完成（8 个阶段）
+### 已完成（11 个阶段）
 
 | 阶段 | 内容 | 状态 |
 |------|------|------|
@@ -206,12 +230,15 @@ EnrichmentMethodBase (ABC)
 | 8 | 最终审计修复（列名一致性、CORS 安全、导入清理、README 修正） | ✅ |
 | 9 | 集成测试（v1 真实数据库，20 个测试） | ✅ |
 | 10 | 推送到 GitHub | ✅ |
+| 11 | **风格颜色系统重构**（R→Python 可视化迁移，Python原生 matplotlib/seaborn 实现，10种预置主题系统，36组颜色风格配置，暗色模式支持，PNG/PDF 双输出） | ✅ |
 
 ### 测试覆盖
 
-- **总计**: 84 个测试全部通过
+- **总计**: 679 个测试全部通过
 - **单元测试**: 64 个（算法、配置、URL 生成、物种检索、延迟初始化等）
 - **集成测试**: 20 个（DatabaseManager 加载、完整分析流程、两遍扫描、结果导出、边界条件）
+- **可视化端到端测试**: 26 个（柱状图、气泡图、GSEA/GSVA/ssGSEA 图表等）
+- **GSEA/GSVA/ssGSEA 端到端测试**: 29 个（500 基因排序列表 + 6000×6 样本表达矩阵）
 
 ---
 
@@ -219,7 +246,7 @@ EnrichmentMethodBase (ABC)
 
 ### 高优先级
 
-- [ ] **R 脚本→Python 迁移**: 将 ggplot2/pheatmap/UpSetR 的 R 脚本替换为 matplotlib/seaborn，消除 R 依赖
+- [x] **R 脚本→Python 迁移**: 已完成——使用 matplotlib/seaborn/cutecharts 替代 R/ggplot2，消除 R 依赖，新增主题系统和颜色配置
 - [ ] **API 集成测试**: 使用 FastAPI TestClient 测试所有端点
 - [ ] **CLI 集成测试**: 使用 subprocess 测试命令行入口
 
@@ -314,3 +341,19 @@ TP53    0          1          1
 6. **`max_genes` 类型**: 是 `float`（因为默认值是 `float('inf')`），不是 `int`
 7. **API server `run_analysis`**: 是普通函数不是 async 函数
 8. **Pydantic v2**: 使用 `model_dump()` 不是 `dict()`
+
+---
+
+## 11. 本次会话完成 — 风格颜色系统重构 (2026-05-28)
+
+### 变更摘要
+
+- **R→Python 可视化迁移**: 彻底移除 R/ggplot2/pheatmap/UpSetR 依赖，改用 Python 原生 matplotlib + seaborn + cutecharts 实现全部图表
+- **模块化重构**: 将单一 `plotter.py` 拆分为 9 个模块文件（barplot, bubble, common_plots, color_config, gsea_plots, gsva_plots, plot_config, plot_theme, plotter），职责清晰、易于扩展
+- **主题系统**: 新增 `plot_theme.py`，支持 10 种预置主题（Nature, Science, Cell, Lancet, NEJM, IEEE, ASCO, Modern, Minimal, Dark），以及自定义主题注册
+- **颜色配置**: 新增 `color_config.py`，提供 36 组颜色风格（Category10~Category30 + 渐变色系 + 语义色系），支持暗色模式自动切换
+- **图表配置**: 新增 `plot_config.py`，统一管理输出格式（PNG/PDF）、DPI（300 发表级）、字体大小等参数
+- **输出格式增强**: 全部图表支持 PNG + PDF 双格式输出，满足不同场景需求
+- **依赖消除**: 移除了对 R 运行时和 R 包（ggplot2/pheatmap/UpSetR）的依赖，简化部署
+- **可视化测试**: 新增 `test_e2e_visualization.py`（26 个测试），覆盖全部图表类型的端到端验证
+- **全量测试**: 679 个 pytest 测试全部通过

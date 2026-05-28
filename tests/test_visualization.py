@@ -85,9 +85,9 @@ class TestPlotter:
         assert "barplot" in plots
         assert "bubble" in plots
 
-        # 检查路径
-        assert "GO_barplot.pdf" in plots["barplot"]
-        assert "GO_bubble.pdf" in plots["bubble"]
+        # 检查路径（现在使用 png 格式作为默认）
+        assert "GO_barplot.png" in plots["barplot"]
+        assert "GO_bubble.png" in plots["bubble"]
 
     def test_top_n_filtering(self, plotter, sample_data):
         """测试 top_n 参数过滤"""
@@ -102,17 +102,22 @@ class TestPlotter:
             assert result is not None
 
 
-class TestRScripts:
-    """测试 R 脚本"""
+class TestPythonPlots:
+    """测试 Python 绘图模块"""
 
-    def test_barplot_r_script_exists(self):
-        """测试 barplot.R 脚本存在"""
-        script_path = Path(__file__).parent.parent / "allenricher" / "visualization" / "barplot.R"
+    def test_barplot_py_exists(self):
+        """测试 barplot.py Python 模块存在"""
+        script_path = Path(__file__).parent.parent / "allenricher" / "visualization" / "barplot.py"
         assert script_path.exists()
 
-    def test_bubble_r_script_exists(self):
-        """测试 bubble.R 脚本存在"""
-        script_path = Path(__file__).parent.parent / "allenricher" / "visualization" / "bubble.R"
+    def test_bubble_py_exists(self):
+        """测试 bubble.py Python 模块存在"""
+        script_path = Path(__file__).parent.parent / "allenricher" / "visualization" / "bubble.py"
+        assert script_path.exists()
+
+    def test_plot_theme_exists(self):
+        """测试 plot_theme.py 风格模块存在"""
+        script_path = Path(__file__).parent.parent / "allenricher" / "visualization" / "plot_theme.py"
         assert script_path.exists()
 
 

@@ -235,6 +235,8 @@ class Config:
     top_terms: int = 20                    # 可视化展示的top富集条目数量
     plot_width: int = 10                   # 图表宽度（英寸）
     plot_height: int = 8                   # 图表高度（英寸）
+    plot_style: str = 'nature'             # 图表风格: nature, science, colorblind, presentation, omicshare
+    plot_palette: Optional[str] = None     # 自定义配色方案名称（可选）
 
     # Performance settings
     # 性能设置

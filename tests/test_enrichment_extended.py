@@ -298,65 +298,81 @@ class TestGenerateTermURL:
 
 
 class TestSpeciesLookup:
-    """SpeciesLookup 物种检索模块测试（离线模式）"""
+    """SpeciesRegistry 物种检索模块测试"""
 
     @pytest.fixture
-    def lookup(self):
-        """创建离线模式的 SpeciesLookup 实例"""
-        from allenricher.database.species_lookup import SpeciesLookup
-        # auto_load=False 避免网络请求，手动加载内置物种数据
-        instance = SpeciesLookup(auto_load=False)
-        instance._load_builtin_species()  # 仅加载内置物种，不触发网络请求
-        instance._loaded = True  # 标记为已加载，防止 lookup 方法触发网络请求
-        return instance
+    def registry(self, tmp_path):
+        """创建包含测试数据的 SpeciesRegistry 实例"""
+        from allenricher.database.species_registry import SpeciesRegistry, SpeciesEntry
+        
+        registry = SpeciesRegistry(registry_path=tmp_path / "test_species.tsv")
+        
+        # 添加测试物种数据
+        test_species = [
+            SpeciesEntry(taxid=9606, latin_name="Homo sapiens", common_name="Human",
+                        has_go=True, go_source="ncbi_gene2go", go_gene_count=19500,
+                        has_kegg=True, kegg_code="hsa", kegg_code_source="kegg", kegg_gene_count=22345,
+                        has_reactome=True, reactome_code="HSA",
+                        has_do=True, do_gene_count=12000),
+            SpeciesEntry(taxid=10090, latin_name="Mus musculus", common_name="Mouse",
+                        has_go=True, go_source="ncbi_gene2go",
+                        has_kegg=True, kegg_code="mmu", kegg_code_source="kegg",
+                        has_reactome=True, reactome_code="MMU",
+                        has_do=False),
+            SpeciesEntry(taxid=4932, latin_name="Saccharomyces cerevisiae", common_name="Yeast",
+                        has_go=True, go_source="ncbi_gene2go",
+                        has_kegg=True, kegg_code="sce", kegg_code_source="kegg",
+                        has_reactome=True, reactome_code="SCE",
+                        has_do=False),
+        ]
+        for sp in test_species:
+            registry.add_entry(sp)
+        
+        return registry
 
-    def test_builtin_species_loaded(self, lookup):
+    def test_builtin_species_loaded(self, registry):
         """测试内置物种数据加载"""
         # 内置物种应包含人类
-        info = lookup.lookup_by_kegg_code("hsa")
+        info = registry.query_by_kegg_code("hsa")
         assert info is not None
         assert info.latin_name == "Homo sapiens"
-        assert info.taxonomy_id == 9606
+        assert info.taxid == 9606
 
-    def test_builtin_species_count(self, lookup):
-        """测试内置物种数量（至少包含 16 个预配置物种）"""
-        all_species = lookup.get_all_species()
+    def test_builtin_species_count(self, registry):
+        """测试内置物种数量"""
+        all_species = list(registry.entries.values())
+        assert len(all_species) == 3  # 测试数据中有3个物种
 
-        assert len(all_species) >= 16  # 至少 16 个预配置物种
-
-    def test_lookup_by_latin_name(self, lookup):
+    def test_lookup_by_latin_name(self, registry):
         """测试通过拉丁名检索"""
-        info = lookup.lookup_by_latin_name("Homo sapiens")
+        results = registry.query_by_latin_name("Homo sapiens")
+        assert len(results) > 0
+        assert results[0].kegg_code == "hsa"
 
-        assert info is not None
-        assert info.kegg_code == "hsa"
-
-    def test_lookup_by_taxid(self, lookup):
+    def test_lookup_by_taxid(self, registry):
         """测试通过 taxid 检索"""
-        info = lookup.lookup_by_taxid(9606)
-
+        info = registry.query_by_taxid(9606)
         assert info is not None
         assert info.kegg_code == "hsa"
 
-    def test_yeast_taxid_consistency(self, lookup):
-        """测试酿酒酵母 taxid 在 species_lookup 和 config 中一致（均为 4932）"""
+    def test_yeast_taxid_consistency(self, registry):
+        """测试酿酒酵母 taxid 在 species_registry 和 config 中一致（均为 4932）"""
         from allenricher.core.config import SPECIES_CONFIGS
 
-        info = lookup.lookup_by_kegg_code("sce")
-
+        info = registry.query_by_kegg_code("sce")
         assert info is not None
-        assert info.taxonomy_id == 4932  # 应为正确的 taxid
+        assert info.taxid == 4932  # 应为正确的 taxid
         assert SPECIES_CONFIGS["sce"].taxonomy_id == 4932  # config 中也应一致
 
-    def test_builtin_taxid_map_consistency(self, lookup):
-        """测试 BUILTIN_TAXID_MAP 中的 sce taxid 与 _load_builtin_species 一致（均为 4932）"""
-        # 通过 lookup_by_kegg_code 获取的是 _load_builtin_species 的数据
-        info_by_code = lookup.lookup_by_kegg_code("sce")
+    def test_builtin_taxid_map_consistency(self, registry):
+        """测试注册表中的 sce taxid 一致性（均为 4932）"""
+        # 通过 query_by_kegg_code 获取注册表数据
+        info_by_code = registry.query_by_kegg_code("sce")
         assert info_by_code is not None
-        assert info_by_code.taxonomy_id == 4932
+        assert info_by_code.taxid == 4932
 
-        # 通过 lookup_by_taxid 反向验证 BUILTIN_TAXID_MAP 中的映射
-        info_by_taxid = lookup.lookup_by_taxid(4932)
+        # 通过 query_by_taxid 反向验证
+        info_by_taxid = registry.query_by_taxid(4932)
         assert info_by_taxid is not None
         assert info_by_taxid.kegg_code == "sce"
 

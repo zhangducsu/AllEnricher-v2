@@ -128,7 +128,7 @@ class Plotter:
             database: 数据库名称 (GO, KEGG, Reactome, DO, DisGeNET)
             output_file: 输出文件名
             top_n: 显示前 N 条数据
-            style: 图表风格 (nature, science, presentation, colorblind, cute, omicshare)
+            style: 图表风格 (nature, science, presentation, colorblind, omicshare)
             palette: 色板名称
 
         Returns:
@@ -136,29 +136,6 @@ class Plotter:
         """
         # 构建输出路径
         output_path = self.output_dir / output_file
-
-        # cute 风格使用 cutecharts 输出 HTML
-        if style == 'cute':
-            from .cute_charts import plot_cute_barplot
-
-            # 将 DataFrame 转换为字典列表
-            plot_data = data.to_dict('records') if hasattr(data, 'to_dict') else data
-
-            try:
-                result = plot_cute_barplot(
-                    data=plot_data,
-                    output_file=str(output_path),
-                    db_name=database,
-                    top_n=top_n,
-                )
-                return str(result)
-            except ImportError as e:
-                logger.warning(f"cutecharts 风格生成失败: {e}")
-                # 回退到默认风格
-                style = 'default'
-            except Exception as e:
-                logger.warning(f"cutecharts 柱状图生成失败: {e}")
-                return str(output_path)
 
         from .barplot import plot_barplot as _plot_barplot
 
@@ -210,29 +187,6 @@ class Plotter:
         # 构建输出路径
         output_path = self.output_dir / output_file
 
-        # cute 风格使用 cutecharts 输出 HTML
-        if style == 'cute':
-            from .cute_charts import plot_cute_bubble
-
-            # 将 DataFrame 转换为字典列表
-            plot_data = data.to_dict('records') if hasattr(data, 'to_dict') else data
-
-            try:
-                result = plot_cute_bubble(
-                    data=plot_data,
-                    output_file=str(output_path),
-                    db_name=database,
-                    top_n=top_n,
-                )
-                return str(result)
-            except ImportError as e:
-                logger.warning(f"cutecharts 风格生成失败: {e}")
-                # 回退到默认风格
-                style = None
-            except Exception as e:
-                logger.warning(f"cutecharts 气泡图生成失败: {e}")
-                return str(output_path)
-
         from .bubble import plot_bubble as _plot_bubble
 
         # 准备数据
@@ -282,25 +236,25 @@ class Plotter:
         """
         plots = {}
 
-        # 获取输出格式
+        # 根据配置确定输出格式
         fmt = 'png'
         if self.config and hasattr(self.config, 'figure_format'):
             fmt = self.config.figure_format
 
         # 生成柱状图
         bar_file = f"{database}_barplot.{fmt}"
-        self.plot_barplot(
+        bar_path = self.plot_barplot(
             data, database, bar_file, top_n,
             style=style, palette=palette
         )
-        plots["barplot"] = str(self.output_dir / bar_file)
+        plots["barplot"] = bar_path
 
         # 生成气泡图
         bubble_file = f"{database}_bubble.{fmt}"
-        self.plot_bubble(
+        bubble_path = self.plot_bubble(
             data, bubble_file, database, top_n,
             style=style, palette=palette
         )
-        plots["bubble"] = str(self.output_dir / bubble_file)
+        plots["bubble"] = bubble_path
 
         return plots

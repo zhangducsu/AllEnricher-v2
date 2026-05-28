@@ -49,6 +49,9 @@ _METHOD_PLOT_TYPES = {
     'gsva': {'heatmap', 'group_comparison', 'dotplot', 'correlation'},
 }
 
+# 通用图表类型（不依赖于特定分析方法）
+_COMMON_PLOT_TYPES = {'network', 'upset', 'volcano'}
+
 
 def _parse_gmt_file(gmt_file: str) -> Dict[str, Set[str]]:
     """读取GMT格式基因集文件
@@ -153,6 +156,8 @@ def _generate_plots(
     output_dir: str,
     plot_format: str = 'png',
     plot_dpi: int = 300,
+    plot_style: str = 'nature',
+    plot_palette: Optional[str] = None,
 ) -> List[str]:
     """根据方法类型生成可视化图表
 
@@ -170,6 +175,8 @@ def _generate_plots(
         output_dir: 输出目录
         plot_format: 图表格式 (png/pdf/svg)
         plot_dpi: 图表DPI
+        plot_style: 图表风格主题 (nature, science, colorblind, presentation, omicshare)
+        plot_palette: 自定义配色方案名称（可选）
 
     Returns:
         List[str]: 生成的图表文件路径列表
@@ -210,7 +217,8 @@ def _generate_plots(
             if 'nes_barplot' in valid_types and 'nes' in df.columns:
                 out_file = str(plot_dir / f"{db_name}_nes_barplot.{plot_format}")
                 try:
-                    plot_gsea_nes_barplot(df, output_file=out_file, dpi=plot_dpi)
+                    plot_gsea_nes_barplot(df, output_file=out_file, dpi=plot_dpi,
+                                          style=plot_style, palette=plot_palette)
                     generated_files.append(out_file)
                     logger.info(f"NES条形图已生成: {out_file}")
                 except Exception as e:
@@ -220,7 +228,8 @@ def _generate_plots(
             if 'dotplot' in valid_types and 'nes' in df.columns:
                 out_file = str(plot_dir / f"{db_name}_dotplot.{plot_format}")
                 try:
-                    plot_gsea_dotplot(df, output_file=out_file, dpi=plot_dpi)
+                    plot_gsea_dotplot(df, output_file=out_file, dpi=plot_dpi,
+                                      style=plot_style, palette=plot_palette)
                     generated_files.append(out_file)
                     logger.info(f"GSEA气泡图已生成: {out_file}")
                 except Exception as e:
@@ -255,10 +264,82 @@ def _generate_plots(
                             title=set_name,
                             output_file=out_file,
                             dpi=plot_dpi,
+                            style=plot_style,
+                            palette=plot_palette,
                         )
                         generated_files.append(out_file)
                     except Exception as e:
                         logger.error(f"富集曲线图生成失败 ({set_name}): {e}")
+
+    # ---- 通用图表类型（network, upset, volcano）----
+    # 通用图表不依赖于特定的分析方法，可以在任何结果上生成
+    common_types_requested = [pt for pt in plot_types if pt in _COMMON_PLOT_TYPES]
+    if common_types_requested:
+        from allenricher.visualization.common_plots import (
+            plot_enrichment_network,
+            plot_upset,
+            plot_volcano,
+        )
+
+        # 确保通用图表输出目录存在
+        common_plot_dir = Path(output_dir) / "common_plots"
+        common_plot_dir.mkdir(parents=True, exist_ok=True)
+
+        for db_name, df in results.items():
+            if df is None or len(df) == 0:
+                continue
+
+            # Network 图（需要 gene_sets）
+            if 'network' in common_types_requested and gene_sets:
+                out_file = str(common_plot_dir / f"{db_name}_network.{plot_format}")
+                try:
+                    plot_enrichment_network(
+                        gene_sets=gene_sets,
+                        results_df=df,
+                        output_file=out_file,
+                        dpi=plot_dpi,
+                        style=plot_style,
+                        palette=plot_palette,
+                    )
+                    generated_files.append(out_file)
+                    logger.info(f"通路网络图已生成: {out_file}")
+                except Exception as e:
+                    logger.error(f"通路网络图生成失败 ({db_name}): {e}")
+
+            # Upset 图（需要 gene_sets）
+            if 'upset' in common_types_requested and gene_sets:
+                out_file = str(common_plot_dir / f"{db_name}_upset.{plot_format}")
+                try:
+                    plot_upset(
+                        gene_sets=gene_sets,
+                        output_file=out_file,
+                        dpi=plot_dpi,
+                        style=plot_style,
+                        palette=plot_palette,
+                    )
+                    generated_files.append(out_file)
+                    logger.info(f"UpSet图已生成: {out_file}")
+                except Exception as e:
+                    logger.error(f"UpSet图生成失败 ({db_name}): {e}")
+
+            # Volcano 图（需要 nes 和 pvalue 列）
+            if 'volcano' in common_types_requested:
+                has_nes = 'nes' in df.columns or 'NES' in df.columns
+                has_pval = 'pvalue' in df.columns or 'pvalue' in df.columns or 'P_Value' in df.columns
+                if has_nes and has_pval:
+                    out_file = str(common_plot_dir / f"{db_name}_volcano.{plot_format}")
+                    try:
+                        plot_volcano(
+                            results_df=df,
+                            output_file=out_file,
+                            dpi=plot_dpi,
+                            style=plot_style,
+                            palette=plot_palette,
+                        )
+                        generated_files.append(out_file)
+                        logger.info(f"火山图已生成: {out_file}")
+                    except Exception as e:
+                        logger.error(f"火山图生成失败 ({db_name}): {e}")
 
     # ---- ssGSEA / GSVA 图表 ----
     elif method in ('ssgsea', 'gsva'):
@@ -325,6 +406,8 @@ def _generate_plots(
                     annotation_col=annotation_df,
                     output_file=out_file,
                     dpi=plot_dpi,
+                    style=plot_style,
+                    palette=plot_palette,
                 )
                 generated_files.append(out_file)
                 logger.info(f"活性热图已生成: {out_file}")
@@ -340,6 +423,8 @@ def _generate_plots(
                     groups=groups,
                     output_file=out_file,
                     dpi=plot_dpi,
+                    style=plot_style,
+                    palette=plot_palette,
                 )
                 generated_files.append(out_file)
                 logger.info(f"组间比较图已生成: {out_file}")
@@ -355,6 +440,8 @@ def _generate_plots(
                     groups=groups,
                     output_file=out_file,
                     dpi=plot_dpi,
+                    style=plot_style,
+                    palette=plot_palette,
                 )
                 generated_files.append(out_file)
                 logger.info(f"活性气泡图已生成: {out_file}")
@@ -370,6 +457,8 @@ def _generate_plots(
                     annotation_col=annotation_df,
                     output_file=out_file,
                     dpi=plot_dpi,
+                    style=plot_style,
+                    palette=plot_palette,
                 )
                 generated_files.append(out_file)
                 logger.info(f"样本相关性热图已生成: {out_file}")
@@ -456,6 +545,8 @@ Examples:
     analyze_parser.add_argument('--groups', default=None, help='Sample group definition, format: Group1:sample1,sample2;Group2:sample3,sample4')  # 样本分组定义，用于组间比较图
     analyze_parser.add_argument('--plot-format', default='png', choices=['png', 'pdf', 'svg'], help='Plot output format (default: png)')  # 图表输出格式
     analyze_parser.add_argument('--plot-dpi', type=int, default=300, help='Plot resolution/DPI (default: 300)')  # 图表分辨率(DPI)
+    analyze_parser.add_argument('--style', default='nature', choices=['nature', 'science', 'colorblind', 'presentation', 'omicshare'], help='Plot style theme (default: nature)')  # 图表风格主题
+    analyze_parser.add_argument('--palette', default=None, help='Custom color palette name (optional)')  # 自定义配色方案
     analyze_parser.add_argument('--verbose', action='store_true', help='Enable verbose (DEBUG) logging')  # 启用详细日志输出
     
     # ==================== download 子命令 ====================
@@ -618,6 +709,11 @@ def cmd_analyze(args) -> int:
             # CLI 标志覆盖 output_all（默认 True，--only-significant 时设为 False）
             if args.only_significant:
                 config.output_all = False
+            # 图表风格参数
+            if hasattr(args, 'style') and args.style:
+                config.plot_style = args.style
+            if hasattr(args, 'palette') and args.palette:
+                config.plot_palette = args.palette
         else:
             config = Config(
                 input_file=args.input,
@@ -631,7 +727,9 @@ def cmd_analyze(args) -> int:
                 min_genes=args.min_genes,
                 n_jobs=args.jobs,
                 background_file=args.background,
-                output_all=not args.only_significant  # 默认输出全部条目（与v1一致）
+                output_all=not args.only_significant,  # 默认输出全部条目（与v1一致）
+                plot_style=getattr(args, 'style', 'nature'),
+                plot_palette=getattr(args, 'palette', None),
             )
         
         # ---- 第2步：验证配置 ----
@@ -810,7 +908,8 @@ def cmd_analyze(args) -> int:
             plotter = Plotter(str(output_dir / "plots"), config)
             for db_name, df in significant_results.items():
                 if len(df) > 0:
-                    plotter.plot_all(df, db_name, top_n=config.top_terms)
+                    plotter.plot_all(df, db_name, top_n=config.top_terms,
+                                     style=config.plot_style, palette=config.plot_palette)
         
         # ---- 第9.5步：生成GSEA/GSVA/ssGSEA专用可视化图表 ----
         # 如果用户指定了 --plot-types 且方法为 GSEA/ssGSEA/GSVA，则调用专用可视化函数
@@ -838,6 +937,8 @@ def cmd_analyze(args) -> int:
                 output_dir=str(output_dir),
                 plot_format=plot_format,
                 plot_dpi=plot_dpi,
+                plot_style=config.plot_style,
+                plot_palette=config.plot_palette,
             )
             if gsea_plot_files:
                 logger.info(f"GSEA/GSVA/ssGSEA 可视化完成: {len(gsea_plot_files)} 个图表")

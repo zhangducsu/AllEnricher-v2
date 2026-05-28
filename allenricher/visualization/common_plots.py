@@ -22,6 +22,9 @@ import pandas as pd
 import seaborn as sns
 from scipy import stats
 
+from .plot_theme import PlotTheme, save_figure_dual
+from .color_config import ColorConfig, VOLCANO_COLORS
+
 logger = logging.getLogger(__name__)
 
 # 尝试导入 networkx，不可用时回退到纯 matplotlib 实现
@@ -40,7 +43,7 @@ except ImportError:
 def _save_figure(fig: plt.Figure, output_file: Optional[str], dpi: int = 300):
     """保存图表到文件（如指定了 output_file）"""
     if output_file:
-        fig.savefig(output_file, dpi=dpi, bbox_inches="tight")
+        save_figure_dual(fig, output_file, dpi=dpi)
         logger.info(f"图表已保存: {output_file}")
 
 
@@ -58,6 +61,8 @@ def plot_enrichment_network(
     output_file: str = None,
     figsize: tuple = (12, 10),
     dpi: int = 300,
+    style: Optional[str] = None,
+    palette: Optional[str] = None,
 ) -> matplotlib.figure.Figure:
     """
     通路关系网络图
@@ -75,6 +80,8 @@ def plot_enrichment_network(
         output_file: 输出文件路径（可选）
         figsize: 图表尺寸
         dpi: 输出分辨率
+        style: 风格名称（可选，如 'nature', 'science', 'presentation' 等）
+        palette: 色板名称（可选，覆盖风格默认色板）
 
     Returns:
         matplotlib.figure.Figure
@@ -138,117 +145,126 @@ def plot_enrichment_network(
         use_cmap = False
         cmap_label = None
 
-    fig, ax = plt.subplots(figsize=figsize)
+    # 使用风格上下文（style 为 None 时默认使用 nature）
+    with PlotTheme.context(style or 'nature', palette):
+        fig, ax = plt.subplots(figsize=figsize)
 
-    if HAS_NETWORKX and len(edges) > 0:
-        # 使用 networkx 构建图和计算布局
-        G = nx.Graph()
-        for i, name in enumerate(pathway_names):
-            G.add_node(i, label=name)
-        for i, j, overlap, jaccard in edges:
-            G.add_edge(i, j, weight=jaccard, overlap=overlap)
+        # 获取发散色图（替代硬编码 RdBu_r）
+        diverging_cmap = PlotTheme.get_diverging_cmap()
+        # 获取色板颜色（替代硬编码 viridis）
+        palette_colors = PlotTheme.get_palette(palette, n=len(pathway_names))
+        # 获取边的颜色
+        edge_color = PlotTheme.get_palette(palette, n=1)[0]
 
-        # 计算布局
-        if layout == "circular":
-            pos = nx.circular_layout(G)
-        elif layout == "kamada_kawai":
-            try:
-                pos = nx.kamada_kawai_layout(G)
-            except nx.NetworkXError:
-                pos = nx.spring_layout(G, seed=42)
+        if HAS_NETWORKX and len(edges) > 0:
+            # 使用 networkx 构建图和计算布局
+            G = nx.Graph()
+            for i, name in enumerate(pathway_names):
+                G.add_node(i, label=name)
+            for i, j, overlap, jaccard in edges:
+                G.add_edge(i, j, weight=jaccard, overlap=overlap)
+
+            # 计算布局
+            if layout == "circular":
+                pos = nx.circular_layout(G)
+            elif layout == "kamada_kawai":
+                try:
+                    pos = nx.kamada_kawai_layout(G)
+                except nx.NetworkXError:
+                    pos = nx.spring_layout(G, seed=42)
+            else:
+                pos = nx.spring_layout(G, seed=42, k=2.0 / np.sqrt(len(G.nodes())))
+
+            # 绘制边 - 使用风格系统获取的灰色
+            edge_weights = [G[u][v]["weight"] for u, v in G.edges()]
+            edge_widths = [1 + 4 * w for w in edge_weights]
+            nx.draw_networkx_edges(
+                G, pos, ax=ax, width=edge_widths,
+                edge_color=edge_color, alpha=0.6,
+            )
+
+            # 绘制节点
+            if use_cmap and node_colors is not None:
+                vmin = min(node_colors)
+                vmax = max(node_colors)
+                if vmin == vmax:
+                    vmax = vmin + 1
+                nc = diverging_cmap((np.array(node_colors) - vmin) / (vmax - vmin))
+            else:
+                nc = palette_colors
+
+            nx.draw_networkx_nodes(
+                G, pos, ax=ax, node_size=node_sizes_scaled,
+                node_color=nc, edgecolors="white", linewidths=1.5, alpha=0.9,
+            )
+
+            # 绘制标签
+            nx.draw_networkx_labels(
+                G, pos, ax=ax,
+                labels={i: pathway_names[i] for i in G.nodes()},
+                font_size=7, font_weight="bold",
+            )
+
+            # 添加颜色条
+            if use_cmap and node_colors is not None:
+                sm = plt.cm.ScalarMappable(
+                    cmap=diverging_cmap,
+                    norm=plt.Normalize(vmin=vmin, vmax=vmax),
+                )
+                sm.set_array([])
+                cbar = plt.colorbar(sm, ax=ax, shrink=0.5, pad=0.02)
+                cbar.set_label(cmap_label, fontsize=10)
         else:
-            pos = nx.spring_layout(G, seed=42, k=2.0 / np.sqrt(len(G.nodes())))
+            # 纯 matplotlib 简化布局：圆形排列
+            n = len(pathway_names)
+            angles = np.linspace(0, 2 * np.pi, n, endpoint=False)
+            radius = 1.0
+            pos_x = radius * np.cos(angles)
+            pos_y = radius * np.sin(angles)
 
-        # 绘制边
-        edge_weights = [G[u][v]["weight"] for u, v in G.edges()]
-        edge_widths = [1 + 4 * w for w in edge_weights]
-        nx.draw_networkx_edges(
-            G, pos, ax=ax, width=edge_widths,
-            edge_color="#B0BEC5", alpha=0.6,
-        )
+            # 绘制边
+            for i, j, overlap, jaccard in edges:
+                lw = 1 + 4 * jaccard
+                ax.plot(
+                    [pos_x[i], pos_x[j]], [pos_y[i], pos_y[j]],
+                    color=edge_color, alpha=0.6, linewidth=lw,
+                )
 
-        # 绘制节点
-        if use_cmap and node_colors is not None:
-            vmin = min(node_colors)
-            vmax = max(node_colors)
-            if vmin == vmax:
-                vmax = vmin + 1
-            nc = plt.cm.RdBu_r((np.array(node_colors) - vmin) / (vmax - vmin))
-        else:
-            nc = sns.color_palette("viridis", len(pathway_names))
+            # 绘制节点
+            if use_cmap and node_colors is not None:
+                vmin = min(node_colors)
+                vmax = max(node_colors)
+                if vmin == vmax:
+                    vmax = vmin + 1
+                nc = diverging_cmap((np.array(node_colors) - vmin) / (vmax - vmin))
+            else:
+                nc = palette_colors
 
-        nx.draw_networkx_nodes(
-            G, pos, ax=ax, node_size=node_sizes_scaled,
-            node_color=nc, edgecolors="white", linewidths=1.5, alpha=0.9,
-        )
+            ax.scatter(pos_x, pos_y, s=node_sizes_scaled, c=nc,
+                       edgecolors="white", linewidths=1.5, alpha=0.9, zorder=5)
 
-        # 绘制标签
-        nx.draw_networkx_labels(
-            G, pos, ax=ax,
-            labels={i: pathway_names[i] for i in G.nodes()},
-            font_size=7, font_weight="bold",
-        )
+            # 绘制标签
+            for i, name in enumerate(pathway_names):
+                ax.annotate(
+                    name, (pos_x[i], pos_y[i]),
+                    textcoords="offset points", xytext=(0, 10),
+                    ha="center", fontsize=7, fontweight="bold",
+                )
 
-        # 添加颜色条
-        if use_cmap and node_colors is not None:
-            sm = plt.cm.ScalarMappable(
-                cmap="RdBu_r",
-                norm=plt.Normalize(vmin=vmin, vmax=vmax),
-            )
-            sm.set_array([])
-            cbar = plt.colorbar(sm, ax=ax, shrink=0.5, pad=0.02)
-            cbar.set_label(cmap_label, fontsize=10)
-    else:
-        # 纯 matplotlib 简化布局：圆形排列
-        n = len(pathway_names)
-        angles = np.linspace(0, 2 * np.pi, n, endpoint=False)
-        radius = 1.0
-        pos_x = radius * np.cos(angles)
-        pos_y = radius * np.sin(angles)
+            # 添加颜色条
+            if use_cmap and node_colors is not None:
+                sm = plt.cm.ScalarMappable(
+                    cmap=diverging_cmap,
+                    norm=plt.Normalize(vmin=vmin, vmax=vmax),
+                )
+                sm.set_array([])
+                cbar = plt.colorbar(sm, ax=ax, shrink=0.5, pad=0.02)
+                cbar.set_label(cmap_label, fontsize=10)
 
-        # 绘制边
-        for i, j, overlap, jaccard in edges:
-            lw = 1 + 4 * jaccard
-            ax.plot(
-                [pos_x[i], pos_x[j]], [pos_y[i], pos_y[j]],
-                color="#B0BEC5", alpha=0.6, linewidth=lw,
-            )
-
-        # 绘制节点
-        if use_cmap and node_colors is not None:
-            vmin = min(node_colors)
-            vmax = max(node_colors)
-            if vmin == vmax:
-                vmax = vmin + 1
-            nc = plt.cm.RdBu_r((np.array(node_colors) - vmin) / (vmax - vmin))
-        else:
-            nc = sns.color_palette("viridis", n)
-
-        ax.scatter(pos_x, pos_y, s=node_sizes_scaled, c=nc,
-                   edgecolors="white", linewidths=1.5, alpha=0.9, zorder=5)
-
-        # 绘制标签
-        for i, name in enumerate(pathway_names):
-            ax.annotate(
-                name, (pos_x[i], pos_y[i]),
-                textcoords="offset points", xytext=(0, 10),
-                ha="center", fontsize=7, fontweight="bold",
-            )
-
-        # 添加颜色条
-        if use_cmap and node_colors is not None:
-            sm = plt.cm.ScalarMappable(
-                cmap="RdBu_r",
-                norm=plt.Normalize(vmin=vmin, vmax=vmax),
-            )
-            sm.set_array([])
-            cbar = plt.colorbar(sm, ax=ax, shrink=0.5, pad=0.02)
-            cbar.set_label(cmap_label, fontsize=10)
-
-    ax.set_title(title, fontsize=14, fontweight="bold")
-    ax.axis("off")
-    plt.tight_layout()
-    _save_figure(fig, output_file, dpi)
+        ax.set_title(title, fontsize=14, fontweight="bold")
+        ax.axis("off")
+        plt.tight_layout()
+        _save_figure(fig, output_file, dpi)
     return fig
 
 
@@ -263,6 +279,8 @@ def plot_upset(
     output_file: str = None,
     figsize: tuple = (14, 8),
     dpi: int = 300,
+    style: Optional[str] = None,
+    palette: Optional[str] = None,
 ) -> matplotlib.figure.Figure:
     """
     UpSet 图（基因集交集可视化）
@@ -277,6 +295,8 @@ def plot_upset(
         output_file: 输出文件路径（可选）
         figsize: 图表尺寸
         dpi: 输出分辨率
+        style: 风格名称（可选）
+        palette: 色板名称（可选）
 
     Returns:
         matplotlib.figure.Figure
@@ -323,76 +343,85 @@ def plot_upset(
         _save_figure(fig, output_file, dpi)
         return fig
 
-    # 创建图形
-    fig = plt.figure(figsize=figsize)
-    # 上方条形图占 40%，下方矩阵占 60%
-    gs = fig.add_gridspec(
-        2, 1, height_ratios=[1, 1.2], hspace=0.05,
-        left=0.15, right=0.95, top=0.92, bottom=0.08,
-    )
+    # 使用风格上下文（style 为 None 时默认使用 nature）
+    with PlotTheme.context(style or 'nature', palette):
+        # 获取主色
+        main_color = PlotTheme.get_palette(palette, n=1)[0]
+        # 获取灰色
+        gray_color = PlotTheme.get_palette(palette, n=3)[2]
+        # 获取浅色
+        light_color = PlotTheme.get_palette(palette, n=5)[4]
 
-    ax_bar = fig.add_subplot(gs[0])
-    ax_matrix = fig.add_subplot(gs[1])
+        # 创建图形
+        fig = plt.figure(figsize=figsize)
+        # 上方条形图占 40%，下方矩阵占 60%
+        gs = fig.add_gridspec(
+            2, 1, height_ratios=[1, 1.2], hspace=0.05,
+            left=0.15, right=0.95, top=0.92, bottom=0.08,
+        )
 
-    n_intersections = len(intersections)
-    combo_list = [item[0] for item in intersections]
-    size_list = [item[1] for item in intersections]
+        ax_bar = fig.add_subplot(gs[0])
+        ax_matrix = fig.add_subplot(gs[1])
 
-    # 上方：水平条形图
-    y_positions = range(n_intersections)
-    ax_bar.barh(list(y_positions), size_list, color="#4C72B0", edgecolor="none", height=0.7)
-    ax_bar.set_yticks(list(y_positions))
-    ax_bar.set_yticklabels([""] * n_intersections)
-    ax_bar.invert_yaxis()
-    ax_bar.set_xlabel("Intersection Size", fontsize=10)
-    ax_bar.spines["top"].set_visible(False)
-    ax_bar.spines["right"].set_visible(False)
-    ax_bar.tick_params(labelsize=8)
+        n_intersections = len(intersections)
+        combo_list = [item[0] for item in intersections]
+        size_list = [item[1] for item in intersections]
 
-    # 下方：圆点矩阵
-    # 为每个基因集分配 x 位置
-    set_x = np.arange(n_sets)
+        # 上方：水平条形图
+        y_positions = range(n_intersections)
+        ax_bar.barh(list(y_positions), size_list, color=main_color, edgecolor="none", height=0.7)
+        ax_bar.set_yticks(list(y_positions))
+        ax_bar.set_yticklabels([""] * n_intersections)
+        ax_bar.invert_yaxis()
+        ax_bar.set_xlabel("Intersection Size", fontsize=10)
+        ax_bar.spines["top"].set_visible(False)
+        ax_bar.spines["right"].set_visible(False)
+        ax_bar.tick_params(labelsize=8)
 
-    for row_idx, (combo, size) in enumerate(intersections):
-        for col_idx in range(n_sets):
-            if col_idx in combo:
-                ax_matrix.plot(
-                    set_x[col_idx], row_idx, "o",
-                    color="#4C72B0", markersize=8, markeredgecolor="white",
-                    markeredgewidth=0.5,
-                )
+        # 下方：圆点矩阵
+        # 为每个基因集分配 x 位置
+        set_x = np.arange(n_sets)
+
+        for row_idx, (combo, size) in enumerate(intersections):
+            for col_idx in range(n_sets):
+                if col_idx in combo:
+                    ax_matrix.plot(
+                        set_x[col_idx], row_idx, "o",
+                        color=main_color, markersize=8, markeredgecolor="white",
+                        markeredgewidth=0.5,
+                    )
+                else:
+                    ax_matrix.plot(
+                        set_x[col_idx], row_idx, "o",
+                        color=gray_color, markersize=4, markeredgecolor="none",
+                    )
+
+        ax_matrix.set_xlim(-0.5, n_sets - 0.5)
+        ax_matrix.set_ylim(-0.5, n_intersections - 0.5)
+        ax_matrix.invert_yaxis()
+        ax_matrix.set_xticks(set_x)
+
+        # 截断长名称
+        short_names = []
+        for name in pathway_names:
+            if len(name) > 20:
+                short_names.append(name[:18] + "..")
             else:
-                ax_matrix.plot(
-                    set_x[col_idx], row_idx, "o",
-                    color="#D3D3D3", markersize=4, markeredgecolor="none",
-                )
+                short_names.append(name)
+        ax_matrix.set_xticklabels(short_names, rotation=45, ha="right", fontsize=7)
+        ax_matrix.set_yticks(range(n_intersections))
+        ax_matrix.set_yticklabels([""] * n_intersections)
+        ax_matrix.spines["top"].set_visible(False)
+        ax_matrix.spines["right"].set_visible(False)
+        ax_matrix.spines["left"].set_visible(False)
+        ax_matrix.tick_params(axis="y", length=0)
 
-    ax_matrix.set_xlim(-0.5, n_sets - 0.5)
-    ax_matrix.set_ylim(-0.5, n_intersections - 0.5)
-    ax_matrix.invert_yaxis()
-    ax_matrix.set_xticks(set_x)
+        # 添加竖线连接上下两个面板
+        for col_idx in range(n_sets):
+            ax_matrix.axvline(x=set_x[col_idx], color=light_color, linewidth=0.5, zorder=0)
 
-    # 截断长名称
-    short_names = []
-    for name in pathway_names:
-        if len(name) > 20:
-            short_names.append(name[:18] + "..")
-        else:
-            short_names.append(name)
-    ax_matrix.set_xticklabels(short_names, rotation=45, ha="right", fontsize=7)
-    ax_matrix.set_yticks(range(n_intersections))
-    ax_matrix.set_yticklabels([""] * n_intersections)
-    ax_matrix.spines["top"].set_visible(False)
-    ax_matrix.spines["right"].set_visible(False)
-    ax_matrix.spines["left"].set_visible(False)
-    ax_matrix.tick_params(axis="y", length=0)
-
-    # 添加竖线连接上下两个面板
-    for col_idx in range(n_sets):
-        ax_matrix.axvline(x=set_x[col_idx], color="#E0E0E0", linewidth=0.5, zorder=0)
-
-    fig.suptitle(title, fontsize=14, fontweight="bold")
-    _save_figure(fig, output_file, dpi)
+        fig.suptitle(title, fontsize=14, fontweight="bold")
+        _save_figure(fig, output_file, dpi)
     return fig
 
 
@@ -410,6 +439,8 @@ def plot_volcano(
     output_file: str = None,
     figsize: tuple = (10, 8),
     dpi: int = 300,
+    style: Optional[str] = None,
+    palette: Optional[str] = None,
 ) -> matplotlib.figure.Figure:
     """
     火山图
@@ -428,6 +459,8 @@ def plot_volcano(
         output_file: 输出文件路径（可选）
         figsize: 图表尺寸
         dpi: 输出分辨率
+        style: 风格名称（可选）
+        palette: 色板名称（可选）
 
     Returns:
         matplotlib.figure.Figure
@@ -457,76 +490,82 @@ def plot_volcano(
         "category",
     ] = "down"
 
-    # 颜色映射
-    color_map = {"up": "#E74C3C", "down": "#3498DB", "not_sig": "#B0BEC5"}
-    df["color"] = df["category"].map(color_map)
+    # 使用风格上下文（style 为 None 时默认使用 nature）
+    with PlotTheme.context(style or 'nature', palette):
+        # 颜色映射 - 使用 VOLCANO_COLORS 常量
+        color_map = {
+            "up": VOLCANO_COLORS["up"],
+            "down": VOLCANO_COLORS["down"],
+            "not_sig": VOLCANO_COLORS["ns"],
+        }
+        df["color"] = df["category"].map(color_map)
 
-    fig, ax = plt.subplots(figsize=figsize)
+        fig, ax = plt.subplots(figsize=figsize)
 
-    # 绘制散点
-    for cat in ("not_sig", "up", "down"):
-        mask = df["category"] == cat
-        if mask.sum() == 0:
-            continue
-        ax.scatter(
-            df.loc[mask, nes_col],
-            df.loc[mask, "neg_log10_p"],
-            c=df.loc[mask, "color"],
-            s=40,
-            alpha=0.7,
-            edgecolors="none",
-            label=cat,
-        )
-
-    # 阈值线
-    ax.axvline(x=nes_threshold, color="gray", linestyle="--", linewidth=0.8, alpha=0.7)
-    ax.axvline(x=-nes_threshold, color="gray", linestyle="--", linewidth=0.8, alpha=0.7)
-    ax.axhline(
-        y=-np.log10(pvalue_threshold), color="gray",
-        linestyle="--", linewidth=0.8, alpha=0.7,
-    )
-
-    # 标注 top 显著通路
-    sig_df = df[df["category"] != "not_sig"]
-    if len(sig_df) > 0:
-        # 按 -log10(pvalue) * |NES| 排序，取前 5 个
-        sig_df = sig_df.copy()
-        sig_df["_importance"] = sig_df["neg_log10_p"] * sig_df[nes_col].abs()
-        top_sig = sig_df.nlargest(min(5, len(sig_df)), "_importance")
-
-        for _, row in top_sig.iterrows():
-            ax.annotate(
-                row[pathway_col],
-                (row[nes_col], row["neg_log10_p"]),
-                textcoords="offset points",
-                xytext=(5, 5),
-                fontsize=7,
-                fontweight="bold",
-                color=row["color"],
-                arrowprops=dict(arrowstyle="-", color="gray", lw=0.5),
+        # 绘制散点
+        for cat in ("not_sig", "up", "down"):
+            mask = df["category"] == cat
+            if mask.sum() == 0:
+                continue
+            ax.scatter(
+                df.loc[mask, nes_col],
+                df.loc[mask, "neg_log10_p"],
+                c=df.loc[mask, "color"],
+                s=40,
+                alpha=0.7,
+                edgecolors="none",
+                label=cat,
             )
 
-    # 图例
-    from matplotlib.lines import Line2D
-    legend_elements = [
-        Line2D([0], [0], marker="o", color="w", markerfacecolor="#E74C3C",
-               markersize=8, label=f"Up (NES >= {nes_threshold})"),
-        Line2D([0], [0], marker="o", color="w", markerfacecolor="#3498DB",
-               markersize=8, label=f"Down (NES <= -{nes_threshold})"),
-        Line2D([0], [0], marker="o", color="w", markerfacecolor="#B0BEC5",
-               markersize=8, label="Not Significant"),
-    ]
-    ax.legend(handles=legend_elements, fontsize=8, loc="upper right")
+        # 阈值线
+        ax.axvline(x=nes_threshold, color="gray", linestyle="--", linewidth=0.8, alpha=0.7)
+        ax.axvline(x=-nes_threshold, color="gray", linestyle="--", linewidth=0.8, alpha=0.7)
+        ax.axhline(
+            y=-np.log10(pvalue_threshold), color="gray",
+            linestyle="--", linewidth=0.8, alpha=0.7,
+        )
 
-    ax.set_xlabel(nes_col.upper(), fontsize=12)
-    ax.set_ylabel("-log10(P-value)", fontsize=12)
-    ax.set_title(title, fontsize=14, fontweight="bold")
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
-    ax.tick_params(labelsize=9)
+        # 标注 top 显著通路
+        sig_df = df[df["category"] != "not_sig"]
+        if len(sig_df) > 0:
+            # 按 -log10(pvalue) * |NES| 排序，取前 5 个
+            sig_df = sig_df.copy()
+            sig_df["_importance"] = sig_df["neg_log10_p"] * sig_df[nes_col].abs()
+            top_sig = sig_df.nlargest(min(5, len(sig_df)), "_importance")
 
-    plt.tight_layout()
-    _save_figure(fig, output_file, dpi)
+            for _, row in top_sig.iterrows():
+                ax.annotate(
+                    row[pathway_col],
+                    (row[nes_col], row["neg_log10_p"]),
+                    textcoords="offset points",
+                    xytext=(5, 5),
+                    fontsize=7,
+                    fontweight="bold",
+                    color=row["color"],
+                    arrowprops=dict(arrowstyle="-", color="gray", lw=0.5),
+                )
+
+        # 图例
+        from matplotlib.lines import Line2D
+        legend_elements = [
+            Line2D([0], [0], marker="o", color="w", markerfacecolor=VOLCANO_COLORS["up"],
+                   markersize=8, label=f"Up (NES >= {nes_threshold})"),
+            Line2D([0], [0], marker="o", color="w", markerfacecolor=VOLCANO_COLORS["down"],
+                   markersize=8, label=f"Down (NES <= -{nes_threshold})"),
+            Line2D([0], [0], marker="o", color="w", markerfacecolor=VOLCANO_COLORS["ns"],
+                   markersize=8, label="Not Significant"),
+        ]
+        ax.legend(handles=legend_elements, fontsize=8, loc="upper right")
+
+        ax.set_xlabel(nes_col.upper(), fontsize=12)
+        ax.set_ylabel("-log10(P-value)", fontsize=12)
+        ax.set_title(title, fontsize=14, fontweight="bold")
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.tick_params(labelsize=9)
+
+        plt.tight_layout()
+        _save_figure(fig, output_file, dpi)
     return fig
 
 
@@ -543,6 +582,8 @@ def plot_method_comparison(
     output_file: str = None,
     figsize: tuple = (8, 8),
     dpi: int = 300,
+    style: Optional[str] = None,
+    palette: Optional[str] = None,
 ) -> matplotlib.figure.Figure:
     """
     方法间比较散点图
@@ -559,6 +600,8 @@ def plot_method_comparison(
         output_file: 输出文件路径（可选）
         figsize: 图表尺寸
         dpi: 输出分辨率
+        style: 风格名称（可选）
+        palette: 色板名称（可选）
 
     Returns:
         matplotlib.figure.Figure
@@ -581,51 +624,57 @@ def plot_method_comparison(
     else:
         r, p_val = np.nan, np.nan
 
-    fig, ax = plt.subplots(figsize=figsize)
+    # 使用风格上下文（style 为 None 时默认使用 nature）
+    with PlotTheme.context(style or 'nature', palette):
+        # 获取颜色
+        scatter_color = PlotTheme.get_palette(palette, n=1)[0]
+        line_color = PlotTheme.get_palette(palette, n=2)[1]
 
-    # 绘制散点
-    ax.scatter(vals_a, vals_b, s=50, alpha=0.6, edgecolors="white",
-               linewidths=0.5, color="#4C72B0")
+        fig, ax = plt.subplots(figsize=figsize)
 
-    # 对角线 y = x
-    all_vals = np.concatenate([vals_a, vals_b])
-    val_min, val_max = all_vals.min(), all_vals.max()
-    margin = (val_max - val_min) * 0.05
-    ax.plot(
-        [val_min - margin, val_max + margin],
-        [val_min - margin, val_max + margin],
-        "k--", linewidth=0.8, alpha=0.5, label="y = x",
-    )
+        # 绘制散点
+        ax.scatter(vals_a, vals_b, s=50, alpha=0.6, edgecolors="white",
+                   linewidths=0.5, color=scatter_color)
 
-    # 回归线
-    if len(common_pathways) >= 3:
-        slope, intercept, _, _, _ = stats.linregress(vals_a, vals_b)
-        x_line = np.linspace(val_min, val_max, 100)
-        y_line = slope * x_line + intercept
-        ax.plot(x_line, y_line, color="#E74C3C", linewidth=1.5, alpha=0.7,
-                label=f"y = {slope:.2f}x + {intercept:.2f}")
+        # 对角线 y = x
+        all_vals = np.concatenate([vals_a, vals_b])
+        val_min, val_max = all_vals.min(), all_vals.max()
+        margin = (val_max - val_min) * 0.05
+        ax.plot(
+            [val_min - margin, val_max + margin],
+            [val_min - margin, val_max + margin],
+            "k--", linewidth=0.8, alpha=0.5, label="y = x",
+        )
 
-    # 标注 Pearson 相关系数
-    if p_val < 0.001:
-        p_text = f"p < 0.001"
-    else:
-        p_text = f"p = {p_val:.3e}"
-    ax.text(
-        0.05, 0.95,
-        f"Pearson r = {r:.3f}\n{p_text}\nn = {len(common_pathways)}",
-        transform=ax.transAxes,
-        fontsize=10, verticalalignment="top",
-        bbox=dict(boxstyle="round,pad=0.3", facecolor="wheat", alpha=0.5),
-    )
+        # 回归线
+        if len(common_pathways) >= 3:
+            slope, intercept, _, _, _ = stats.linregress(vals_a, vals_b)
+            x_line = np.linspace(val_min, val_max, 100)
+            y_line = slope * x_line + intercept
+            ax.plot(x_line, y_line, color=line_color, linewidth=1.5, alpha=0.7,
+                    label=f"y = {slope:.2f}x + {intercept:.2f}")
 
-    ax.set_xlabel(method_a_name, fontsize=12)
-    ax.set_ylabel(method_b_name, fontsize=12)
-    ax.set_title(title, fontsize=14, fontweight="bold")
-    ax.legend(fontsize=9, loc="lower right")
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
-    ax.tick_params(labelsize=9)
+        # 标注 Pearson 相关系数
+        if p_val < 0.001:
+            p_text = f"p < 0.001"
+        else:
+            p_text = f"p = {p_val:.3e}"
+        ax.text(
+            0.05, 0.95,
+            f"Pearson r = {r:.3f}\n{p_text}\nn = {len(common_pathways)}",
+            transform=ax.transAxes,
+            fontsize=10, verticalalignment="top",
+            bbox=dict(boxstyle="round,pad=0.3", facecolor="wheat", alpha=0.5),
+        )
 
-    plt.tight_layout()
-    _save_figure(fig, output_file, dpi)
+        ax.set_xlabel(method_a_name, fontsize=12)
+        ax.set_ylabel(method_b_name, fontsize=12)
+        ax.set_title(title, fontsize=14, fontweight="bold")
+        ax.legend(fontsize=9, loc="lower right")
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.tick_params(labelsize=9)
+
+        plt.tight_layout()
+        _save_figure(fig, output_file, dpi)
     return fig

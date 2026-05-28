@@ -35,7 +35,7 @@ AllEnricher v2.0 是 AllEnricher v1.0 的 Python 重构版本，保留了 v1 的
 - **兼容 v1 数据库**：可直接使用 v1 构建的 GO、KEGG、Reactome、DO、DisGeNET 数据库
 - **多种统计方法**：Fisher 精确检验、超几何检验、GSEA、ssGSEA、GSVA
 - **多重检验校正**：BH、BY、Bonferroni、Holm
-- **丰富可视化**：柱状图、气泡图、富集曲线图、热图、网络图等12+种发表级图表
+- **丰富可视化**：柱状图、气泡图、富集曲线图、热图、网络图等12+种发表级图表，Python原生实现，支持PNG/PDF双输出、10种学术主题、36组颜色风格
 - **本地 Web 服务**：基于 FastAPI 的交互式分析界面，浏览器打开即可使用
 - **AI 智能解读**：支持 OpenAI、Claude、DeepSeek、GLM、MiniMax、Ollama
 - **REST API**：完整的 RESTful API，支持程序化调用
@@ -69,7 +69,7 @@ AllEnricher v2.0 是 AllEnricher v1.0 的 Python 重构版本，保留了 v1 的
 - 🧬 **GSEA**: 基于置换检验的富集分析，支持NES标准化和Leading Edge识别
 - 📊 **ssGSEA**: 单样本水平计算通路富集得分，适用于免疫浸润分析
 - 🔄 **GSVA**: 三种计算方法（Random Walk/PLAGE/Z-score），适用于样本聚类和异质性分析
-- 🎨 **发表级可视化**: 富集曲线图、热图、气泡图、网络图等12+种图表类型
+- 🎨 **发表级可视化**: 富集曲线图、热图、气泡图、网络图等12+种图表类型，Python原生matplotlib/seaborn实现，PNG/PDF双输出，10种学术主题，36组颜色风格
 
 ### AI 后端支持
 
@@ -88,8 +88,6 @@ AllEnricher v2.0 是 AllEnricher v1.0 的 Python 重构版本，保留了 v1 的
 ### 必需依赖
 
 - Python 3.8+
-- R（用于可视化，条形图和气泡图）
-- Rscript（R 命令行工具）
 
 ### 可选依赖
 
@@ -97,9 +95,12 @@ AllEnricher v2.0 是 AllEnricher v1.0 的 Python 重构版本，保留了 v1 的
 - OpenAI/Anthropic Python 包（AI 解读）
 - pytest（运行测试）
 
-### R 包要求
+### Python 可视化依赖
 
-基础 R 安装即可，条形图和气泡图使用 R base 原生函数和 ggplot2，不依赖其他第三方 R 包。
+可视化模块使用 Python 原生实现，自动安装以下依赖（随 `pip install -e .` 一起安装）：
+- matplotlib>=3.4.0 — 基础绘图引擎
+- seaborn>=0.11.0 — 统计图形美化
+- cutecharts>=0.2.0 — 轻量图表补充
 
 ---
 
@@ -112,14 +113,14 @@ AllEnricher v2.0 是 AllEnricher v1.0 的 Python 重构版本，保留了 v1 的
 git clone https://github.com/zd105/AllEnricher.git
 cd AllEnricher/AllEnricher-v2
 
-# 构建 Docker 镜像（包含 R + Python + 所有依赖）
+# 构建 Docker 镜像（包含 Python + 所有依赖）
 docker build -t allenricher:v2 -f Dockerfile.test .
 
 # 运行测试
 docker run --rm -v "$(pwd):/workspace" -w /workspace allenricher:v2 bash -c "python3 -m pytest tests/ -v"
 ```
 
-> 注意：Dockerfile.test 已包含 R、Python、pytest 等所有依赖。
+> 注意：Dockerfile.test 已包含 Python、pytest 等所有依赖。
 
 ### 方式二：pip 安装
 
@@ -144,22 +145,13 @@ pip install -e ".[all]"
 ### 方式三：本地开发环境
 
 ```bash
-# 1. 安装 R
-# Ubuntu/Debian:
-sudo apt-get install r-base r-base-dev
-
-# macOS:
-brew install r
-
-# Windows: 从 https://cran.r-project.org/bin/windows/base/ 下载安装
-
-# 2. 安装 Python 依赖
+# 1. 安装 Python 依赖
 pip install numpy pandas scipy statsmodels pyyaml requests tqdm openpyxl
 
-# 3. 安装 pytest（测试用）
+# 2. 安装 pytest（测试用）
 pip install pytest pytest-cov
 
-# 4. 安装项目
+# 3. 安装项目
 pip install -e .
 ```
 
@@ -221,10 +213,14 @@ allenricher analyze \
 results/
 ├── GO_enrichment.tsv      # GO 富集结果
 ├── KEGG_enrichment.tsv    # KEGG 富集结果
-├── plots/                 # 可视化图表
+├── plots/                 # 可视化图表（PNG + PDF 双输出）
+│   ├── GO_barplot.png
 │   ├── GO_barplot.pdf
+│   ├── GO_bubble.png
 │   ├── GO_bubble.pdf
+│   ├── KEGG_barplot.png
 │   ├── KEGG_barplot.pdf
+│   ├── KEGG_bubble.png
 │   └── KEGG_bubble.pdf
 └── report.html            # HTML 交互报告
 ```
@@ -257,7 +253,7 @@ allenricher analyze [选项]
   --plot-types LIST         可视化图表类型，逗号分隔
                             GSEA: enrichment,nes_barplot,dotplot
                             ssGSEA/GSVA: heatmap,group_comparison,dotplot,correlation
-  --plot-format FORMAT      图表格式（png/pdf/svg，默认png）
+  --plot-format FORMAT      图表格式（png/pdf/svg，默认png；支持同时输出PNG+PDF，用逗号分隔如"png,pdf"）
   --plot-dpi INT           图表分辨率（默认300）
   -c, --correction TEXT     多重检验校正方法（默认：BH）
                             BH, BY, bonferroni, holm, none
@@ -549,7 +545,7 @@ allenricher analyze \
     -s hsa \
     --gmt hsa.KEGG.gmt.gz \
     --plot-types enrichment,nes_barplot,dotplot \
-    --plot-format png \
+    --plot-format png,pdf \
     -o gsea_results/
 ```
 
@@ -701,7 +697,7 @@ docker run --rm \
     -v "$(pwd):/workspace" \
     -w /workspace \
     allenricher:v2 \
-    bash -c "python3 -m pytest tests/ -v"
+    python3 -m pytest tests/ -v
 ```
 
 ### 4.3 使用 v1 数据进行端对端测试
@@ -737,7 +733,7 @@ diff ./test_results/GO_enrichment.tsv "$V1_EXAMPLE/../fisher/Q0.05/example.glist
 | `test_e2e_gsea.py` | GSEA端到端测试（7 个测试） |
 | `test_e2e_ssgsea.py` | ssGSEA端到端测试（8 个测试） |
 | `test_e2e_gsva.py` | GSVA端到端测试（14 个测试） |
-| `test_e2e_visualization.py` | 可视化集成测试（26 个测试） |
+| `test_e2e_visualization.py` | 可视化集成测试（26 个测试，覆盖全部图表类型） |
 | `test_gmt_generation_e2e.py` | GMT文件生成测试（8 个测试） |
 
 ---
@@ -765,9 +761,11 @@ GO:0051301  cell division                8           0.0418        4.56e-04     
 | Genes | 富集基因列表（分号分隔） |
 | Term_URL | GO/Pathway 网页链接 |
 
-### 5.2 PDF 可视化
+### 5.2 PNG + PDF 可视化
 
-- **柱状图**：横轴为 -log10(Q-value)，纵轴为条目名称，按类别着色
+可视化模块使用 Python 原生 matplotlib/seaborn 实现，支持 PNG 和 PDF 双格式输出（300DPI 发表级分辨率）。
+
+- **柱状图**：横轴为 -log10(Q-value)，纵轴为条目名称，按类别着色，支持 10 种学术主题风格
 - **气泡图**：横轴为 Rich Factor，纵轴为条目名称，点大小为基因数，颜色为 -log10(Q-value)
 
 ### 5.3 HTML 报告
@@ -783,27 +781,27 @@ GO:0051301  cell division                8           0.0418        4.56e-04     
 
 **GSEA 专属图表：**
 
-| 图表类型 | 描述 | 文件 |
+| 图表类型 | 描述 | 文件（PNG + PDF 双输出） |
 |----------|------|------|
-| 富集曲线图 | 三面板图：Running ES曲线、基因位置标记、基因排序度量 | `*_enrichment.png` |
-| NES条形图 | 水平条形图展示各通路NES值，按显著性排序 | `*_nes_barplot.png` |
-| 气泡图 | 气泡大小表示基因数，颜色表示显著性 | `*_dotplot.png` |
+| 富集曲线图 | 三面板图：Running ES曲线、基因位置标记、基因排序度量 | `*_enrichment.{png,pdf}` |
+| NES条形图 | 水平条形图展示各通路NES值，按显著性排序 | `*_nes_barplot.{png,pdf}` |
+| 气泡图 | 气泡大小表示基因数，颜色表示显著性 | `*_dotplot.{png,pdf}` |
 
 **ssGSEA/GSVA 专属图表：**
 
-| 图表类型 | 描述 | 文件 |
+| 图表类型 | 描述 | 文件（PNG + PDF 双输出） |
 |----------|------|------|
-| 通路活性热图 | 样本×通路的活性得分热图，支持聚类 | `*_heatmap.png` |
-| 组间比较图 | 箱线图/小提琴图比较不同组别通路活性 | `*_group_comparison.png` |
-| 样本相关性热图 | 样本间通路活性的相关性矩阵 | `*_correlation.png` |
+| 通路活性热图 | 样本×通路的活性得分热图，支持聚类 | `*_heatmap.{png,pdf}` |
+| 组间比较图 | 箱线图/小提琴图比较不同组别通路活性 | `*_group_comparison.{png,pdf}` |
+| 样本相关性热图 | 样本间通路活性的相关性矩阵 | `*_correlation.{png,pdf}` |
 
 **通用图表：**
 
-| 图表类型 | 描述 | 文件 |
+| 图表类型 | 描述 | 文件（PNG + PDF 双输出） |
 |----------|------|------|
-| 通路网络图 | 基于基因重叠的通路关系网络 | `enrichment_network.png` |
-| 火山图 | NES vs -log10(pvalue)的散点图 | `*_volcano.png` |
-| 方法比较图 | 不同方法结果的相关性散点图 | `method_comparison.png` |
+| 通路网络图 | 基于基因重叠的通路关系网络 | `enrichment_network.{png,pdf}` |
+| 火山图 | NES vs -log10(pvalue)的散点图 | `*_volcano.{png,pdf}` |
+| 方法比较图 | 不同方法结果的相关性散点图 | `method_comparison.{png,pdf}` |
 
 **图表配置：**
 
@@ -811,14 +809,29 @@ GO:0051301  cell division                8           0.0418        4.56e-04     
 # 指定图表类型
 --plot-types enrichment,heatmap,dotplot
 
-# 指定输出格式（支持PNG/PDF/SVG）
---plot-format pdf
+# 指定输出格式（支持PNG/PDF/SVG，可同时输出多个）
+--plot-format png,pdf
 
 # 指定分辨率（发表级300DPI）
 --plot-dpi 300
 
+# 选择主题风格（默认modern）
+--plot-theme nature
+
+# 选择颜色风格（默认Set2）
+--color-style Nature
+
+# 暗色模式
+--dark-mode
+
 # 生成所有可用图表
 --plot-types all
+
+# 支持的 --plot-theme 选项：
+# nature, science, cell, lancet, nejm, ieee, asco, modern, minimal, dark
+
+# 支持的 --color-style 选项：
+# Category10~Category30, Nature, Science, Cell, Lancet, NEJM, IEEE, ASCO, Set1~Set3, Pastel1~Pastel2, Dark2, Accent
 ```
 
 ---
@@ -849,7 +862,11 @@ gsea_max_size: 500
 # 可视化
 top_terms: 20
 plot_formats:
+  - "png"
   - "pdf"
+plot_theme: "modern"          # 主题：nature/science/cell/lancet/nejm/ieee/asco/modern/minimal/dark
+color_style: "Set2"           # 颜色风格：Category10~30, Nature, Science, Cell 等
+dark_mode: false              # 暗色模式
 
 # 性能
 n_jobs: 4
@@ -901,16 +918,12 @@ ls /path/to/v1/database/organism/v20190612/hsa/
 # 应该看到：hsa.GO2gene.tab.gz, GO2disc.gz, hsa.kegg2gene.tab.gz, ...
 ```
 
-### Q3: R 脚本执行失败
+### Q3: 可视化图表生成失败
 
-确保 R 和 Rscript 在 PATH 中：
+确保已安装 Python 可视化依赖：
 
 ```bash
-# 检查 R 是否可用
-R --version
-Rscript --version
-
-# 如果不可用，添加到 PATH 或安装 R
+pip install matplotlib seaborn cutecharts
 ```
 
 ### Q4: 如何构建自己的数据库？
@@ -945,13 +958,12 @@ allenricher analyze -i genes.txt --ai deepseek --ai-key $DEEPSEEK_API_KEY
 ### Q6: 测试失败怎么办？
 
 1. 确保所有依赖已安装
-2. 检查 R 是否正确安装
-3. 使用 Docker 环境排除环境问题：
+2. 使用 Docker 环境排除环境问题：
 
 ```bash
 docker build -t allenricher:v2 -f Dockerfile.test .
 docker run --rm -v "$(pwd):/workspace" -w /workspace allenricher:v2 \
-    bash -c "python3 -m pytest tests/test_enrichment.py -v"
+    python3 -m pytest tests/test_enrichment.py -v
 ```
 
 ---
@@ -982,7 +994,18 @@ MIT License
 
 ---
 
-## 最近更新 (v2.1.0)
+## 最近更新 (v2.2.0)
+
+### 2026-05-28: 风格颜色系统重构
+
+- **R→Python 可视化迁移**: 彻底移除 R/ggplot2/pheatmap/UpSetR 依赖，改用 Python 原生 matplotlib + seaborn + cutecharts 实现全部图表
+- **模块化重构**: 将单一 `plotter.py` 拆分为 9 个模块（barplot, bubble, common_plots, color_config, gsea_plots, gsva_plots, plot_config, plot_theme, plotter），职责清晰、易于扩展
+- **主题系统**: 新增 10 种预置学术主题（Nature, Science, Cell, Lancet, NEJM, IEEE, ASCO, Modern, Minimal, Dark），支持自定义主题注册
+- **颜色配置**: 提供 36 组颜色风格（Category10~Category30 + 渐变色系 + 语义色系），支持暗色模式自动切换
+- **图表配置统一管理**: 新增 `plot_config.py`，统一管理输出格式（PNG/PDF）、DPI（300 发表级）、字体大小等参数
+- **PNG + PDF 双输出**: 全部图表支持双格式输出，满足不同场景需求
+- **依赖简化**: 移除了对 R 运行时的依赖，部署更简单
+- **全量测试**: 679 个 pytest 测试全部通过
 
 ### 2026-05-28: 数据库版本管理系统
 
@@ -1028,4 +1051,4 @@ MIT License
 
 ---
 
-*最后更新：2026-05-28*
+*最后更新：2026-05-28（v2.2.0）*

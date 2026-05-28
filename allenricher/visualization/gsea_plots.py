@@ -20,6 +20,8 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 
+from .plot_theme import PlotTheme, save_figure_dual
+
 logger = logging.getLogger(__name__)
 
 
@@ -86,7 +88,7 @@ def _get_gene_set_positions(
 def _save_figure(fig: plt.Figure, output_file: Optional[str], dpi: int = 300):
     """保存图表到文件（如指定了 output_file）"""
     if output_file:
-        fig.savefig(output_file, dpi=dpi, bbox_inches="tight")
+        save_figure_dual(fig, output_file, dpi=dpi)
         logger.info(f"图表已保存: {output_file}")
 
 
@@ -104,7 +106,8 @@ def plot_gsea_enrichment(
     title: str = None,
     output_file: str = None,
     figsize: tuple = (10, 6),
-    color: str = "#2E86AB",
+    style: Optional[str] = None,
+    palette: Optional[str] = None,
 ) -> matplotlib.figure.Figure:
     """
     GSEA 富集曲线图（三面板）
@@ -123,7 +126,8 @@ def plot_gsea_enrichment(
         title: 图表标题（默认自动生成）
         output_file: 输出文件路径（可选）
         figsize: 图表尺寸
-        color: ES 曲线颜色
+        style: 图表风格（默认 nature）
+        palette: 色板名（覆盖风格默认色板）
 
     Returns:
         matplotlib.figure.Figure
@@ -135,67 +139,72 @@ def plot_gsea_enrichment(
     # 基因权重数组
     weights = np.array([gene_weights.get(g, 0.0) for g in ranked_genes])
 
-    # 创建图形和 gridspec（高度比例 3:1:2）
-    fig = plt.figure(figsize=figsize)
-    gs = gridspec.GridSpec(
-        3, 1, height_ratios=[3, 1, 2], hspace=0.05,
-        left=0.12, right=0.95, top=0.90, bottom=0.08,
-    )
+    with PlotTheme.context(style or 'nature'):
+        # 获取颜色
+        color = PlotTheme.get_palette(palette, n=1)[0]
+        color_pos, color_neg = PlotTheme.get_palette(palette, n=2)
 
-    x = np.arange(len(ranked_genes))
+        # 创建图形和 gridspec（高度比例 3:1:2）
+        fig = plt.figure(figsize=figsize)
+        gs = gridspec.GridSpec(
+            3, 1, height_ratios=[3, 1, 2], hspace=0.05,
+            left=0.12, right=0.95, top=0.90, bottom=0.08,
+        )
 
-    # ---- 面板1: Running Enrichment Score ----
-    ax1 = fig.add_subplot(gs[0])
-    ax1.fill_between(x, 0, running_es, where=(running_es >= 0),
-                     color=color, alpha=0.3)
-    ax1.fill_between(x, 0, running_es, where=(running_es < 0),
-                     color="#E74C3C", alpha=0.3)
-    ax1.plot(x, running_es, color=color, linewidth=1.0)
-    ax1.axhline(y=0, color="gray", linestyle="--", linewidth=0.5)
+        x = np.arange(len(ranked_genes))
 
-    # 标注峰值 ES
-    peak_idx = np.argmax(np.abs(running_es))
-    peak_val = running_es[peak_idx]
-    ax1.annotate(
-        f"ES = {peak_val:.3f}",
-        xy=(peak_idx, peak_val),
-        xytext=(peak_idx + len(ranked_genes) * 0.05, peak_val),
-        fontsize=8,
-        arrowprops=dict(arrowstyle="->", color="black", lw=0.8),
-    )
+        # ---- 面板1: Running Enrichment Score ----
+        ax1 = fig.add_subplot(gs[0])
+        ax1.fill_between(x, 0, running_es, where=(running_es >= 0),
+                         color=color, alpha=0.3)
+        ax1.fill_between(x, 0, running_es, where=(running_es < 0),
+                         color=color_pos, alpha=0.3)
+        ax1.plot(x, running_es, color=color, linewidth=1.0)
+        ax1.axhline(y=0, color="gray", linestyle="--", linewidth=0.5)
 
-    ax1.set_ylabel("Running Enrichment Score", fontsize=9)
-    ax1.set_xlim(0, len(ranked_genes) - 1)
-    ax1.set_xticklabels([])
-    ax1.tick_params(labelsize=8)
+        # 标注峰值 ES
+        peak_idx = np.argmax(np.abs(running_es))
+        peak_val = running_es[peak_idx]
+        ax1.annotate(
+            f"ES = {peak_val:.3f}",
+            xy=(peak_idx, peak_val),
+            xytext=(peak_idx + len(ranked_genes) * 0.05, peak_val),
+            fontsize=8,
+            arrowprops=dict(arrowstyle="->", color="black", lw=0.8),
+        )
 
-    # ---- 面板2: 基因集成员位置 ----
-    ax2 = fig.add_subplot(gs[1], sharex=ax1)
-    for pos in positions:
-        ax2.axvline(x=pos, color="black", linewidth=0.5, alpha=0.7)
-    ax2.set_xlim(0, len(ranked_genes) - 1)
-    ax2.set_ylim(0, 1)
-    ax2.set_yticks([])
-    ax2.set_xticklabels([])
-    ax2.set_ylabel("Gene Set", fontsize=9)
-    ax2.tick_params(labelsize=8)
+        ax1.set_ylabel("Running Enrichment Score", fontsize=9)
+        ax1.set_xlim(0, len(ranked_genes) - 1)
+        ax1.set_xticklabels([])
+        ax1.tick_params(labelsize=8)
 
-    # ---- 面板3: 基因权重柱状图 ----
-    ax3 = fig.add_subplot(gs[2], sharex=ax1)
-    colors = ["#E74C3C" if w >= 0 else "#3498DB" for w in weights]
-    ax3.bar(x, weights, width=1.0, color=colors, alpha=0.6)
-    ax3.axhline(y=0, color="gray", linewidth=0.5)
-    ax3.set_xlim(0, len(ranked_genes) - 1)
-    ax3.set_ylabel("Weight (log2FC)", fontsize=9)
-    ax3.set_xlabel("Rank in Ordered Gene List", fontsize=9)
-    ax3.tick_params(labelsize=8)
+        # ---- 面板2: 基因集成员位置 ----
+        ax2 = fig.add_subplot(gs[1], sharex=ax1)
+        for pos in positions:
+            ax2.axvline(x=pos, color="black", linewidth=0.5, alpha=0.7)
+        ax2.set_xlim(0, len(ranked_genes) - 1)
+        ax2.set_ylim(0, 1)
+        ax2.set_yticks([])
+        ax2.set_xticklabels([])
+        ax2.set_ylabel("Gene Set", fontsize=9)
+        ax2.tick_params(labelsize=8)
 
-    # ---- 标题 ----
-    if title is None:
-        title = f"NES = {nes:.2f}, P-value = {pvalue:.2e}"
-    fig.suptitle(title, fontsize=11, fontweight="bold", y=0.96)
+        # ---- 面板3: 基因权重柱状图 ----
+        ax3 = fig.add_subplot(gs[2], sharex=ax1)
+        bar_colors = [color_pos if w >= 0 else color_neg for w in weights]
+        ax3.bar(x, weights, width=1.0, color=bar_colors, alpha=0.6)
+        ax3.axhline(y=0, color="gray", linewidth=0.5)
+        ax3.set_xlim(0, len(ranked_genes) - 1)
+        ax3.set_ylabel("Weight (log2FC)", fontsize=9)
+        ax3.set_xlabel("Rank in Ordered Gene List", fontsize=9)
+        ax3.tick_params(labelsize=8)
 
-    _save_figure(fig, output_file)
+        # ---- 标题 ----
+        if title is None:
+            title = f"NES = {nes:.2f}, P-value = {pvalue:.2e}"
+        fig.suptitle(title, fontsize=11, fontweight="bold", y=0.96)
+
+        _save_figure(fig, output_file)
     return fig
 
 
@@ -209,8 +218,8 @@ def plot_gsea_nes_barplot(
     title: str = "GSEA NES Ranking",
     output_file: str = None,
     figsize: tuple = (10, 8),
-    color_pos: str = "#E74C3C",
-    color_neg: str = "#3498DB",
+    style: Optional[str] = None,
+    palette: Optional[str] = None,
 ) -> matplotlib.figure.Figure:
     """
     GSEA NES 条形图
@@ -225,8 +234,8 @@ def plot_gsea_nes_barplot(
         title: 图表标题
         output_file: 输出文件路径（可选）
         figsize: 图表尺寸
-        color_pos: 正向富集颜色
-        color_neg: 负向富集颜色
+        style: 图表风格（默认 nature）
+        palette: 色板名（覆盖风格默认色板）
 
     Returns:
         matplotlib.figure.Figure
@@ -238,49 +247,55 @@ def plot_gsea_nes_barplot(
     df = df.sort_values("_abs_nes", ascending=True).tail(top_n).copy()
     df = df.drop(columns=["_abs_nes"])
 
-    # 颜色映射
-    bar_colors = [color_pos if v >= 0 else color_neg for v in df["nes"]]
+    with PlotTheme.context(style or 'nature'):
+        # 获取颜色
+        colors = PlotTheme.get_palette(palette, n=3)
+        color_pos = colors[2]
+        color_neg = colors[0]
 
-    # 显著性标注
-    def _sig_stars(p):
-        if p < 0.001:
-            return "***"
-        elif p < 0.01:
-            return "**"
-        elif p < 0.05:
-            return "*"
-        return ""
+        # 颜色映射
+        bar_colors = [color_pos if v >= 0 else color_neg for v in df["nes"]]
 
-    sig_labels = [_sig_stars(p) for p in df["pvalue"]]
+        # 显著性标注
+        def _sig_stars(p):
+            if p < 0.001:
+                return "***"
+            elif p < 0.01:
+                return "**"
+            elif p < 0.05:
+                return "*"
+            return ""
 
-    # 绘图
-    fig, ax = plt.subplots(figsize=figsize)
-    bars = ax.barh(range(len(df)), df["nes"], color=bar_colors, edgecolor="none", height=0.7)
+        sig_labels = [_sig_stars(p) for p in df["pvalue"]]
 
-    # 添加显著性标注
-    for i, (nes_val, sig) in enumerate(zip(df["nes"], sig_labels)):
-        offset = 0.05 * (df["nes"].max() - df["nes"].min()) if len(df) > 1 else 0.1
-        if sig:
-            ax.text(
-                nes_val + (offset if nes_val >= 0 else -offset),
-                i,
-                sig,
-                va="center",
-                ha="left" if nes_val >= 0 else "right",
-                fontsize=8,
-            )
+        # 绘图
+        fig, ax = plt.subplots(figsize=figsize)
+        bars = ax.barh(range(len(df)), df["nes"], color=bar_colors, edgecolor="none", height=0.7)
 
-    ax.set_yticks(range(len(df)))
-    ax.set_yticklabels(df["pathway"], fontsize=8)
-    ax.axvline(x=0, color="gray", linewidth=0.8, linestyle="-")
-    ax.set_xlabel("Normalized Enrichment Score (NES)", fontsize=10)
-    ax.set_title(title, fontsize=12, fontweight="bold")
-    ax.tick_params(labelsize=8)
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
+        # 添加显著性标注
+        for i, (nes_val, sig) in enumerate(zip(df["nes"], sig_labels)):
+            offset = 0.05 * (df["nes"].max() - df["nes"].min()) if len(df) > 1 else 0.1
+            if sig:
+                ax.text(
+                    nes_val + (offset if nes_val >= 0 else -offset),
+                    i,
+                    sig,
+                    va="center",
+                    ha="left" if nes_val >= 0 else "right",
+                    fontsize=8,
+                )
 
-    plt.tight_layout()
-    _save_figure(fig, output_file)
+        ax.set_yticks(range(len(df)))
+        ax.set_yticklabels(df["pathway"], fontsize=8)
+        ax.axvline(x=0, color="gray", linewidth=0.8, linestyle="-")
+        ax.set_xlabel("Normalized Enrichment Score (NES)", fontsize=10)
+        ax.set_title(title, fontsize=12, fontweight="bold")
+        ax.tick_params(labelsize=8)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+
+        plt.tight_layout()
+        _save_figure(fig, output_file)
     return fig
 
 
@@ -294,6 +309,8 @@ def plot_gsea_dotplot(
     title: str = "GSEA Dot Plot",
     output_file: str = None,
     figsize: tuple = (10, 8),
+    style: Optional[str] = None,
+    palette: Optional[str] = None,
 ) -> matplotlib.figure.Figure:
     """
     GSEA 气泡图
@@ -309,6 +326,8 @@ def plot_gsea_dotplot(
         title: 图表标题
         output_file: 输出文件路径（可选）
         figsize: 图表尺寸
+        style: 图表风格（默认 nature）
+        palette: 色板名（覆盖风格默认色板）
 
     Returns:
         matplotlib.figure.Figure
@@ -323,34 +342,35 @@ def plot_gsea_dotplot(
     # 计算 -log10(pvalue)，避免 log(0)
     df["neg_log10_p"] = -np.log10(df["pvalue"].clip(lower=1e-300))
 
-    # 绘图
-    fig, ax = plt.subplots(figsize=figsize)
+    with PlotTheme.context(style or 'nature'):
+        # 绘图
+        fig, ax = plt.subplots(figsize=figsize)
 
-    scatter = ax.scatter(
-        df["nes"],
-        range(len(df)),
-        s=df["gene_count"] * 3,  # 缩放点大小
-        c=df["neg_log10_p"],
-        cmap="RdBu_r",
-        edgecolors="gray",
-        linewidths=0.3,
-        alpha=0.85,
-    )
+        scatter = ax.scatter(
+            df["nes"],
+            range(len(df)),
+            s=df["gene_count"] * 3,  # 缩放点大小
+            c=df["neg_log10_p"],
+            cmap=PlotTheme.get_diverging_cmap(palette),
+            edgecolors="gray",
+            linewidths=0.3,
+            alpha=0.85,
+        )
 
-    ax.set_yticks(range(len(df)))
-    ax.set_yticklabels(df["pathway"], fontsize=8)
-    ax.axvline(x=0, color="gray", linewidth=0.8, linestyle="-")
-    ax.set_xlabel("Normalized Enrichment Score (NES)", fontsize=10)
-    ax.set_title(title, fontsize=12, fontweight="bold")
-    ax.tick_params(labelsize=8)
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
+        ax.set_yticks(range(len(df)))
+        ax.set_yticklabels(df["pathway"], fontsize=8)
+        ax.axvline(x=0, color="gray", linewidth=0.8, linestyle="-")
+        ax.set_xlabel("Normalized Enrichment Score (NES)", fontsize=10)
+        ax.set_title(title, fontsize=12, fontweight="bold")
+        ax.tick_params(labelsize=8)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
 
-    # 添加颜色条
-    cbar = plt.colorbar(scatter, ax=ax, shrink=0.6, pad=0.02)
-    cbar.set_label("-log10(P-value)", fontsize=9)
-    cbar.ax.tick_params(labelsize=8)
+        # 添加颜色条
+        cbar = plt.colorbar(scatter, ax=ax, shrink=0.6, pad=0.02)
+        cbar.set_label("-log10(P-value)", fontsize=9)
+        cbar.ax.tick_params(labelsize=8)
 
-    plt.tight_layout()
-    _save_figure(fig, output_file)
+        plt.tight_layout()
+        _save_figure(fig, output_file)
     return fig

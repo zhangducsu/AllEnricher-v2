@@ -91,14 +91,17 @@ class ReportGenerator:
         # 生成 GSEA/GSVA 可视化区域
         gsea_plots_html = ""
         gsva_plots_html = ""
+        # 从 config 获取图表风格参数
+        plot_style = getattr(self.config, 'plot_style', 'nature') if self.config else 'nature'
+        plot_palette = getattr(self.config, 'plot_palette', None) if self.config else None
         if gsea_results is not None and len(gsea_results) > 0:
             gsea_plots_html = self._generate_gsea_plots_section(
                 gsea_results, gsea_ranked_genes, gsea_gene_weights,
-                gsea_gene_sets, plot_types
+                gsea_gene_sets, plot_types, plot_style, plot_palette
             )
         if gsva_results is not None and len(gsva_results) > 0:
             gsva_plots_html = self._generate_gsva_plots_section(
-                gsva_results, gsva_groups, plot_types
+                gsva_results, gsva_groups, plot_types, plot_style, plot_palette
             )
 
         active_db_names = [db for db, df in sig_results.items() if len(df) > 0]
@@ -431,7 +434,9 @@ class ReportGenerator:
         ranked_genes: List[str] = None,
         gene_weights: Dict[str, float] = None,
         gene_sets: Dict[str, set] = None,
-        plot_types: List[str] = None
+        plot_types: List[str] = None,
+        plot_style: str = 'nature',
+        plot_palette: Optional[str] = None,
     ) -> str:
         """
         生成GSEA可视化区域HTML
@@ -445,6 +450,8 @@ class ReportGenerator:
             gene_weights: GSEA基因权重字典
             gene_sets: GSEA基因集字典 {pathway_name: set_of_genes}
             plot_types: 要生成的图表类型列表
+            plot_style: 图表风格主题 (nature, science, colorblind, presentation, omicshare)
+            plot_palette: 自定义配色方案名称（可选）
 
         Returns:
             str: GSEA可视化区域HTML字符串
@@ -481,6 +488,8 @@ class ReportGenerator:
                             title=pw_name,
                             output_file=output_file,
                             dpi=150,
+                            style=plot_style,
+                            palette=plot_palette,
                         )
                         import matplotlib.pyplot as plt
                         plt.close(fig)
@@ -509,6 +518,8 @@ class ReportGenerator:
                         results_df=gsea_results,
                         output_file=output_file,
                         dpi=150,
+                        style=plot_style,
+                        palette=plot_palette,
                     )
                     import matplotlib.pyplot as plt
                     plt.close(fig)
@@ -536,6 +547,8 @@ class ReportGenerator:
                         results_df=gsea_results,
                         output_file=output_file,
                         dpi=150,
+                        style=plot_style,
+                        palette=plot_palette,
                     )
                     import matplotlib.pyplot as plt
                     plt.close(fig)
@@ -575,7 +588,9 @@ class ReportGenerator:
         self,
         gsva_results: pd.DataFrame,
         groups: Dict[str, List[str]] = None,
-        plot_types: List[str] = None
+        plot_types: List[str] = None,
+        plot_style: str = 'nature',
+        plot_palette: Optional[str] = None,
     ) -> str:
         """
         生成ssGSEA/GSVA可视化区域HTML
@@ -586,6 +601,8 @@ class ReportGenerator:
             gsva_results: ssGSEA/GSVA活性矩阵，行为通路名，列为样本名
             groups: 样本分组字典 {group_name: [sample_names]}
             plot_types: 要生成的图表类型列表
+            plot_style: 图表风格主题 (nature, science, colorblind, presentation, omicshare)
+            plot_palette: 自定义配色方案名称（可选）
 
         Returns:
             str: GSVA可视化区域HTML字符串
@@ -611,6 +628,8 @@ class ReportGenerator:
                         scores_df=gsva_results,
                         output_file=output_file,
                         dpi=150,
+                        style=plot_style,
+                        palette=plot_palette,
                     )
                     import matplotlib.pyplot as plt
                     plt.close(fig)
@@ -639,6 +658,8 @@ class ReportGenerator:
                         groups=groups,
                         output_file=output_file,
                         dpi=150,
+                        style=plot_style,
+                        palette=plot_palette,
                     )
                     import matplotlib.pyplot as plt
                     plt.close(fig)
@@ -666,6 +687,8 @@ class ReportGenerator:
                         scores_df=gsva_results,
                         output_file=output_file,
                         dpi=150,
+                        style=plot_style,
+                        palette=plot_palette,
                     )
                     import matplotlib.pyplot as plt
                     plt.close(fig)
