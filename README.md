@@ -49,7 +49,7 @@ AllEnricher v2.0 是 AllEnricher v1.0 的 Python 重构版本，保留了 v1 的
 
 | 数据库 | 描述 | 物种支持 |
 |---------|------|----------|
-| GO | Gene Ontology | 15464 种（需构建本地数据库） |
+| GO | Gene Ontology | 31822 种（需构建本地数据库） |
 | KEGG | KEGG Pathway | 所有 KEGG 物种 |
 | Reactome | Reactome Pathway | 16 种模式生物 |
 | DO | Disease Ontology | 人类 |
