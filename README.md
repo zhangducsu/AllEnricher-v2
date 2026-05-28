@@ -35,7 +35,7 @@ AllEnricher v2.0 是 AllEnricher v1.0 的 Python 重构版本，保留了 v1 的
 - **兼容 v1 数据库**：可直接使用 v1 构建的 GO、KEGG、Reactome、DO、DisGeNET 数据库
 - **多种统计方法**：Fisher 精确检验、超几何检验、GSEA、ssGSEA、GSVA
 - **多重检验校正**：BH、BY、Bonferroni、Holm
-- **丰富可视化**：柱状图、气泡图、富集曲线图、热图、网络图等12+种发表级图表，Python原生实现，支持PNG/PDF双输出、10种学术主题、36组颜色风格
+- **丰富可视化**：柱状图、气泡图、富集曲线图、热图、网络图等12+种发表级图表，Python原生实现，支持PNG/PDF双输出、6种学术风格主题、19种专业配色方案
 - **本地 Web 服务**：基于 FastAPI 的交互式分析界面，浏览器打开即可使用
 - **AI 智能解读**：支持 OpenAI、Claude、DeepSeek、GLM、MiniMax、Ollama
 - **REST API**：完整的 RESTful API，支持程序化调用
@@ -69,7 +69,56 @@ AllEnricher v2.0 是 AllEnricher v1.0 的 Python 重构版本，保留了 v1 的
 - 🧬 **GSEA**: 基于置换检验的富集分析，支持NES标准化和Leading Edge识别
 - 📊 **ssGSEA**: 单样本水平计算通路富集得分，适用于免疫浸润分析
 - 🔄 **GSVA**: 三种计算方法（Random Walk/PLAGE/Z-score），适用于样本聚类和异质性分析
-- 🎨 **发表级可视化**: 富集曲线图、热图、气泡图、网络图等12+种图表类型，Python原生matplotlib/seaborn实现，PNG/PDF双输出，10种学术主题，36组颜色风格
+- 🎨 **发表级可视化**: 富集曲线图、热图、气泡图、网络图等12+种图表类型，Python原生matplotlib/seaborn实现，PNG/PDF双输出，6种学术风格主题，19种专业配色方案
+
+### 可视化风格与配色系统
+
+支持 **6 种学术风格主题** 和 **19 种专业配色方案**，覆盖主流期刊要求和展示场景。
+
+**6 种学术风格：**
+
+| 风格 | 适用场景 | 字体 | 字号 | 刻度方向 | 边框 |
+|------|----------|------|------|----------|------|
+| nature | Nature系列期刊投稿 | Helvetica | 8pt | 朝内 | 仅左、下 |
+| science | Science期刊投稿 | Times New Roman | 9pt | 朝外 | 四边 |
+| cell | Cell系列期刊投稿 | Arial | 9pt | 朝内 | 仅左、下 |
+| colorblind | 色盲友好受众 | sans-serif | 10pt | 朝内 | 仅左、下 |
+| presentation | 学术报告/PPT | sans-serif | 14pt | 朝外 | 四边+网格 |
+| omicshare | 中文期刊投稿 | 微软雅黑 | 10pt | 朝内 | 四边 |
+
+**19 种配色方案：**
+
+- **Paul Tol 系列(8种)**: bright, high_contrast, vibrant, muted, medium_contrast, light, sunset, burga — 专为科学可视化优化
+- **色盲友好(1种)**: okabe_ito — 8色可被常见色盲类型区分
+- **科研期刊色板(6种)**: nature, science, cell, lancet, nejm, jama — 匹配期刊官方风格
+- **生物信息学工具(2种)**: gsea, omicshare
+- **中国风格(1种)**: china_style
+- **默认色板(1种)**: default
+
+**使用方式：**
+
+```bash
+# 指定风格和配色
+allenricher analyze -i genes.txt --style nature --palette nature
+
+# 学术报告风格
+allenricher analyze -i genes.txt --style presentation --palette tol_vibrant
+
+# 色盲友好
+allenricher analyze -i genes.txt --style colorblind --palette okabe_ito
+```
+
+```python
+from allenricher.visualization import PlotTheme
+
+# 应用Nature风格
+PlotTheme.apply('nature')
+
+# 临时切换（with上下文）
+with PlotTheme.context('presentation'):
+    fig, ax = plt.subplots()
+    # 此区域使用presentation风格
+```
 
 ### AI 后端支持
 
@@ -998,14 +1047,17 @@ MIT License
 
 ### 2026-05-28: 风格颜色系统重构
 
-- **R→Python 可视化迁移**: 彻底移除 R/ggplot2/pheatmap/UpSetR 依赖，改用 Python 原生 matplotlib + seaborn + cutecharts 实现全部图表
+- **R→Python 可视化迁移**: 彻底移除 R/ggplot2/pheatmap/UpSetR 依赖，改用 Python 原生 matplotlib + seaborn 实现全部图表
 - **模块化重构**: 将单一 `plotter.py` 拆分为 9 个模块（barplot, bubble, common_plots, color_config, gsea_plots, gsva_plots, plot_config, plot_theme, plotter），职责清晰、易于扩展
-- **主题系统**: 新增 10 种预置学术主题（Nature, Science, Cell, Lancet, NEJM, IEEE, ASCO, Modern, Minimal, Dark），支持自定义主题注册
-- **颜色配置**: 提供 36 组颜色风格（Category10~Category30 + 渐变色系 + 语义色系），支持暗色模式自动切换
-- **图表配置统一管理**: 新增 `plot_config.py`，统一管理输出格式（PNG/PDF）、DPI（300 发表级）、字体大小等参数
-- **PNG + PDF 双输出**: 全部图表支持双格式输出，满足不同场景需求
+- **6 种学术风格主题**: nature（Helvetica, 8pt, 刻度朝内, 仅左下边框）、science（Times New Roman, 9pt, 刻度朝外, 四边边框）、cell（Arial, 9pt, 刻度朝内）、colorblind（sans-serif, 10pt）、presentation（14pt, 网格线, 适合投影）、omicshare（微软雅黑, 中文友好），每种风格独立控制字体、字号、粗细、边框、内外刻度、网格线等 40 项参数
+- **19 种专业配色方案**: Paul Tol 系列 8 种（bright/vibrant/muted/light/sunset 等）、色盲友好 okabe_ito 1 种、科研期刊风格 6 种（nature/science/cell/lancet/nejm/jama）、生物信息学 2 种（gsea/omicshare）、中国风格 1 种（china_style）、默认 1 种
+- **GO/KEGG 分类颜色动态生成**: 不再硬编码分类颜色，根据当前配色方案自动从色板提取
+- **300DPI + PNG/PDF 双输出**: 全部图表支持 300 DPI 发表级分辨率，同时输出 PNG（位图）和 PDF（矢量图）
+- **气泡图三色渐变**: palette 首尾两个不连续颜色 + 白色构成三色渐变，灰色尺寸图例与 Q 值色条并列展示
+- **条形图 GO 分类前缀清理**: 纵坐标自动移除 BP/CC/MF 分类前缀，分类信息由颜色图例提供
+- **CLI 新增 --style/--palette 参数**: 支持命令行直接指定图表风格和配色方案
 - **依赖简化**: 移除了对 R 运行时的依赖，部署更简单
-- **全量测试**: 679 个 pytest 测试全部通过
+- **全量测试通过**: 679 个 pytest 测试全部通过
 
 ### 2026-05-28: 数据库版本管理系统
 
