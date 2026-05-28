@@ -3,18 +3,17 @@
 =============================
 
 本模块负责富集分析结果的可视化展示。
-- barplot.R: R base原生绘图
-- bubble.R: ggplot2绘图 (v1原版)
+- barplot.py: Python matplotlib 绘图
+- bubble.py: Python matplotlib 绘图
 
 依赖：
-- R 语言环境
+- matplotlib, pandas, numpy
 """
 
-import os
-import subprocess
 import logging
 from pathlib import Path
 from typing import Dict, List, Optional
+
 import pandas as pd
 
 logger = logging.getLogger(__name__)
@@ -28,78 +27,89 @@ class Plotter:
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.config = config
-        self.r_script_dir = Path(__file__).parent
-
-    def _run_r_script(self, script_name: str, args: List[str]) -> tuple:
-        """运行 R 脚本"""
-        script_path = self.r_script_dir / script_name
-
-        if not script_path.exists():
-            logger.error(f"R 脚本不存在: {script_path}")
-            return 1, "", f"Script not found: {script_path}"
-
-        cmd = ["Rscript", str(script_path)] + args
-
-        try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=300
-            )
-            return result.returncode, result.stdout, result.stderr
-        except subprocess.TimeoutExpired:
-            logger.warning("R 脚本执行超时（300秒）")
-            return 1, "", "Timeout"
-        except Exception as e:
-            logger.warning(f"R 脚本执行异常: {e}")
-            return 1, "", str(e)
 
     def _prepare_barplot_data(self, data: pd.DataFrame) -> pd.DataFrame:
-        """准备 barplot.R 所需的数据格式
-        
-        v1 barplot.R 读取的列：
-        - rt[,c(3,5,7)]: 第3列(ObservedGeneNum), 第5列(RichFactor), 第7列(adjP)
-        - rt[,8]: 第8列(TermName)
-        
-        期望的列顺序：
-        1: (任意), 2: (任意), 3: ObservedGeneNum, 4: (任意), 
-        5: RichFactor, 6: (任意), 7: adjP, 8: TermName
+        """准备 barplot.py 所需的数据格式
+
+        Args:
+            data: 原始富集结果 DataFrame
+
+        Returns:
+            格式化后的 DataFrame，包含以下列：
+            - term: Term 名称
+            - qvalue: 校正后 P 值
+            - gene_count: 基因数量
+            - rich_factor: 富集因子（可选）
         """
         df = data.copy()
-        
-        # 创建符合 v1 期望的列顺序
         result = pd.DataFrame()
-        result['col1'] = df.get('Term_ID', '')  # 第1列：TermID（占位）
-        result['col2'] = df.get('Background_Count', 0)  # 第2列：TermGeneNum
-        result['col3'] = df.get('Gene_Count', 0)  # 第3列：ObservedGeneNum（实际使用）
-        result['col4'] = df.get('Expected_Count', 0)  # 第4列：ExpectedGeneNum
-        result['col5'] = df.get('Rich_Factor', 0)  # 第5列：RichFactor（实际使用）
-        result['col6'] = df.get('P_Value', 1)  # 第6列：rawP
-        result['col7'] = df.get('Adjusted_P_Value', 1)  # 第7列：adjP（实际使用）
-        result['col8'] = df.get('Term_Name', '')  # 第8列：TermName（实际使用）
-        
+
+        # 映射常见列名到标准列名
+        column_mappings = {
+            'term': ['Term_Name', 'term_name', 'Term', 'term', 'Description', 'description'],
+            'qvalue': ['Adjusted_P_Value', 'adjusted_p_value', 'adjP', 'qvalue', 'Qvalue', 'FDR', 'fdr'],
+            'gene_count': ['Gene_Count', 'gene_count', 'ObservedGeneNum', 'Count', 'count'],
+            'rich_factor': ['Rich_Factor', 'rich_factor', 'RichFactor', 'richfactor'],
+        }
+
+        for std_col, possible_cols in column_mappings.items():
+            for col in possible_cols:
+                if col in df.columns:
+                    result[std_col] = df[col]
+                    break
+
+        # 如果没有找到 rich_factor，尝试计算
+        if 'rich_factor' not in result.columns and 'gene_count' in result.columns:
+            bg_col = None
+            for col in ['Background_Count', 'background_count', 'TermGeneNum']:
+                if col in df.columns:
+                    bg_col = df[col]
+                    break
+            if bg_col is not None:
+                result['rich_factor'] = result['gene_count'] / bg_col
+
         return result
 
     def _prepare_bubble_data(self, data: pd.DataFrame) -> pd.DataFrame:
-        """准备 bubble.R 所需的数据格式
-        
-        v1 bubble.R 期望的列：RichFactor, TermName, ObservedGeneNum, adjP
-        注意：只输出这4列，避免 Genes 列中的分号导致 R read.table 解析失败
+        """准备 bubble.py 所需的数据格式
+
+        Args:
+            data: 原始富集结果 DataFrame
+
+        Returns:
+            格式化后的 DataFrame，包含以下列：
+            - Term_Name: Term 名称
+            - RichFactor: 富集因子
+            - GeneCount: 基因数量
+            - Qvalue: 校正后 P 值
         """
-        column_mapping = {
-            'Rich_Factor': 'RichFactor',
-            'Term_Name': 'TermName',
-            'Gene_Count': 'ObservedGeneNum',
-            'Adjusted_P_Value': 'adjP'
-        }
-        
         df = data.copy()
         result = pd.DataFrame()
-        for old_col, new_col in column_mapping.items():
-            if old_col in df.columns:
-                result[new_col] = df[old_col]
-        
+
+        # 映射常见列名到标准列名
+        column_mappings = {
+            'Term_Name': ['Term_Name', 'term_name', 'Term', 'term', 'Description', 'description'],
+            'RichFactor': ['Rich_Factor', 'rich_factor', 'RichFactor', 'richfactor', 'Rich Factor'],
+            'GeneCount': ['Gene_Count', 'gene_count', 'ObservedGeneNum', 'Count', 'count'],
+            'Qvalue': ['Adjusted_P_Value', 'adjusted_p_value', 'adjP', 'qvalue', 'Qvalue', 'FDR', 'fdr'],
+        }
+
+        for std_col, possible_cols in column_mappings.items():
+            for col in possible_cols:
+                if col in df.columns:
+                    result[std_col] = df[col]
+                    break
+
+        # 如果没有 RichFactor，尝试计算
+        if 'RichFactor' not in result.columns and 'GeneCount' in result.columns:
+            bg_col = None
+            for col in ['Background_Count', 'background_count', 'TermGeneNum']:
+                if col in df.columns:
+                    bg_col = df[col]
+                    break
+            if bg_col is not None:
+                result['RichFactor'] = result['GeneCount'] / bg_col
+
         return result
 
     def plot_barplot(
@@ -107,34 +117,71 @@ class Plotter:
         data: pd.DataFrame,
         database: str,
         output_file: str,
-        top_n: int = 20
+        top_n: int = 20,
+        style: Optional[str] = None,
+        palette: Optional[str] = None,
     ) -> str:
-        """生成富集分析柱状图"""
-        # 取前 top_n 条数据
-        plot_data = data.head(top_n).copy()
+        """生成富集分析柱状图
 
-        # 准备 v1 格式的数据
-        barplot_data = self._prepare_barplot_data(plot_data)
+        Args:
+            data: 富集结果 DataFrame
+            database: 数据库名称 (GO, KEGG, Reactome, DO, DisGeNET)
+            output_file: 输出文件名
+            top_n: 显示前 N 条数据
+            style: 图表风格 (nature, science, presentation, colorblind, cute, omicshare)
+            palette: 色板名称
 
-        # 保存为 TSV 文件 (无header，空格分隔，v1格式)
-        tsv_file = self.output_dir / f"temp_{database}_barplot.txt"
-        barplot_data.to_csv(tsv_file, sep='\t', index=False, header=False)
-
+        Returns:
+            输出文件路径
+        """
         # 构建输出路径
         output_path = self.output_dir / output_file
 
-        # 调用 R 脚本
-        returncode, stdout, stderr = self._run_r_script(
-            "barplot.R",
-            [database, str(tsv_file), str(output_path.with_suffix(''))]
-        )
+        # cute 风格使用 cutecharts 输出 HTML
+        if style == 'cute':
+            from .cute_charts import plot_cute_barplot
 
-        # 清理临时文件
-        if tsv_file.exists():
-            tsv_file.unlink()
+            # 将 DataFrame 转换为字典列表
+            plot_data = data.to_dict('records') if hasattr(data, 'to_dict') else data
 
-        if returncode != 0:
-            logger.warning(f"柱状图生成失败: {stderr}")
+            try:
+                result = plot_cute_barplot(
+                    data=plot_data,
+                    output_file=str(output_path),
+                    db_name=database,
+                    top_n=top_n,
+                )
+                return str(result)
+            except ImportError as e:
+                logger.warning(f"cutecharts 风格生成失败: {e}")
+                # 回退到默认风格
+                style = 'default'
+            except Exception as e:
+                logger.warning(f"cutecharts 柱状图生成失败: {e}")
+                return str(output_path)
+
+        from .barplot import plot_barplot as _plot_barplot
+
+        # 准备数据
+        plot_data = self._prepare_barplot_data(data)
+
+        # 获取 DPI 设置
+        dpi = 300
+        if self.config and hasattr(self.config, 'figure_dpi'):
+            dpi = self.config.figure_dpi
+
+        try:
+            _plot_barplot(
+                data=plot_data,
+                database=database,
+                top_n=top_n,
+                style=style or 'default',
+                palette=palette or 'default',
+                output_file=str(output_path),
+                dpi=dpi,
+            )
+        except Exception as e:
+            logger.warning(f"柱状图生成失败: {e}")
 
         return str(output_path)
 
@@ -142,36 +189,74 @@ class Plotter:
         self,
         data: pd.DataFrame,
         output_file: str,
-        top_n: int = 20
+        database: str = 'GO',
+        top_n: int = 20,
+        style: Optional[str] = None,
+        palette: Optional[str] = None,
     ) -> str:
-        """生成富集分析气泡图（按Q值排序，与条形图一致）"""
-        # 按校正P值排序后取前 top_n 条数据
-        plot_data = data.sort_values(
-            by='Adjusted_P_Value', ascending=True
-        ).head(top_n).copy()
+        """生成富集分析气泡图
 
-        # 准备 v1 格式的数据
-        bubble_data = self._prepare_bubble_data(plot_data)
+        Args:
+            data: 富集结果 DataFrame
+            output_file: 输出文件名
+            database: 数据库名称 (GO, KEGG, Reactome, DO, DisGeNET)
+            top_n: 显示前 N 条数据
+            style: 图表风格
+            palette: 色板名称
 
-        # 保存为 TSV 文件 (有header，v1格式)
-        tsv_file = self.output_dir / "temp_bubble.txt"
-        bubble_data.to_csv(tsv_file, sep='\t', index=False, header=True)
-
+        Returns:
+            输出文件路径
+        """
         # 构建输出路径
         output_path = self.output_dir / output_file
 
-        # 调用 R 脚本
-        returncode, stdout, stderr = self._run_r_script(
-            "bubble.R",
-            [str(tsv_file), str(output_path.with_suffix(''))]
-        )
+        # cute 风格使用 cutecharts 输出 HTML
+        if style == 'cute':
+            from .cute_charts import plot_cute_bubble
 
-        # 清理临时文件
-        if tsv_file.exists():
-            tsv_file.unlink()
+            # 将 DataFrame 转换为字典列表
+            plot_data = data.to_dict('records') if hasattr(data, 'to_dict') else data
 
-        if returncode != 0:
-            logger.warning(f"气泡图生成失败: {stderr}")
+            try:
+                result = plot_cute_bubble(
+                    data=plot_data,
+                    output_file=str(output_path),
+                    db_name=database,
+                    top_n=top_n,
+                )
+                return str(result)
+            except ImportError as e:
+                logger.warning(f"cutecharts 风格生成失败: {e}")
+                # 回退到默认风格
+                style = None
+            except Exception as e:
+                logger.warning(f"cutecharts 气泡图生成失败: {e}")
+                return str(output_path)
+
+        from .bubble import plot_bubble as _plot_bubble
+
+        # 准备数据
+        plot_data = self._prepare_bubble_data(data)
+
+        # 获取 DPI 设置
+        dpi = 300
+        if self.config and hasattr(self.config, 'figure_dpi'):
+            dpi = self.config.figure_dpi
+
+        try:
+            fig = _plot_bubble(
+                data=plot_data,
+                top_n=top_n,
+                style=style,
+                palette=palette,
+                title=f"{database} Enrichment",
+            )
+            if fig:
+                fig.savefig(output_path, dpi=dpi, bbox_inches='tight')
+                import matplotlib.pyplot as plt
+                plt.close(fig)
+        except Exception as e:
+            logger.warning(f"气泡图生成失败: {e}")
 
         return str(output_path)
 
@@ -179,21 +264,43 @@ class Plotter:
         self,
         data: pd.DataFrame,
         database: str,
-        top_n: int = 20
+        top_n: int = 20,
+        style: Optional[str] = None,
+        palette: Optional[str] = None,
     ) -> Dict[str, str]:
-        """生成所有标准图表（R脚本同时输出PDF和PNG）"""
+        """生成所有标准图表
+
+        Args:
+            data: 富集结果 DataFrame
+            database: 数据库名称
+            top_n: 显示前 N 条数据
+            style: 图表风格
+            palette: 色板名称
+
+        Returns:
+            包含图表路径的字典
+        """
         plots = {}
 
-        # 生成柱状图（R脚本会同时生成PDF和PNG）
-        bar_file = f"{database}_barplot.pdf"
-        self.plot_barplot(data, database, bar_file, top_n)
-        plots["barplot"] = str(self.output_dir / bar_file)
-        plots["barplot_png"] = str(self.output_dir / bar_file.replace('.pdf', '.png'))
+        # 获取输出格式
+        fmt = 'png'
+        if self.config and hasattr(self.config, 'figure_format'):
+            fmt = self.config.figure_format
 
-        # 生成气泡图（R脚本会同时生成PDF和PNG）
-        bubble_file = f"{database}_bubble.pdf"
-        self.plot_bubble(data, bubble_file, top_n)
+        # 生成柱状图
+        bar_file = f"{database}_barplot.{fmt}"
+        self.plot_barplot(
+            data, database, bar_file, top_n,
+            style=style, palette=palette
+        )
+        plots["barplot"] = str(self.output_dir / bar_file)
+
+        # 生成气泡图
+        bubble_file = f"{database}_bubble.{fmt}"
+        self.plot_bubble(
+            data, bubble_file, database, top_n,
+            style=style, palette=palette
+        )
         plots["bubble"] = str(self.output_dir / bubble_file)
-        plots["bubble_png"] = str(self.output_dir / bubble_file.replace('.pdf', '.png'))
 
         return plots
