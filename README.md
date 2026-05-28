@@ -33,6 +33,7 @@
 AllEnricher v2.0 是 AllEnricher v1.0 的 Python 重构版本，保留了 v1 的核心功能并增加了多项改进：
 
 - **兼容 v1 数据库**：可直接使用 v1 构建的 GO、KEGG、Reactome、DO、DisGeNET 数据库
+- **用户自定义数据库构建**：支持用户提供注释文件（TSV格式），自动构建自定义数据库并生成GMT文件，适用于非模式生物或私有数据库
 - **多种统计方法**：Fisher 精确检验、超几何检验、GSEA、ssGSEA、GSVA
 - **多重检验校正**：BH、BY、Bonferroni、Holm
 - **丰富可视化**：柱状图、气泡图、富集曲线图、热图、网络图等12+种发表级图表，Python原生实现，支持PNG/PDF双输出、6种学术风格主题、19种专业配色方案
