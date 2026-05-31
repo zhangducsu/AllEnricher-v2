@@ -55,6 +55,11 @@ AllEnricher v2.0 是 AllEnricher v1.0 的 Python 重构版本，保留了 v1 的
 | Reactome | Reactome Pathway | 16 种模式生物 |
 | DO | Disease Ontology | 人类 |
 | DisGeNET | 疾病-基因关联 | 人类 |
+| WikiPathways | WikiPathways 通路 | 38 种模式生物 |
+| TRRUST v2 | TF-靶基因调控网络 | 2 种（人/鼠） |
+| ChEA3 | TF-靶基因 ChIP-seq 整合 | 1 种（人） |
+| **AnimalTFDB** | 多物种 TF 分类注释+同源映射 | **183 种动物** |
+| **hTFtarget** | 人类 TF-靶基因（ChIP-seq） | 1 种（人） |
 
 ### 统计分析方法
 
@@ -1044,7 +1049,47 @@ MIT License
 
 ---
 
-## 最近更新 (v2.2.0)
+## 最近更新 (v2.3.0)
+
+### 2026-05-31: 多物种 TF 富集分析（AnimalTFDB + hTFtarget）
+
+- **🧬 AnimalTFDB 4.0 集成**: 支持 183 个动物物种的转录因子注释和直系同源映射，覆盖家畜（牛/猪/羊/鸡/狗/马等）、模式生物（斑马鱼/果蝇/线虫等）、灵长类（猕猴/黑猩猩/大猩猩等）
+- **🎯 hTFtarget 集成**: 人类 TF-靶基因数据库，基于 ENCODE/SRA ChIP-seq 数据，~134 万条 TF-target 关系，659 个 TF
+- **🔄 同源映射引擎**: 通过直系同源映射将人类实验验证的 TF-target 关系推断到非模式物种，支持多对一映射去重策略
+- **📊 映射质量统计**: build 时自动输出映射覆盖率、靶基因数、多对一映射统计，低覆盖率自动警告
+- **🧪 多库元分析**: TFMetaAnalyzer 支持 TRRUST + ChEA3 + AnimalTFDB + hTFtarget 四库联合 Stouffer's Z-score 分析
+- **📋 物种注册表自动更新**: build 完成后自动更新 SpeciesRegistry 的 AnimalTFDB 统计信息
+- **📝 HTML 报告**: 新增 AnimalTFDB 同源映射数据来源说明标注
+- **✅ 端到端测试**: 31 个测试全部通过（17 基础 + 14 改进验证）
+
+**使用示例：**
+```bash
+# 下载 AnimalTFDB + hTFtarget 数据
+allenricher download --animaltfdb --species Bos_taurus,Sus_scrofa
+
+# 构建牛的 TF 数据库（通过同源映射）
+allenricher build -s bta -d ANIMALTFDB --latin-name Bos_taurus
+
+# 运行 TF 富集分析
+allenricher tf-enrich -i genes.txt -s bta -d animaltfdb --report
+```
+
+### 2026-05-30: TF 调控网络富集分析（TRRUST v2 + ChEA3）
+
+- **🧬 TRRUST v2 集成**: 人类/小鼠 TF-靶基因调控网络，含激活/抑制方向信息
+- **🧬 ChEA3 集成**: 6 个 ChIP-seq 库整合（ENCODE/ReMap/Literature/GTEx/ARCHS4/Enrichr），支持在线 API 分析
+- **📊 TF 富集分析器**: 支持 ORA、GSEA、ssGSEA、GSVA 四种分析方法
+- **🎨 TF 可视化**: Plotly 交互式图表（富集柱状图、调控模式饼图、TF-靶基因重叠热图）
+- **📝 HTML 报告**: Jinja2 模板驱动的学术风格报告
+- **🔄 多库元分析**: TFMetaAnalyzer 支持 Stouffer's Z-score 跨库整合
+- **✅ 端到端测试**: 22 个测试全部通过
+
+### 2026-05-30: WikiPathways 数据库支持
+
+- **🧬 WikiPathways 集成**: 支持 38 种模式生物的 WikiPathways 通路数据
+- **📄 GPML 解析器**: 解析 WikiPathways GPML 格式文件，提取通路-基因关系
+- **🔄 NCBI Gene ID 转换**: 自动将 NCBI Gene ID 转换为 Gene Symbol
+- **✅ 端到端测试**: 28 个测试全部通过
 
 ### 2026-05-28: 风格颜色系统重构
 

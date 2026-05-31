@@ -67,6 +67,16 @@ REACTOME_MIRRORS: List[MirrorSource] = [
         "https://reactome.org/download/current/",
         1, "US"
     ),
+    MirrorSource(
+        "reactome-cshl",
+        "https://download.reactome.org/",
+        2, "US"
+    ),
+    MirrorSource(
+        "reactome-ebi",
+        "https://ftp.ebi.ac.uk/pub/databases/reactome/",
+        3, "EU"
+    ),
 ]
 
 # ============================
@@ -76,6 +86,18 @@ JENSEN_SOURCES: List[str] = [
     "http://download.jensenlab.org/human_disease_textmining_filtered.tsv",
     "http://download.jensenlab.org/human_disease_knowledge_filtered.tsv",
     "http://download.jensenlab.org/human_disease_experiments_filtered.tsv",
+]
+
+# ============================
+# WikiPathways 镜像源
+# ============================
+WIKIPATHWAYS_MIRRORS: List[MirrorSource] = [
+    MirrorSource(
+        name="wikipathways-official",
+        base_url="https://data.wikipathways.org/",
+        priority=1,
+        region="US",
+    ),
 ]
 
 
@@ -92,6 +114,7 @@ def get_mirrors(db_type: str) -> List[MirrorSource]:
         'ncbi': NCBI_MIRRORS,
         'go': GO_MIRRORS,
         'reactome': REACTOME_MIRRORS,
+        'wikipathways': WIKIPATHWAYS_MIRRORS,
     }
     mirrors = mirrors_map.get(db_type, [])
     return sorted(

@@ -368,6 +368,97 @@ class DataDownloader:
         return str(dest)
 
     # ============================
+    # WikiPathways 基础数据下载
+    # ============================
+    def download_wikipathways_basic(self, version: Optional[str] = None) -> str:
+        """下载 WikiPathways 基础数据（所有物种的 GMT 文件）
+
+        Args:
+            version: 版本号（如 '20260510'），默认自动检测最新
+
+        Returns:
+            版本目录路径
+        """
+        from .wikipathways_fetcher import WikiPathwaysFetcher
+
+        fetcher = WikiPathwaysFetcher(str(self.basic_dir))
+
+        print(f"\n{'='*60}")
+        print(f"下载 WikiPathways 基础数据")
+        print(f"{'='*60}")
+
+        if version is None:
+            version = fetcher._detect_latest_version()
+
+        results = fetcher.download_all_gmt(version=version, overwrite=self.manager.overwrite)
+
+        version_str = version or "unknown"
+        version_dir = self.basic_dir / "wikipathways" / f"WP{version_str}"
+
+        # 记录版本元数据到 versions.json
+        try:
+            from allenricher.database.version import DatabaseVersionManager, RemoteVersionChecker
+            _vm = DatabaseVersionManager(database_dir=str(self.root_dir))
+            _checker = RemoteVersionChecker()
+            _wp_info = _checker.check_head("https://data.wikipathways.org/")
+            if _wp_info:
+                _vm.record_download(
+                    source="wikipathways",
+                    local_version=f"WP{version_str}",
+                    local_path=f"basic/wikipathways/WP{version_str}",
+                    remote_last_modified=_wp_info.get("last_modified"),
+                )
+        except Exception as _e:
+            logger.warning("记录 WikiPathways 版本元数据失败: %s", _e)
+
+        print(f"WikiPathways 基础数据下载完成 → {version_dir}")
+        print(f"|--- 下载了 {len(results)} 个物种的 GMT 文件")
+
+        return str(version_dir)
+
+    def _build_wikipathways_registry(self) -> Optional[Path]:
+        """构建 WikiPathways 物种注册表
+
+        从已下载的 WikiPathways 数据中提取物种列表，
+        生成 wikipathways_species_registry.tsv。
+
+        Returns:
+            生成的注册表文件路径，或 None（如果没有数据）
+        """
+        from .wikipathways_fetcher import WikiPathwaysFetcher, SPECIES_NAME_MAP
+
+        logger.info("构建 WikiPathways 物种注册表...")
+
+        fetcher = WikiPathwaysFetcher(str(self.basic_dir))
+        registry_path = self.basic_dir / "wikipathways_species_registry.tsv"
+
+        # 获取最新版本中的物种列表
+        try:
+            species_list = fetcher.get_available_species()
+        except Exception as e:
+            logger.warning(f"获取 WikiPathways 物种列表失败: {e}")
+            return None
+
+        if not species_list:
+            logger.warning("WikiPathways 物种列表为空")
+            return None
+
+        with open(registry_path, 'w', encoding='utf-8', newline='') as f:
+            writer = csv.writer(f, delimiter='\t')
+            writer.writerow(["species_latin_name", "species_code", "gene_count", "pathway_count"])
+            for latin_name in sorted(species_list):
+                code = fetcher.get_species_code(latin_name)
+                code_str = code or "-"
+                # gene_count 和 pathway_count 在构建阶段填充，下载阶段留空
+                writer.writerow([latin_name, code_str, "", ""])
+
+        logger.info(
+            "WikiPathways 物种注册表已生成: %s (%d 物种)",
+            registry_path, len(species_list)
+        )
+        return registry_path
+
+    # ============================
     # 批量下载
     # ============================
     def download_all(self, db_types: List[str] = None) -> Dict[str, str]:
@@ -402,6 +493,8 @@ class DataDownloader:
                     print("|--- KEGG 数据将在 build 阶段通过 REST API 自动获取")
                 elif db_type in ('disgenet',):
                     result['disgenet'] = self.download_disgenet()
+                elif db_type in ('wikipathways',):
+                    result['wikipathways'] = self.download_wikipathways_basic()
                 else:
                     print(f"|--- [警告] 未知数据库类型: {db_type}")
             except Exception as e:
@@ -475,6 +568,15 @@ class DataDownloader:
             except Exception as e:
                 logger.warning(f"Failed to build DO registry: {e}")
 
+        # WikiPathways 注册表构建（如果下载了 WikiPathways）
+        wikipathways_registry: Optional[Path] = None
+        if 'wikipathways' in result:
+            try:
+                wikipathways_registry = self._build_wikipathways_registry()
+                logger.info(f"WikiPathways registry built: {wikipathways_registry}")
+            except Exception as e:
+                logger.warning(f"Failed to build WikiPathways registry: {e}")
+
         # 合并所有注册表
         supported_species_path = self.basic_dir / "supported_species.tsv"
         try:
@@ -483,6 +585,7 @@ class DataDownloader:
                 kegg_registry=kegg_registry or Path("/dev/null"),
                 reactome_registry=reactome_registry or Path("/dev/null"),
                 do_registry=do_registry or Path("/dev/null"),
+                wikipathways_registry=wikipathways_registry or Path("/dev/null"),
                 output_path=supported_species_path,
             )
             logger.info(f"All registries merged: {supported_species_path}")
@@ -1084,11 +1187,12 @@ class DataDownloader:
         kegg_registry: Path,
         reactome_registry: Path,
         do_registry: Path,
+        wikipathways_registry: Path,
         output_path: Path,
     ) -> Path:
         """合并所有专用注册表为统一 supported_species.tsv
 
-        读取 GO、KEGG、Reactome、DO 四个注册表，按 taxid 合并。
+        读取 GO、KEGG、Reactome、DO、WikiPathways 五个注册表，按 taxid 合并。
         为没有 kegg_code 的物种自动生成缩写。
 
         Args:
@@ -1096,6 +1200,7 @@ class DataDownloader:
             kegg_registry: kegg_species_registry.tsv 路径
             reactome_registry: reactome_species_registry.tsv 路径
             do_registry: do_species_registry.tsv 路径
+            wikipathways_registry: wikipathways_species_registry.tsv 路径
             output_path: 输出文件路径（supported_species.tsv）
 
         Returns:
@@ -1153,9 +1258,33 @@ class DataDownloader:
                     except (ValueError, KeyError):
                         continue
 
+        # ---- 读取 WikiPathways 注册表 ----
+        wikipathways_data: Dict[int, Dict[str, str]] = {}
+        if wikipathways_registry and wikipathways_registry.exists():
+            with open(wikipathways_registry, "r", encoding="utf-8") as fh:
+                reader = csv.DictReader(fh, delimiter="\t")
+                for row in reader:
+                    try:
+                        # WikiPathways 注册表使用 species_code 而非 taxid
+                        # 需要通过 species_code 查找 taxid
+                        species_code = row.get("species_code", "")
+                        if species_code and species_code != "-":
+                            # 从 species_lookup 获取 taxid
+                            from .species_lookup import SpeciesLookup
+                            lookup = SpeciesLookup()
+                            taxid = lookup.get_taxid_by_code(species_code)
+                            if taxid:
+                                wikipathways_data[taxid] = {
+                                    "species_code": species_code,
+                                    "gene_count": row.get("gene_count", ""),
+                                    "pathway_count": row.get("pathway_count", ""),
+                                }
+                    except (ValueError, KeyError):
+                        continue
+
         # ---- 合并 ----
         all_taxids = sorted(
-            set(go_data) | set(kegg_data) | set(reactome_data) | do_taxids
+            set(go_data) | set(kegg_data) | set(reactome_data) | do_taxids | set(wikipathways_data)
         )
 
         entries: List[SpeciesEntry] = []
@@ -1203,6 +1332,14 @@ class DataDownloader:
             # DO
             if taxid in do_taxids:
                 entry.has_do = True
+
+            # WikiPathways
+            if taxid in wikipathways_data:
+                entry.has_wikipathways = True
+                gc = wikipathways_data[taxid].get("gene_count", "")
+                pc = wikipathways_data[taxid].get("pathway_count", "")
+                entry.wikipathways_gene_count = int(gc) if gc and gc.isdigit() else None
+                entry.wikipathways_pathway_count = int(pc) if pc and pc.isdigit() else None
 
             entries.append(entry)
 

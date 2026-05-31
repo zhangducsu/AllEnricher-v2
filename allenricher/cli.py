@@ -19,8 +19,12 @@ AllEnricher v2.0 命令行接口模块 (Command Line Interface)
 import argparse
 import logging
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Set
+
+import pandas as pd
+from jinja2 import Template
 
 from allenricher import __version__
 from allenricher.core.config import Config
@@ -214,7 +218,7 @@ def _generate_plots(
                 continue
 
             # NES 条形图
-            if 'nes_barplot' in valid_types and 'nes' in df.columns:
+            if 'nes_barplot' in valid_types and ('NES' in df.columns or 'nes' in df.columns):
                 out_file = str(plot_dir / f"{db_name}_nes_barplot.{plot_format}")
                 try:
                     plot_gsea_nes_barplot(df, output_file=out_file, dpi=plot_dpi,
@@ -225,7 +229,7 @@ def _generate_plots(
                     logger.error(f"NES条形图生成失败 ({db_name}): {e}")
 
             # GSEA 气泡图
-            if 'dotplot' in valid_types and 'nes' in df.columns:
+            if 'dotplot' in valid_types and ('NES' in df.columns or 'nes' in df.columns):
                 out_file = str(plot_dir / f"{db_name}_dotplot.{plot_format}")
                 try:
                     plot_gsea_dotplot(df, output_file=out_file, dpi=plot_dpi,
@@ -235,22 +239,27 @@ def _generate_plots(
                 except Exception as e:
                     logger.error(f"GSEA气泡图生成失败 ({db_name}): {e}")
 
-            # GSEA 富集曲线图（需要 ranked_genes + gene_sets）
+            # 富集曲线图
             if 'enrichment' in valid_types and ranked_genes and gene_sets:
                 for set_name, gene_set in gene_sets.items():
                     # 从结果中查找该基因集的统计数据
                     match = None
-                    if 'pathway' in df.columns:
-                        match_rows = df[df['pathway'] == set_name]
+                    pathway_col = None
+                    for c in ['Description', 'pathway', 'Term_Name', 'term_name']:
+                        if c in df.columns:
+                            pathway_col = c
+                            break
+                    if pathway_col:
+                        match_rows = df[df[pathway_col] == set_name]
                         if len(match_rows) > 0:
                             match = match_rows.iloc[0]
 
                     if match is None:
                         continue
 
-                    es_val = match.get('es', 0.0)
-                    nes_val = match.get('nes', 0.0)
-                    pval = match.get('pvalue', match.get('P_Value', 1.0))
+                    es_val = match.get('ES', match.get('enrichmentScore', match.get('es', 0.0)))
+                    nes_val = match.get('NES', match.get('nes', 0.0))
+                    pval = match.get('p_value', match.get('NOM p-val', match.get('pvalue', match.get('P_Value', 1.0))))
 
                     out_file = str(plot_dir / f"{set_name}_enrichment.{plot_format}")
                     try:
@@ -324,8 +333,8 @@ def _generate_plots(
 
             # Volcano 图（需要 nes 和 pvalue 列）
             if 'volcano' in common_types_requested:
-                has_nes = 'nes' in df.columns or 'NES' in df.columns
-                has_pval = 'pvalue' in df.columns or 'pvalue' in df.columns or 'P_Value' in df.columns
+                has_nes = 'NES' in df.columns or 'nes' in df.columns
+                has_pval = 'p_value' in df.columns or 'NOM p-val' in df.columns or 'pvalue' in df.columns or 'P_Value' in df.columns
                 if has_nes and has_pval:
                     out_file = str(common_plot_dir / f"{db_name}_volcano.{plot_format}")
                     try:
@@ -352,6 +361,7 @@ def _generate_plots(
 
         # 从结果中提取活性得分矩阵
         # 结果 DataFrame 应为 行=通路, 列=样本 的活性得分
+        import pandas as pd  # 用于 DataFrame 类型判断（ssGSEA/GSVA 路径）
         scores_df = None
         for db_name, df in results.items():
             if df is not None and len(df) > 0:
@@ -360,13 +370,17 @@ def _generate_plots(
                 if isinstance(df, pd.DataFrame):
                     # 检查是否包含数值列（样本列）
                     numeric_cols = df.select_dtypes(include='number').columns
-                    non_metric_cols = {'pvalue', 'P_Value', 'Adjusted_P_Value',
-                                       'nes', 'es', 'fdr', 'gene_count', 'Gene_Count'}
+                    non_metric_cols = {'p_value', 'FDR',
+                                        'NOM p-val', 'FDR q-val', 'FWER p-val',
+                                        'pvalue', 'P_Value', 'Adjusted_P_Value',
+                                        'p.adjust', 'qvalues',
+                                        'nes', 'es', 'fdr', 'gene_count', 'Gene_Count',
+                                        'NES', 'enrichmentScore', 'setSize'}
                     sample_cols = [c for c in numeric_cols if c not in non_metric_cols]
                     if sample_cols:
                         # 尝试使用第一列作为通路名
                         name_col = None
-                        for col in ['pathway', 'Term_Name', 'Term_ID', df.index.name]:
+                        for col in ['Description', 'pathway', 'Term_Name', 'Term_ID', df.index.name]:
                             if col and col in df.columns:
                                 name_col = col
                                 break
@@ -521,7 +535,7 @@ Examples:
     analyze_parser.add_argument('--background-mode', dest='background_mode',
                                 choices=['annotated', 'genome', 'custom'], default='annotated',
                                 help='Background gene set mode: annotated (default), genome, custom')
-    analyze_parser.add_argument('-m', '--method', default='fisher', choices=['fisher', 'hypergeometric', 'gsea', 'ssgsea', 'gsva'], help='Enrichment method')  # 富集分析方法：Fisher精确检验/超几何检验/GSEA/ssGSEA/GSVA
+    analyze_parser.add_argument('-m', '--method', default='hypergeometric', choices=['hypergeometric', 'gsea', 'ssgsea', 'gsva'], help='Enrichment method')  # 富集分析方法：超几何检验(ORA默认)/GSEA/ssGSEA/GSVA
     analyze_parser.add_argument('-c', '--correction', default='BH', choices=['BH', 'BY', 'bonferroni', 'holm', 'none'], help='Multiple testing correction')  # 多重检验校正方法
     analyze_parser.add_argument('-p', '--pvalue', type=float, default=0.05, help='P-value cutoff')    # P 值阈值，默认 0.05
     analyze_parser.add_argument('-q', '--qvalue', type=float, default=0.05, help='Q-value cutoff')    # Q 值（校正后 P 值）阈值，默认 0.05
@@ -548,6 +562,10 @@ Examples:
     analyze_parser.add_argument('--style', default='nature', choices=['nature', 'science', 'colorblind', 'presentation', 'omicshare'], help='Plot style theme (default: nature)')  # 图表风格主题
     analyze_parser.add_argument('--palette', default=None, help='Custom color palette name (optional)')  # 自定义配色方案
     analyze_parser.add_argument('--verbose', action='store_true', help='Enable verbose (DEBUG) logging')  # 启用详细日志输出
+    analyze_parser.add_argument('--tf-database', choices=['trrust', 'chea3', 'both'],
+                                help='Include TF enrichment analysis using TRRUST, ChEA3, or both databases')
+    analyze_parser.add_argument('--tf-only', action='store_true',
+                                help='Only perform TF enrichment, skip standard databases (GO/KEGG/Reactome etc.)')
     
     # ==================== download 子命令 ====================
     # 从远程数据源下载指定的富集分析数据库到本地
@@ -559,6 +577,8 @@ Examples:
     download_parser.add_argument('--no-multi-thread', action='store_true', help='Disable multi-thread download')       # 禁用多线程
     download_parser.add_argument('--no-verify', action='store_true', help='Skip post-download integrity check')        # 跳过完整性校验
     download_parser.add_argument('--force', action='store_true', help='强制重新下载，即使本地已是最新版本')
+    download_parser.add_argument('--trrust', action='store_true', help='Download TRRUST TF-target database')  # 下载 TRRUST 转录因子-靶基因数据库
+    download_parser.add_argument('--chea3', action='store_true', help='Download ChEA3 TF-target database')  # 下载 ChEA3 转录因子-靶基因数据库
     
     # ==================== build 子命令 ====================
     # 为指定物种构建本地富集分析数据库，需要提供物种代码和分类学 ID
@@ -583,7 +603,9 @@ Examples:
         default='auto', help='Annotation file format (default: auto-detect)')
     build_parser.add_argument('--hierarchy-sep', default='|',
         help='Hierarchy level separator (default: |)')
-    
+    build_parser.add_argument('--latin-name', type=str, default='',
+                              help='物种拉丁名（下划线格式，如 Bos_taurus）')
+
     # ==================== serve 子命令 ====================
     # 启动 RESTful API 服务器，提供在线富集分析服务
     serve_parser = subparsers.add_parser('serve', help='Start API server')
@@ -628,6 +650,9 @@ Examples:
     list_species_parser.add_argument('--kegg', action='store_true', default=False, help='Filter by KEGG support')
     list_species_parser.add_argument('--reactome', action='store_true', default=False, help='Filter by Reactome support')
     list_species_parser.add_argument('--do', action='store_true', default=False, help='Filter by DO support')
+    list_species_parser.add_argument('--wikipathways', action='store_true', default=False, help='Filter by WikiPathways support')
+    list_species_parser.add_argument('--trrust', action='store_true', default=False, help='Filter by TRRUST support')
+    list_species_parser.add_argument('--chea3', action='store_true', default=False, help='Filter by ChEA3 support')
     list_species_parser.add_argument('--format', choices=['table', 'tsv', 'json'], default='table', help='Output format (default: table)')
     list_species_parser.add_argument('--summary', action='store_true', default=False, help='Show summary statistics')
 
@@ -637,6 +662,20 @@ Examples:
     query_species_parser.add_argument('--taxid', type=int, default=None, help='Query by NCBI Taxonomy ID')
     query_species_parser.add_argument('--name', type=str, default=None, help='Query by Latin name')
     query_species_parser.add_argument('--kegg', type=str, default=None, help='Query by KEGG organism code')
+
+    # ==================== tf-enrich 子命令 ====================
+    # 转录因子富集分析：基于 TRRUST/ChEA3 数据库对输入基因集执行 TF 富集分析
+    tf_enrich_parser = subparsers.add_parser('tf-enrich', help='Transcription factor enrichment analysis')
+    tf_enrich_parser.add_argument('-i', '--input', required=True, help='Input gene list file')  # 输入基因列表文件（必需）
+    tf_enrich_parser.add_argument('-s', '--species', default='hsa', help='Species code (default: hsa)')  # 物种代码
+    tf_enrich_parser.add_argument('-d', '--database', default='trrust', choices=['trrust', 'chea3'], help='TF database (default: trrust)')  # TF 数据库选择
+    tf_enrich_parser.add_argument('-o', '--output', default='./results', help='Output directory')  # 输出目录
+    tf_enrich_parser.add_argument('--report', action='store_true', help='Generate HTML report')  # 生成 HTML 报告
+    tf_enrich_parser.add_argument('--top-n', type=int, default=20, help='Show top N TFs (default: 20)')  # 显示前 N 个 TF
+    tf_enrich_parser.add_argument('--database-dir', default=None, help='Database directory')  # 数据库目录路径
+    tf_enrich_parser.add_argument('--method', default='ora', choices=['ora', 'gsea'], help='Enrichment method (default: ora)')  # 富集分析方法
+    tf_enrich_parser.add_argument('--online', action='store_true',
+                                  help='Use ChEA3 API for online analysis (requires internet)')  # 在线分析模式
 
     return parser
 
@@ -690,7 +729,7 @@ def cmd_analyze(args) -> int:
                 config.species = args.species
             if args.databases != 'GO,KEGG':
                 config.databases = args.databases.split(',')
-            if args.method != 'fisher':
+            if args.method != 'hypergeometric':
                 config.method = args.method
             if args.correction != 'BH':
                 config.correction = args.correction
@@ -797,20 +836,32 @@ def cmd_analyze(args) -> int:
         
         # ---- 第5步：加载富集分析数据库 ----
         # 根据配置中指定的数据库名称加载对应的数据库数据
+        # 如果指定了 --tf-only，则跳过标准数据库加载
+        tf_only_mode = getattr(args, 'tf_only', False)
+        tf_database = getattr(args, 'tf_database', None)
         db_dir = args.database_dir if args.database_dir else config.database_dir
-        logger.info(f"Loading databases: {config.databases} from {db_dir}")
-        db_manager = DatabaseManager(db_dir, config.species)
-        # 版本锁定：CLI --use-version 优先于 YAML config.use_version
-        use_ver = getattr(args, 'use_version', None) or getattr(config, 'use_version', None)
-        if use_ver:
-            logger.info(f"使用指定数据库版本: {use_ver}")
-        db_manager.load_databases(config.databases, version=use_ver)
+
+        if tf_only_mode:
+            logger.info("TF-only mode: skipping standard database loading")
+            results = {}
+            db_manager = DatabaseManager(db_dir, config.species)
+        else:
+            logger.info(f"Loading databases: {config.databases} from {db_dir}")
+            db_manager = DatabaseManager(db_dir, config.species)
+            # 版本锁定：CLI --use-version 优先于 YAML config.use_version
+            use_ver = getattr(args, 'use_version', None) or getattr(config, 'use_version', None)
+            if use_ver:
+                logger.info(f"使用指定数据库版本: {use_ver}")
+            db_manager.load_databases(config.databases, version=use_ver)
         
         # ---- 第6步：确定背景基因集 ----
         # 根据 --background 和 --background-mode 参数确定背景基因集
         background_mode = getattr(args, 'background_mode', 'annotated')
 
-        if config.background_file:
+        if tf_only_mode:
+            # TF-only 模式下不需要背景基因集
+            background_set = set()
+        elif config.background_file:
             # 用户提供了 --background 参数，直接使用（忽略 background_mode）
             logger.info(f"Loading background genes from {config.background_file}")
             background_set = analyzer.load_gene_list(config.background_file)
@@ -823,7 +874,6 @@ def cmd_analyze(args) -> int:
             logger.info("Using genome genes as background (background_mode='genome')")
             try:
                 # 直接使用物种代码获取全基因组基因
-                # manager.py 中的 KEGG_CODE_TO_TAXID 映射会自动处理
                 background_set = db_manager.get_genome_genes(species_code=config.species)
                 if background_set:
                     logger.info(f"Loaded {len(background_set)} genome genes from gene_info.gz")
@@ -841,16 +891,38 @@ def cmd_analyze(args) -> int:
             # 默认回退
             logger.info("Using all database genes as background")
             background_set = db_manager.get_background_genes()
-        
+
         # ---- 第7步：执行富集分析 ----
         # 对每个数据库运行富集分析，支持并行计算（当 n_jobs > 1 时）
-        logger.info("Running enrichment analysis...")
-        database_data = db_manager.get_all_term_data()
-        results = analyzer.run_analysis(gene_set, background_set, database_data, parallel=config.n_jobs > 1)
+        if not tf_only_mode:
+            logger.info("Running enrichment analysis...")
+            database_data = db_manager.get_all_term_data()
+            results = analyzer.run_analysis(
+                gene_set, background_set, database_data,
+                parallel=config.n_jobs > 1,
+                ranked_gene_list=ranked_gene_list
+            )
         
+        # ---- 第7.5步：执行 TF 富集分析（如果指定了 --tf-database）----
+        tf_results = None
+        if tf_database:
+            logger.info(f"Running TF enrichment analysis with database: {tf_database}")
+            try:
+                tf_results = _run_tf_analysis(args, list(gene_set), config.species)
+                if tf_results is not None and not tf_results.empty:
+                    logger.info(f"TF enrichment analysis completed: {len(tf_results)} TFs found")
+                else:
+                    logger.warning("TF enrichment analysis found no significant TFs")
+            except Exception as e:
+                logger.error(f"TF enrichment analysis failed: {e}", exc_info=True)
+                # TF 分析失败不中断主流程
+
         # ---- 检查是否有富集结果 ----
-        # 如果所有数据库都没有找到显著富集的结果，输出友好的提示信息并正常退出
-        if not results or len(results) == 0:
+        # 如果所有数据库都没有找到显著富集的结果，且没有 TF 结果，输出友好的提示信息并正常退出
+        has_standard_results = results and len(results) > 0
+        has_tf_results = tf_results is not None and not tf_results.empty
+
+        if not has_standard_results and not has_tf_results:
             logger.warning("=" * 60)
             logger.warning("未找到显著富集的结果！")
             logger.warning("可能的原因：")
@@ -882,7 +954,15 @@ def cmd_analyze(args) -> int:
             metadata["source_versions"] = build_meta.get("source_versions", {})
             metadata["built_at"] = build_meta.get("built_at", "")
 
-        analyzer.save_results(str(output_dir), metadata=metadata)
+        # 保存标准富集分析结果
+        if not tf_only_mode:
+            analyzer.save_results(str(output_dir), metadata=metadata)
+
+        # 保存 TF 富集分析结果（如果存在）
+        if tf_results is not None and not tf_results.empty:
+            tf_output_file = output_dir / "TF_enrichment_results.csv"
+            tf_results.to_csv(tf_output_file, index=False)
+            logger.info(f"TF enrichment results saved to: {tf_output_file}")
         
         # ---- 第8.5步：筛选显著结果用于绘图和报告 ----
         # 按 p/q 阈值过滤，只保留显著富集的条目用于后续可视化和报告
@@ -890,16 +970,33 @@ def cmd_analyze(args) -> int:
         for db_name, df in results.items():
             if len(df) == 0:
                 continue
+            # 动态检测列名（兼容 ORA 和 GSEA 两种命名）
+            pval_col = 'p_value' if 'p_value' in df.columns else ('NOM p-val' if 'NOM p-val' in df.columns else ('pvalue' if 'pvalue' in df.columns else 'P_Value'))
+            adj_pval_col = 'FDR' if 'FDR' in df.columns else ('FDR q-val' if 'FDR q-val' in df.columns else ('p.adjust' if 'p.adjust' in df.columns else 'Adjusted_P_Value'))
             filtered = df[
-                (df['P_Value'] <= config.pvalue_cutoff) &
-                (df['Adjusted_P_Value'] <= config.qvalue_cutoff)
+                (df[pval_col] <= config.pvalue_cutoff) &
+                (df[adj_pval_col] <= config.qvalue_cutoff)
             ].copy()
             if len(filtered) > 0:
                 significant_results[db_name] = filtered
-        
+
+        # 添加 TF 结果到显著结果中（如果存在且显著）
+        if tf_results is not None and not tf_results.empty:
+            tf_pval_col = 'Pvalue' if 'Pvalue' in tf_results.columns else 'pvalue'
+            tf_adj_col = 'FDR' if 'FDR' in tf_results.columns else 'p.adjust'
+            if tf_pval_col in tf_results.columns and tf_adj_col in tf_results.columns:
+                tf_significant = tf_results[
+                    (tf_results[tf_pval_col] <= config.pvalue_cutoff) &
+                    (tf_results[tf_adj_col] <= config.qvalue_cutoff)
+                ].copy()
+                if len(tf_significant) > 0:
+                    significant_results['TF'] = tf_significant
+                    logger.info(f"TF significant results: {len(tf_significant)} TFs")
+
         sig_total = sum(len(df) for df in significant_results.values())
         all_total = sum(len(df) for df in results.values())
-        logger.info(f"Significant results: {sig_total}/{all_total} terms (p<={config.pvalue_cutoff}, q<={config.qvalue_cutoff})")
+        if not tf_only_mode:
+            logger.info(f"Significant results: {sig_total}/{all_total} terms (p<={config.pvalue_cutoff}, q<={config.qvalue_cutoff})")
         
         # ---- 第9步：生成可视化图表 ----
         # 除非用户指定 --no-plot，否则为每个数据库的显著结果生成图表
@@ -912,9 +1009,12 @@ def cmd_analyze(args) -> int:
                                      style=config.plot_style, palette=config.plot_palette)
         
         # ---- 第9.5步：生成GSEA/GSVA/ssGSEA专用可视化图表 ----
-        # 如果用户指定了 --plot-types 且方法为 GSEA/ssGSEA/GSVA，则调用专用可视化函数
+        # 如果方法为 GSEA/ssGSEA/GSVA，自动使用默认图表类型（用户可通过 --plot-types 覆盖）
         gsea_plot_files = []
-        if (plot_types_list and config.method in _METHOD_PLOT_TYPES
+        _effective_plot_types = plot_types_list
+        if not _effective_plot_types and config.method in _METHOD_PLOT_TYPES:
+            _effective_plot_types = sorted(_METHOD_PLOT_TYPES[config.method])
+        if (_effective_plot_types and config.method in _METHOD_PLOT_TYPES
                 and not args.no_plot and results):
             logger.info(f"Generating {config.method} specific plots...")
             # 构建基因权重字典（GSEA富集曲线需要）
@@ -933,7 +1033,7 @@ def cmd_analyze(args) -> int:
                 gene_sets=gene_sets,
                 expr_matrix=expression_matrix,
                 groups=groups_dict,
-                plot_types=plot_types_list,
+                plot_types=_effective_plot_types,
                 output_dir=str(output_dir),
                 plot_format=plot_format,
                 plot_dpi=plot_dpi,
@@ -1044,6 +1144,14 @@ def cmd_download(args) -> int:
     """
     from allenricher.database.downloader import DataDownloader
 
+    # ---- TRRUST / ChEA3 独立下载分支 ----
+    if getattr(args, 'trrust', False):
+        return _cmd_download_trrust(args)
+    if getattr(args, 'chea3', False):
+        return _cmd_download_chea3(args)
+    if getattr(args, 'animaltfdb', False):
+        return _cmd_download_animaltfdb(args)
+
     databases = [d.strip().lower() for d in args.databases.split(',')]
     download_dir = args.database_dir or "./database"
 
@@ -1091,6 +1199,93 @@ def cmd_download(args) -> int:
     except Exception as e:
         logger.error(f"下载失败: {e}")
         return 1
+
+
+def _cmd_download_trrust(args) -> int:
+    """下载 TRRUST 转录因子-靶基因数据库
+
+    使用 TRRUSTFetcher 从远程数据源下载 TRRUST 数据库，
+    保存到 database/basic/trrust/ 目录。
+
+    Args:
+        args: 命令行参数命名空间
+
+    Returns:
+        int: 0 表示下载成功，1 表示失败
+    """
+    from allenricher.database.trrust_fetcher import TRRUSTFetcher
+
+    download_dir = args.database_dir or "./database"
+    database_dir = download_dir.rstrip('/')
+
+    logger.info(f"下载 TRRUST 数据库 → {database_dir}/basic/trrust/")
+    fetcher = TRRUSTFetcher(basic_dir=database_dir + "/basic")
+
+    try:
+        results = fetcher.download_all(overwrite=args.force)
+        for name, path in results.items():
+            logger.info(f"  {name}: {path}")
+        logger.info("TRRUST 数据库下载完成！")
+        return 0
+    except Exception as e:
+        logger.error(f"TRRUST 下载失败: {e}")
+        return 1
+
+
+def _cmd_download_chea3(args) -> int:
+    """下载 ChEA3 转录因子-靶基因数据库
+
+    使用 ChEA3Fetcher 从远程数据源下载 ChEA3 的 GMT 格式基因集文件，
+    保存到 database/basic/chea3/ 目录。
+
+    Args:
+        args: 命令行参数命名空间
+
+    Returns:
+        int: 0 表示下载成功，1 表示失败
+    """
+    from allenricher.database.chea3_fetcher import ChEA3Fetcher
+
+    download_dir = args.database_dir or "./database"
+    database_dir = download_dir.rstrip('/')
+
+    logger.info(f"下载 ChEA3 数据库 → {database_dir}/basic/chea3/")
+    fetcher = ChEA3Fetcher(basic_dir=database_dir + "/basic")
+
+    try:
+        results = fetcher.download_all_gmt_libraries(overwrite=args.force)
+        for name, path in results.items():
+            logger.info(f"  {name}: {path}")
+        logger.info("ChEA3 数据库下载完成！")
+        return 0
+    except Exception as e:
+        logger.error(f"ChEA3 下载失败: {e}")
+        return 1
+
+
+def _cmd_download_animaltfdb(args) -> int:
+    """下载 AnimalTFDB 和 hTFtarget 数据"""
+    from allenricher.database.animaltfdb_fetcher import AnimalTFDBFetcher
+
+    fetcher = AnimalTFDBFetcher(basic_dir=args.database_dir + "/basic")
+
+    print("下载 hTFtarget 人类TF-target关系...")
+    fetcher.download_htftarget(overwrite=args.force)
+
+    species_list = args.species.split(',') if args.species else []
+
+    if not species_list:
+        print("未指定物种，仅下载 hTFtarget 映射源。")
+        print("使用 --species Bos_taurus,Sus_scrofa 指定要下载的物种。")
+        return 0
+
+    print(f"下载 {len(species_list)} 个物种的 AnimalTFDB 数据...")
+    for sp in species_list:
+        print(f"\n--- 下载 {sp} ---")
+        fetcher.download_species_data(sp, overwrite=args.force)
+
+    print("\n下载完成")
+    return 0
 
 
 def cmd_build(args) -> int:
@@ -1187,11 +1382,16 @@ def cmd_build(args) -> int:
     builder = DatabaseBuilder(root_dir=build_dir)
 
     try:
-        outdir = builder.build_species_db(
+        build_kwargs = dict(
             species=species,
             taxid=taxid,
             databases=databases
         )
+        # 如果指定了 latin_name，传递给 builder
+        latin_name = getattr(args, 'latin_name', '')
+        if latin_name:
+            build_kwargs['latin_name'] = latin_name
+        outdir = builder.build_species_db(**build_kwargs)
         logger.info(f"构建完成！输出目录: {outdir}")
         logger.info("")
         logger.info("下一步：运行富集分析")
@@ -1467,6 +1667,7 @@ def main():
         'config': cmd_config,
         'list-species': _cmd_list_species,
         'query-species': _cmd_query_species,
+        'tf-enrich': _cmd_tf_enrich,
         'check-update': cmd_check_update,
         'cleanup': cmd_cleanup,
         'list-versions': cmd_list_versions,
@@ -1505,60 +1706,159 @@ def _cmd_list_species(args) -> int:
         go=args.go or None,
         kegg=args.kegg or None,
         reactome=args.reactome or None,
-        do=args.do or None
+        do=args.do or None,
+        wikipathways=args.wikipathways or None,
+        trrust=args.trrust or None,
+        chea3=args.chea3 or None
     )
 
     if args.format == "table":
-        print(f"{'TaxID':<10} {'Latin Name':<30} {'GO':<5} {'KEGG':<6} {'Reactome':<9} {'DO':<4}")
-        print("-" * 70)
-        for e in entries[:100]:
-            print(f"{e.taxid:<10} {e.latin_name:<30} {'Y' if e.has_go else 'N':<5} {'Y' if e.has_kegg else 'N':<6} {'Y' if e.has_reactome else 'N':<9} {'Y' if e.has_do else 'N':<4}")
-        if len(entries) > 100:
-            print(f"... and {len(entries) - 100} more species")
+        # 当使用 --trrust 或 --chea3 过滤时，显示 Species, Code, TaxID 列
+        if args.trrust or args.chea3:
+            print(f"{'Species':<30} {'Code':<8} {'TaxID':<10}")
+            print("-" * 50)
+            for e in entries[:100]:
+                code = e.kegg_code or "N/A"
+                print(f"{e.latin_name:<30} {code:<8} {e.taxid:<10}")
+            if len(entries) > 100:
+                print(f"... and {len(entries) - 100} more species")
+        # 当使用 --wikipathways 过滤时，显示 Data Type 列
+        elif args.wikipathways:
+            print(f"{'Species':<30} {'Code':<8} {'Data Type':<10} {'TaxID':<10}")
+            print("-" * 62)
+            for e in entries[:100]:
+                data_type = e.wikipathways_data_type or "N/A"
+                code = e.kegg_code or "N/A"
+                print(f"{e.latin_name:<30} {code:<8} {data_type:<10} {e.taxid:<10}")
+            if len(entries) > 100:
+                print(f"... and {len(entries) - 100} more species")
+        else:
+            print(f"{'TaxID':<10} {'Latin Name':<30} {'GO':<5} {'KEGG':<6} {'Reactome':<9} {'DO':<4} {'WikiPathways':<12}")
+            print("-" * 82)
+            for e in entries[:100]:
+                print(f"{e.taxid:<10} {e.latin_name:<30} {'Y' if e.has_go else 'N':<5} {'Y' if e.has_kegg else 'N':<6} {'Y' if e.has_reactome else 'N':<9} {'Y' if e.has_do else 'N':<4} {'Y' if e.has_wikipathways else 'N':<12}")
+            if len(entries) > 100:
+                print(f"... and {len(entries) - 100} more species")
     elif args.format == "tsv":
-        print("taxid\tlatin_name\thas_go\thas_kegg\thas_reactome\thas_do")
-        for e in entries:
-            print(f"{e.taxid}\t{e.latin_name}\t{e.has_go}\t{e.has_kegg}\t{e.has_reactome}\t{e.has_do}")
+        if args.trrust or args.chea3:
+            print("species\tcode\ttaxid")
+            for e in entries:
+                code = e.kegg_code or "N/A"
+                print(f"{e.latin_name}\t{code}\t{e.taxid}")
+        elif args.wikipathways:
+            print("species\tcode\tdata_type\ttaxid")
+            for e in entries:
+                data_type = e.wikipathways_data_type or "N/A"
+                code = e.kegg_code or "N/A"
+                print(f"{e.latin_name}\t{code}\t{data_type}\t{e.taxid}")
+        else:
+            print("taxid\tlatin_name\thas_go\thas_kegg\thas_reactome\thas_do\thas_wikipathways")
+            for e in entries:
+                print(f"{e.taxid}\t{e.latin_name}\t{e.has_go}\t{e.has_kegg}\t{e.has_reactome}\t{e.has_do}\t{e.has_wikipathways}")
     elif args.format == "json":
-        data = [{"taxid": e.taxid, "latin_name": e.latin_name, "has_go": e.has_go,
-                 "has_kegg": e.has_kegg, "has_reactome": e.has_reactome, "has_do": e.has_do}
-                for e in entries]
+        if args.trrust or args.chea3:
+            data = [{"species": e.latin_name, "code": e.kegg_code or "N/A", "taxid": e.taxid}
+                    for e in entries]
+        elif args.wikipathways:
+            data = [{"species": e.latin_name, "code": e.kegg_code or "N/A",
+                     "data_type": e.wikipathways_data_type or "N/A", "taxid": e.taxid}
+                    for e in entries]
+        else:
+            data = [{"taxid": e.taxid, "latin_name": e.latin_name, "has_go": e.has_go,
+                     "has_kegg": e.has_kegg, "has_reactome": e.has_reactome, "has_do": e.has_do,
+                     "has_wikipathways": e.has_wikipathways}
+                    for e in entries]
         print(json.dumps(data, indent=2))
 
     return 0
 
 
-def _cmd_query_species(args) -> int:
-    """查询物种详细信息"""
-    from .database.species_registry import SpeciesRegistry
+def _print_local_build_status(taxid: int, kegg_code: str = None) -> None:
+    """检查并打印物种的本地数据库构建状态"""
+    from .database.version import DatabaseVersionManager
+    from pathlib import Path
 
-    registry = SpeciesRegistry.load_default()
+    species_code = kegg_code
 
-    entry = None
-    if args.taxid:
-        entry = registry.query_by_taxid(args.taxid)
-    elif args.name:
-        entries = registry.query_by_latin_name(args.name)
-        if entries:
-            entry = entries[0]
-            if len(entries) > 1:
-                print(f"Found {len(entries)} matches, showing first:")
-    elif args.kegg:
-        entry = registry.query_by_kegg_code(args.kegg)
+    # 确定数据库目录
+    db_dir = Path("database")
+    if not db_dir.exists():
+        for candidate in [Path.cwd() / "database", Path(__file__).parent.parent.parent / "database"]:
+            if candidate.exists():
+                db_dir = candidate
+                break
 
-    if not entry:
-        print("Species not found in registry.")
-        return 1
+    manager = DatabaseVersionManager(database_dir=str(db_dir))
+    org_versions = manager.list_installed_organism_versions()
 
+    print(f"\nLocal Database Status:")
+    print(f"-" * 60)
+
+    if not org_versions:
+        print(f"  Not built (no organism database found)")
+        return
+
+    # 在所有 organism 版本中查找该物种
+    found_builds = []
+    for version in org_versions:
+        build_info = manager.get_organism_build_info(version)
+        species_list = build_info.get(version, [])
+
+        matched = False
+        if species_code and species_code in species_list:
+            matched = True
+        elif species_code is None:
+            for sp in species_list:
+                lineage = manager.get_build_lineage(version, sp)
+                if lineage and lineage.get("taxid") == taxid:
+                    species_code = sp
+                    matched = True
+                    break
+
+        if matched:
+            lineage = manager.get_build_lineage(version, species_code)
+            found_builds.append((version, species_code, lineage))
+
+    if not found_builds:
+        print(f"  Not built")
+    else:
+        for version, sp, lineage in found_builds:
+            print(f"  Version: {version}")
+            print(f"  Species Code: {sp}")
+            if lineage:
+                built_at = lineage.get("built_at", "-")
+                if built_at and built_at != "-":
+                    built_at = built_at[:16]
+                print(f"  Built at: {built_at}")
+                databases = lineage.get("databases", [])
+                if databases:
+                    print(f"  Databases: {', '.join(databases)}")
+                deps = lineage.get("dependencies", {})
+                if deps:
+                    for db_name, dep_info in deps.items():
+                        basic_dir = dep_info.get("basic_dir", "-")
+                        print(f"    {db_name} <- {basic_dir}")
+
+
+def _print_species_detail(registry, entry, match_kind: str = "") -> None:
+    """打印物种详细信息"""
     detail = registry.get_species_detail(entry.taxid)
 
+    match_info = f" [{match_kind}]" if match_kind and match_kind != 'exact' else ""
     print(f"\n{'='*60}")
-    print(f"Species Information")
+    print(f"Species Information{match_info}")
     print(f"{'='*60}")
     print(f"Taxonomy ID: {detail['taxid']}")
     print(f"Latin Name:  {detail['latin_name']}")
     if detail.get('common_name') and detail['common_name'] != '-':
         print(f"Common Name: {detail['common_name']}")
+    if detail.get('synonyms') and detail['synonyms'] != '-':
+        syn_list = detail['synonyms'].split(';')
+        syn_display = [s for s in syn_list if s.strip() != detail['latin_name']]
+        if syn_display:
+            print(f"Other Names: {', '.join(syn_display[:5])}")
+            if len(syn_display) > 5:
+                print(f"  ... and {len(syn_display) - 5} more")
     print(f"\nDatabase Support:")
     print(f"-" * 60)
 
@@ -1570,11 +1870,473 @@ def _cmd_query_species(args) -> int:
             if db_name == "KEGG" and detail.get('kegg_code') and detail['kegg_code'] != '-':
                 print(f"  Code: {detail['kegg_code']} (source: {detail.get('kegg_code_source', '-')})")
 
+    # 本地数据库构建状态
+    _print_local_build_status(detail['taxid'], detail.get('kegg_code'))
+
     print(f"\nBuild Command:")
     print(f"  allenricher build --taxonomy {detail['taxid']}")
     print(f"{'='*60}\n")
 
+
+def _cmd_query_species(args) -> int:
+    """查询物种详细信息（支持模糊检索）"""
+    from .database.species_registry import SpeciesRegistry
+
+    registry = SpeciesRegistry.load_default()
+
+    entries = []
+    match_type = ""
+
+    if args.taxid:
+        entry = registry.query_by_taxid(args.taxid)
+        if entry:
+            entries = [(entry, 1.0, 'exact')]
+        match_type = f"TaxID={args.taxid}"
+    elif args.name:
+        query_name = args.name.strip()
+        entries = registry.fuzzy_search(query_name, cutoff=0.5)
+        match_type = f"Name='{query_name}'"
+    elif args.kegg:
+        entry = registry.query_by_kegg_code(args.kegg)
+        if entry:
+            entries = [(entry, 1.0, 'exact')]
+        match_type = f"KEGG={args.kegg}"
+
+    if not entries:
+        print(f"Species not found in registry ({match_type}).")
+        return 1
+
+    # 如果只有一个匹配，直接显示详情
+    if len(entries) == 1:
+        entry, score, match_kind = entries[0]
+        _print_species_detail(registry, entry, match_kind)
+        return 0
+
+    # 多个匹配，显示列表供用户选择
+    print(f"\n{'='*60}")
+    print(f"Found {len(entries)} matching species for {match_type}:")
+    print(f"{'='*60}")
+
+    for i, (entry, score, match_kind) in enumerate(entries[:10], 1):
+        match_info = f"[{match_kind}]" if match_kind != 'exact' else ""
+        print(f"{i}. {entry.latin_name} (TaxID: {entry.taxid}) {match_info}")
+        if entry.common_name and entry.common_name != '-':
+            print(f"   Common: {entry.common_name}")
+        dbs = []
+        if entry.has_go:
+            dbs.append("GO")
+        if entry.has_kegg:
+            dbs.append("KEGG")
+        if entry.has_reactome:
+            dbs.append("Reactome")
+        if entry.has_do:
+            dbs.append("DO")
+        print(f"   Databases: {', '.join(dbs) if dbs else 'None'}")
+        print()
+
+    if len(entries) > 10:
+        print(f"... and {len(entries) - 10} more matches.")
+
+    print(f"Showing details for best match: {entries[0][0].latin_name}")
+    print(f"{'='*60}\n")
+    _print_species_detail(registry, entries[0][0], entries[0][2])
+
     return 0
+
+
+def _convert_api_result_to_df(api_result: Dict, gene_set_size: int) -> "pd.DataFrame":
+    """将 ChEA3 API 结果转换为标准 DataFrame
+
+    将 ChEA3 API 返回的多库结果整合为与本地 ORA 分析一致的 DataFrame 格式。
+
+    Args:
+        api_result: ChEA3 API 返回的原始结果
+            {lib_name: [{TF, Rank, Pvalue, Overlap, TargetCount}, ...]}
+        gene_set_size: 输入基因集大小
+
+    Returns:
+        pd.DataFrame: 与 ora() 结果格式一致的 DataFrame，列包括：
+            - TF: 转录因子名称
+            - Overlap: 重叠基因数
+            - TF_Targets: TF 的靶基因总数
+            - GeneSet_Size: 输入基因集大小
+            - Overlap_Genes: 重叠的基因列表（API 不返回，设为空字符串）
+            - Pvalue: API 返回的 Pvalue
+            - FDR: API 返回的 FDR（或使用 Pvalue 作为近似）
+            - Mode: 固定为 'unknown'（API 不返回调控模式）
+            - Library: 结果来源的库名称
+    """
+    import pandas as pd
+    import numpy as np
+    from statsmodels.stats.multitest import multipletests
+
+    all_entries = []
+
+    for lib_name, entries in api_result.items():
+        for entry in entries:
+            # 解析 Overlap 字段 (格式: "3/100" 或 "3")
+            overlap_str = str(entry.get('Overlap', '0'))
+            if '/' in overlap_str:
+                overlap = int(overlap_str.split('/')[0])
+            else:
+                overlap = int(overlap_str) if overlap_str.isdigit() else 0
+
+            # 解析 TargetCount
+            target_count_str = str(entry.get('TargetCount', '0'))
+            if '/' in target_count_str:
+                target_count = int(target_count_str.split('/')[1]) if '/' in target_count_str else int(target_count_str.split('/')[0])
+            else:
+                target_count = int(target_count_str) if target_count_str.isdigit() else 0
+
+            # 解析 Pvalue
+            pvalue_str = str(entry.get('Pvalue', '1.0'))
+            try:
+                pvalue = float(pvalue_str)
+            except (ValueError, TypeError):
+                pvalue = 1.0
+
+            all_entries.append({
+                'TF': str(entry.get('TF', '')),
+                'Overlap': overlap,
+                'TF_Targets': target_count,
+                'GeneSet_Size': gene_set_size,
+                'Overlap_Genes': '',  # API 不返回具体重叠基因
+                'Pvalue': pvalue,
+                'Mode': 'unknown',  # API 不返回调控模式
+                'Library': lib_name,
+                '_Rank': int(entry.get('Rank', 999)) if str(entry.get('Rank', '')).isdigit() else 999,
+            })
+
+    if not all_entries:
+        return pd.DataFrame(columns=['TF', 'Overlap', 'TF_Targets', 'GeneSet_Size',
+                                     'Overlap_Genes', 'Pvalue', 'FDR', 'Mode', 'Library'])
+
+    result_df = pd.DataFrame(all_entries)
+
+    # 按 TF 分组，取每个 TF 在所有库中的最佳 Pvalue
+    # 同时记录该 TF 出现的库数量
+    grouped = result_df.groupby('TF').agg({
+        'Overlap': 'first',  # 取第一个出现的 Overlap
+        'TF_Targets': 'first',
+        'GeneSet_Size': 'first',
+        'Overlap_Genes': 'first',
+        'Pvalue': 'min',  # 取最小 Pvalue
+        'Mode': 'first',
+        'Library': lambda x: ','.join(sorted(set(x))),  # 合并所有库名称
+    }).reset_index()
+
+    # FDR 校正（Benjamini-Hochberg）
+    if len(grouped) > 1:
+        reject, fdr, _, _ = multipletests(
+            grouped['Pvalue'].values,
+            method='fdr_bh'
+        )
+        grouped['FDR'] = fdr
+    else:
+        grouped['FDR'] = grouped['Pvalue'].values
+
+    # 按 Pvalue 排序
+    grouped = grouped.sort_values('Pvalue').reset_index(drop=True)
+
+    return grouped
+
+
+def _run_tf_analysis(args, gene_list: List[str], species: str) -> Optional[pd.DataFrame]:
+    """执行 TF 富集分析
+
+    基于用户指定的 TF 数据库（TRRUST 或 ChEA3），对输入基因列表执行
+    转录因子过表示分析（ORA）。
+
+    Args:
+        args: 命令行参数命名空间，包含 tf_database 等参数
+        gene_list: 输入基因列表
+        species: 物种代码
+
+    Returns:
+        Optional[pd.DataFrame]: TF 富集结果 DataFrame，如果分析失败返回 None
+    """
+    import pandas as pd
+    from allenricher.analysis.tf_enrichment import TFEnrichmentAnalyzer
+    from allenricher.database.manager import DatabaseManager
+
+    tf_database_choice = args.tf_database
+    database_dir = args.database_dir or "./database"
+
+    # 确定要分析的数据库列表
+    if tf_database_choice == 'both':
+        tf_databases = ['trrust', 'chea3']
+    else:
+        tf_databases = [tf_database_choice]
+
+    all_results = []
+
+    for tf_db in tf_databases:
+        logger.info(f"Loading TF database: {tf_db}")
+
+        # 加载 TF 数据库
+        db_manager = DatabaseManager(database_dir=database_dir)
+        if tf_db == 'trrust':
+            tf_database = db_manager.load_trrust(species=species)
+        else:
+            tf_database = db_manager.load_chea3(species=species)
+
+        if tf_database is None:
+            logger.warning(f"无法加载 {tf_db} 数据库（物种: {species}），跳过此数据库。"
+                          f"请先运行: allenricher download --{tf_db}")
+            continue
+
+        # 执行 ORA 分析
+        analyzer = TFEnrichmentAnalyzer(tf_database=tf_database)
+        results_df = analyzer.ora(gene_set=gene_list)
+
+        if results_df is not None and not results_df.empty:
+            # 添加数据库来源列
+            results_df['TF_Database'] = tf_db.upper()
+            all_results.append(results_df)
+            logger.info(f"{tf_db.upper()} 分析完成: {len(results_df)} 个 TF")
+        else:
+            logger.warning(f"{tf_db.upper()} 分析未找到显著富集的转录因子")
+
+    if not all_results:
+        return None
+
+    # 合并所有结果
+    combined_df = pd.concat(all_results, ignore_index=True)
+
+    # 按 Pvalue 排序
+    if 'Pvalue' in combined_df.columns:
+        combined_df = combined_df.sort_values('Pvalue').reset_index(drop=True)
+
+    return combined_df
+
+
+def _cmd_tf_enrich(args) -> int:
+    """转录因子富集分析
+
+    基于用户指定的 TF 数据库（TRRUST 或 ChEA3），对输入基因列表执行
+    转录因子过表示分析（ORA），输出 CSV 结果和可视化图表。
+
+    支持在线分析模式（--online），直接调用 ChEA3 API 进行分析，
+    无需本地 ChEA3 数据库。
+
+    Args:
+        args: 命令行参数命名空间
+
+    Returns:
+        int: 0 表示分析成功，1 表示失败
+    """
+    import pandas as pd
+    import numpy as np
+    from allenricher.analysis.tf_enrichment import TFEnrichmentAnalyzer
+    from allenricher.database.manager import DatabaseManager
+    from allenricher.report.visualizer import Visualizer
+
+    # 解析参数
+    input_file = args.input
+    species = args.species
+    database = args.database
+    output_dir = Path(args.output)
+    top_n = args.top_n
+    database_dir = args.database_dir or "./database"
+    online_mode = getattr(args, 'online', False)
+
+    # 确保输出目录存在
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # 读取输入基因列表
+    input_path = Path(input_file)
+    if not input_path.exists():
+        logger.error(f"输入文件不存在: {input_file}")
+        return 1
+
+    gene_list = []
+    with open(input_path, 'r', encoding='utf-8') as f:
+        for line in f:
+            gene = line.strip()
+            if gene and not gene.startswith('#'):
+                gene_list.append(gene)
+
+    if not gene_list:
+        logger.error(f"输入基因列表为空: {input_file}")
+        return 1
+
+    logger.info(f"输入基因数: {len(gene_list)}")
+    logger.info(f"物种: {species}, TF数据库: {database}")
+
+    # 在线分析模式（仅支持 ChEA3）
+    if online_mode and database == 'chea3':
+        logger.info("使用 ChEA3 API 进行在线分析...")
+        from allenricher.database.chea3_fetcher import ChEA3Fetcher
+        from allenricher.database.parsers.chea3 import ChEA3Parser
+
+        try:
+            fetcher = ChEA3Fetcher(basic_dir=database_dir)
+            query_name = Path(input_file).stem
+            api_result = fetcher.enrich_api(gene_list, query_name=query_name)
+
+            # 解析 API 结果
+            parsed_result = ChEA3Parser.parse_api_result(api_result)
+
+            # 转换为标准 DataFrame 格式
+            results_df = _convert_api_result_to_df(parsed_result, len(gene_list))
+
+            logger.info(f"ChEA3 API 分析完成: {len(results_df)} 个 TF")
+        except Exception as e:
+            logger.error(f"ChEA3 API 分析失败: {e}")
+            return 1
+    else:
+        # 本地数据库分析模式
+        if online_mode and database != 'chea3':
+            logger.warning("--online 选项仅支持 ChEA3 数据库，将使用本地数据库分析")
+
+        # 加载 TF 数据库
+        db_manager = DatabaseManager(database_dir=database_dir)
+        if database == 'trrust':
+            tf_database = db_manager.load_trrust(species=species)
+        elif database == 'animaltfdb':
+            tf_database = db_manager.load_animaltfdb(species=species)
+        elif database == 'htftarget':
+            tf_database = db_manager.load_htftarget(species=species)
+        else:
+            tf_database = db_manager.load_chea3(species=species)
+
+        if tf_database is None:
+            logger.error(f"无法加载 {database} 数据库（物种: {species}）。"
+                         f"请先运行: allenricher download --{database}")
+            return 1
+
+        # 根据方法执行分析
+        analyzer = TFEnrichmentAnalyzer(tf_database=tf_database)
+        method = args.method.lower()
+
+        if method == 'ora':
+            results_df = analyzer.ora(gene_set=gene_list)
+        elif method == 'gsea':
+            # GSEA 需要排序的基因列表，使用基因索引作为排名分数
+            ranked_genes = [(gene, len(gene_list) - i) for i, gene in enumerate(gene_list)]
+            results_df = analyzer.gsea(ranked_genes=ranked_genes)
+        else:
+            logger.error(f"不支持的分析方法: {method}")
+            return 1
+
+    if results_df.empty:
+        logger.warning("未发现显著富集的转录因子。")
+        return 0
+
+    # 保存 CSV 结果
+    csv_path = output_dir / f"tf_enrichment_{database}_{species}.csv"
+    results_df.to_csv(csv_path, index=False)
+    logger.info(f"结果已保存: {csv_path}")
+
+    # 打印 Top N 结果
+    top_results = results_df.head(top_n)
+    print(f"\n{'='*60}")
+    print(f"TF Enrichment Analysis Results (Top {top_n})")
+    print(f"Database: {database.upper()}, Species: {species}")
+    print(f"{'='*60}")
+    print(f"{'TF':<15} {'Overlap':<10} {'Pvalue':<12} {'FDR':<12} {'Mode':<10}")
+    print("-" * 60)
+    for _, row in top_results.iterrows():
+        mode = row.get('Mode', 'unknown')
+        print(f"{row['TF']:<15} {row['Overlap']:<10} {row['Pvalue']:<12.2e} {row['FDR']:<12.2e} {mode:<10}")
+    print(f"{'='*60}\n")
+
+    # 生成可视化图表
+    try:
+        viz = Visualizer()
+
+        # 生成条形图
+        fig_bar = viz.plot_tf_enrichment_bar(results_df, top_n=args.top_n)
+        fig_bar.write_html(str(output_dir / "tf_enrichment_bar.html"))
+        fig_bar.write_image(str(output_dir / "tf_enrichment_bar.png"))
+        logger.info(f"条形图已保存: {output_dir / 'tf_enrichment_bar.html'}")
+
+        # 生成饼图
+        fig_pie = viz.plot_tf_mode_pie(results_df)
+        fig_pie.write_html(str(output_dir / "tf_mode_distribution.html"))
+        fig_pie.write_image(str(output_dir / "tf_mode_distribution.png"))
+        logger.info(f"饼图已保存: {output_dir / 'tf_mode_distribution.html'}")
+    except Exception as e:
+        logger.warning(f"图表生成失败（不影响分析结果）: {e}")
+
+    # 生成 HTML 报告（可选）
+    if args.report:
+        try:
+            _generate_tf_enrichment_report(results_df, output_dir, database, species, top_n)
+            logger.info(f"HTML 报告已生成: {output_dir / 'tf_enrichment_report.html'}")
+        except Exception as e:
+            logger.warning(f"HTML 报告生成失败: {e}")
+
+    return 0
+
+
+def _generate_tf_enrichment_report(
+    results_df, output_dir: Path, database: str, species: str, top_n: int
+) -> None:
+    """生成 TF 富集分析 HTML 报告
+
+    Args:
+        results_df: 富集分析结果 DataFrame
+        output_dir: 输出目录
+        database: 数据库名称
+        species: 物种代码
+        top_n: 显示前 N 个结果
+    """
+    # 读取 Jinja2 模板
+    template_path = Path(__file__).parent / "report" / "templates" / "tf_report.html"
+    with open(template_path, 'r', encoding='utf-8') as f:
+        template = Template(f.read())
+
+    # 读取交互式图表 HTML 内容
+    bar_chart_html = ""
+    pie_chart_html = ""
+
+    bar_html_path = output_dir / "tf_enrichment_bar.html"
+    pie_html_path = output_dir / "tf_mode_distribution.html"
+
+    if bar_html_path.exists():
+        with open(bar_html_path, 'r', encoding='utf-8') as f:
+            bar_chart_html = f.read()
+
+    if pie_html_path.exists():
+        with open(pie_html_path, 'r', encoding='utf-8') as f:
+            pie_chart_html = f.read()
+
+    # 准备模板变量
+    significant_count = len(results_df[results_df['FDR'] < 0.05]) if 'FDR' in results_df.columns else 0
+    gene_count = len(results_df) if not results_df.empty else 0
+
+    # 转换 DataFrame 为字典列表
+    top_results = results_df.head(top_n)
+    results_list = []
+    for _, row in top_results.iterrows():
+        overlap_genes = str(row.get('Overlap_Genes', ''))
+        results_list.append({
+            'TF': row['TF'],
+            'Mode': row.get('Mode', 'unknown'),
+            'Overlap': row['Overlap'],
+            'Pvalue': row['Pvalue'],
+            'FDR': row['FDR'],
+            'Overlap_Genes': overlap_genes[:100] + ('...' if len(overlap_genes) > 100 else '')
+        })
+
+    # 渲染模板
+    html_content = template.render(
+        db_name=database.upper(),
+        species=species,
+        gene_count=gene_count,
+        significant_count=significant_count,
+        method="Hypergeometric Test",
+        pie_chart_html=pie_chart_html if pie_chart_html else '<p>Pie chart not available.</p>',
+        bar_chart_html=bar_chart_html if bar_chart_html else '<p>Bar chart not available.</p>',
+        results=results_list,
+        timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    )
+
+    # 保存 HTML 文件
+    report_path = output_dir / "tf_enrichment_report.html"
+    with open(report_path, 'w', encoding='utf-8') as f:
+        f.write(html_content)
 
 
 if __name__ == '__main__':

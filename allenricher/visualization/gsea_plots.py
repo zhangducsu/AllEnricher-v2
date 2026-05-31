@@ -108,6 +108,7 @@ def plot_gsea_enrichment(
     figsize: tuple = (10, 6),
     style: Optional[str] = None,
     palette: Optional[str] = None,
+    dpi: int = 300,
 ) -> matplotlib.figure.Figure:
     """
     GSEA 富集曲线图（三面板）
@@ -204,7 +205,7 @@ def plot_gsea_enrichment(
             title = f"NES = {nes:.2f}, P-value = {pvalue:.2e}"
         fig.suptitle(title, fontsize=11, fontweight="bold", y=0.96)
 
-        _save_figure(fig, output_file)
+        _save_figure(fig, output_file, dpi=dpi)
     return fig
 
 
@@ -220,6 +221,7 @@ def plot_gsea_nes_barplot(
     figsize: tuple = (10, 8),
     style: Optional[str] = None,
     palette: Optional[str] = None,
+    dpi: int = 300,
 ) -> matplotlib.figure.Figure:
     """
     GSEA NES 条形图
@@ -242,8 +244,25 @@ def plot_gsea_nes_barplot(
     """
     df = results_df.copy()
 
+    # 动态检测列名：支持 clusterProfiler 命名和旧命名
+    nes_col = None
+    for c in ['NES', 'nes', 'enrichmentScore']:
+        if c in df.columns:
+            nes_col = c
+            break
+    pval_col = None
+    for c in ['p_value', 'NOM p-val', 'pvalue', 'P_Value']:
+        if c in df.columns:
+            pval_col = c
+            break
+    pathway_col = None
+    for c in ['Description', 'pathway', 'Term_Name', 'term_name']:
+        if c in df.columns:
+            pathway_col = c
+            break
+
     # 按 NES 绝对值降序排序
-    df["_abs_nes"] = df["nes"].abs()
+    df["_abs_nes"] = df[nes_col].abs() if nes_col else df.iloc[:, 0]
     df = df.sort_values("_abs_nes", ascending=True).tail(top_n).copy()
     df = df.drop(columns=["_abs_nes"])
 
@@ -254,7 +273,7 @@ def plot_gsea_nes_barplot(
         color_neg = colors[0]
 
         # 颜色映射
-        bar_colors = [color_pos if v >= 0 else color_neg for v in df["nes"]]
+        bar_colors = [color_pos if v >= 0 else color_neg for v in df[nes_col]]
 
         # 显著性标注
         def _sig_stars(p):
@@ -266,15 +285,15 @@ def plot_gsea_nes_barplot(
                 return "*"
             return ""
 
-        sig_labels = [_sig_stars(p) for p in df["pvalue"]]
+        sig_labels = [_sig_stars(p) for p in df[pval_col]]
 
         # 绘图
         fig, ax = plt.subplots(figsize=figsize)
-        bars = ax.barh(range(len(df)), df["nes"], color=bar_colors, edgecolor="none", height=0.7)
+        bars = ax.barh(range(len(df)), df[nes_col], color=bar_colors, edgecolor="none", height=0.7)
 
         # 添加显著性标注
-        for i, (nes_val, sig) in enumerate(zip(df["nes"], sig_labels)):
-            offset = 0.05 * (df["nes"].max() - df["nes"].min()) if len(df) > 1 else 0.1
+        for i, (nes_val, sig) in enumerate(zip(df[nes_col], sig_labels)):
+            offset = 0.05 * (df[nes_col].max() - df[nes_col].min()) if len(df) > 1 else 0.1
             if sig:
                 ax.text(
                     nes_val + (offset if nes_val >= 0 else -offset),
@@ -286,7 +305,7 @@ def plot_gsea_nes_barplot(
                 )
 
         ax.set_yticks(range(len(df)))
-        ax.set_yticklabels(df["pathway"], fontsize=8)
+        ax.set_yticklabels(df[pathway_col], fontsize=8)
         ax.axvline(x=0, color="gray", linewidth=0.8, linestyle="-")
         ax.set_xlabel("Normalized Enrichment Score (NES)", fontsize=10)
         ax.set_title(title, fontsize=12, fontweight="bold")
@@ -295,7 +314,7 @@ def plot_gsea_nes_barplot(
         ax.spines["right"].set_visible(False)
 
         plt.tight_layout()
-        _save_figure(fig, output_file)
+        _save_figure(fig, output_file, dpi=dpi)
     return fig
 
 
@@ -311,6 +330,7 @@ def plot_gsea_dotplot(
     figsize: tuple = (10, 8),
     style: Optional[str] = None,
     palette: Optional[str] = None,
+    dpi: int = 300,
 ) -> matplotlib.figure.Figure:
     """
     GSEA 气泡图
@@ -334,22 +354,44 @@ def plot_gsea_dotplot(
     """
     df = results_df.copy()
 
+    # 动态检测列名：支持 clusterProfiler 命名和旧命名
+    nes_col = None
+    for c in ['NES', 'nes', 'enrichmentScore']:
+        if c in df.columns:
+            nes_col = c
+            break
+    pval_col = None
+    for c in ['p_value', 'NOM p-val', 'pvalue', 'P_Value']:
+        if c in df.columns:
+            pval_col = c
+            break
+    pathway_col = None
+    for c in ['Description', 'pathway', 'Term_Name', 'term_name']:
+        if c in df.columns:
+            pathway_col = c
+            break
+    gcount_col = None
+    for c in ['setSize', 'gene_count', 'Gene_Count', 'GeneCount']:
+        if c in df.columns:
+            gcount_col = c
+            break
+
     # 按 NES 绝对值降序排序
-    df["_abs_nes"] = df["nes"].abs()
+    df["_abs_nes"] = df[nes_col].abs() if nes_col else df.iloc[:, 0]
     df = df.sort_values("_abs_nes", ascending=True).tail(top_n).copy()
     df = df.drop(columns=["_abs_nes"])
 
     # 计算 -log10(pvalue)，避免 log(0)
-    df["neg_log10_p"] = -np.log10(df["pvalue"].clip(lower=1e-300))
+    df["neg_log10_p"] = -np.log10(df[pval_col].clip(lower=1e-300))
 
     with PlotTheme.context(style or 'nature'):
         # 绘图
         fig, ax = plt.subplots(figsize=figsize)
 
         scatter = ax.scatter(
-            df["nes"],
+            df[nes_col],
             range(len(df)),
-            s=df["gene_count"] * 3,  # 缩放点大小
+            s=df[gcount_col] * 3 if gcount_col else 30,
             c=df["neg_log10_p"],
             cmap=PlotTheme.get_diverging_cmap(palette),
             edgecolors="gray",
@@ -358,7 +400,7 @@ def plot_gsea_dotplot(
         )
 
         ax.set_yticks(range(len(df)))
-        ax.set_yticklabels(df["pathway"], fontsize=8)
+        ax.set_yticklabels(df[pathway_col], fontsize=8)
         ax.axvline(x=0, color="gray", linewidth=0.8, linestyle="-")
         ax.set_xlabel("Normalized Enrichment Score (NES)", fontsize=10)
         ax.set_title(title, fontsize=12, fontweight="bold")
@@ -372,5 +414,5 @@ def plot_gsea_dotplot(
         cbar.ax.tick_params(labelsize=8)
 
         plt.tight_layout()
-        _save_figure(fig, output_file)
+        _save_figure(fig, output_file, dpi=dpi)
     return fig

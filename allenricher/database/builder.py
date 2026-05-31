@@ -43,10 +43,15 @@ from .parsers.kegg import KEGGParser
 from .parsers.reactome import ReactomeParser
 from .parsers.do import DOParser
 from .parsers.disgenet import DisGeNETParser
+from .parsers.wikipathways import WikiPathwaysParser
+from .parsers.trrust import TRRUSTParser
+from .parsers.chea3 import ChEA3Parser
 from .downloader import DataDownloader
 from .gmt_generator import GMTGenerator
 from .species_registry import SpeciesRegistry, SpeciesEntry
 from .goa_fetcher import GOAFetcher
+from .wikipathways_fetcher import WikiPathwaysFetcher
+from .trrust_fetcher import TRRUSTFetcher
 
 logger = logging.getLogger(__name__)
 
@@ -832,6 +837,349 @@ class DatabaseBuilder:
         return str(outdir)
 
     # ============================
+    # 辅助方法：获取 GO 版本和 gene_info 路径
+    # ============================
+    def _get_go_version(self) -> Optional[str]:
+        """获取最新的 GO 版本号
+
+        Returns:
+            str: GO 版本号（如 "GO20250101"），未找到则返回 None
+        """
+        downloader = DataDownloader(root_dir=str(self.root_dir))
+        return downloader.get_latest_go_version()
+
+    def _get_gene_info_path(self) -> Optional[Path]:
+        """从 GO 目录查找 gene_info.gz 文件路径
+
+        Returns:
+            Path: gene_info.gz 文件路径，未找到则返回 None
+        """
+        go_version = self._get_go_version()
+        if go_version is None:
+            return None
+
+        gene_info_path = self.basic_dir / "go" / go_version / "gene_info.gz"
+        if gene_info_path.exists():
+            return gene_info_path
+
+        return None
+
+    def _load_valid_genes(self, gene_info_path: str, taxid: int) -> Optional[set]:
+        """从 gene_info.gz 加载指定 taxid 的有效基因符号集合
+
+        Args:
+            gene_info_path: gene_info.gz 文件路径
+            taxid: NCBI Taxonomy ID
+
+        Returns:
+            有效基因符号集合，失败则返回 None
+        """
+        taxid_str = str(taxid)
+        valid_genes = set()
+        try:
+            with gzip.open(gene_info_path, 'rt', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith('#'):
+                        continue
+                    parts = line.split('\t')
+                    if len(parts) < 3:
+                        continue
+                    if parts[0] == taxid_str:
+                        gene_symbol = parts[2]
+                        if gene_symbol and gene_symbol != '-':
+                            valid_genes.add(gene_symbol)
+            logger.info("从 gene_info.gz 加载了 %d 个有效基因 (taxid=%s)",
+                        len(valid_genes), taxid_str)
+            return valid_genes
+        except Exception as e:
+            logger.warning("加载 gene_info.gz 失败: %s", e)
+            return None
+
+    # ============================
+    # WikiPathways 数据库构建
+    # ============================
+    def build_wikipathways(self, species: str, taxid: int,
+                           wikipathways_version: Optional[str] = None) -> str:
+        """构建指定物种的 WikiPathways 数据库
+
+        从 database/basic/wikipathways/WP{version}/ 中读取下载的 GMT 文件，
+        使用 WikiPathwaysParser 生成标准格式的数据库文件。
+
+        对应 v1 的 wikipathways.R 脚本。
+
+        Args:
+            species: 物种缩写（如 hsa, mmu）
+            taxid: NCBI 物种分类学 ID（如 9606）
+            wikipathways_version: WikiPathways 版本号（YYYYMMDD 格式），
+                                  默认自动使用最新版本
+
+        Returns:
+            str: 输出目录路径
+
+        Raises:
+            FileNotFoundError: 当基础数据目录或 GMT 文件不存在时
+            ValueError: 当无法找到物种对应的拉丁名时
+        """
+        # 获取拉丁名
+        latin_name = WikiPathwaysFetcher.get_latin_name(species)
+        if latin_name is None:
+            raise ValueError(
+                f"无法找到物种 {species} 对应的拉丁名，"
+                f"WikiPathways 不支持该物种"
+            )
+
+        # 确定版本号
+        if wikipathways_version is None:
+            fetcher = WikiPathwaysFetcher(basic_dir=str(self.basic_dir))
+            versions = fetcher.list_cached_versions()
+            if not versions:
+                raise FileNotFoundError(
+                    "未找到 WikiPathways 基础数据。请先运行 download 下载数据：\n"
+                    "  allenricher download wikipathways\n"
+                    "  或\n"
+                    "  python -m allenricher.cli download -d wikipathways"
+                )
+            wikipathways_version = versions[-1]  # 使用最新版本
+
+        # 输入目录
+        wp_basic = self.basic_dir / "wikipathways" / f"WP{wikipathways_version}"
+        if not wp_basic.exists():
+            raise FileNotFoundError(
+                f"WikiPathways 基础数据目录不存在: {wp_basic}\n"
+                f"可用的版本: {WikiPathwaysFetcher(basic_dir=str(self.basic_dir)).list_cached_versions()}"
+            )
+
+        # 查找 GMT 文件
+        species_filename = latin_name.replace(" ", "_")
+        gmt_filename = f"wikipathways-{wikipathways_version}-gmt-{species_filename}.gmt"
+        gmt_path = wp_basic / gmt_filename
+
+        if not gmt_path.exists():
+            raise FileNotFoundError(
+                f"WikiPathways GMT 文件不存在: {gmt_path}\n"
+                f"请确保已下载 {species} ({latin_name}) 的数据"
+            )
+
+        # 输出目录
+        date_str = datetime.now().strftime("%Y%m%d")
+        outdir = self.organism_dir / f"v{date_str}" / species
+        outdir.mkdir(parents=True, exist_ok=True)
+
+        # 获取 gene_info 路径用于 ID 转换和过滤有效基因
+        gene_info_path = self._get_gene_info_path()
+
+        print(f"\n{'='*60}")
+        print(f"构建 WikiPathways 数据库: {species} (taxid={taxid})")
+        print(f"拉丁名: {latin_name}")
+        print(f"数据源: {gmt_path}")
+        print(f"输出目录: {outdir}")
+        print(f"{'='*60}")
+
+        # 使用 WikiPathwaysParser 构建数据库
+        print("|--- 从 WikiPathways GMT 提取通路-基因矩阵...")
+        WikiPathwaysParser.build_database(
+            gmt_path=str(gmt_path),
+            output_dir=str(outdir),
+            species=species,
+            taxid=taxid,
+            gene_info_path=str(gene_info_path) if gene_info_path else None
+        )
+
+        # 验证输出文件
+        expected_files = [
+            f"{species}.WikiPathways2gene.tab.gz",
+            f"{species}.WikiPathways2disc.gz",
+        ]
+        for fname in expected_files:
+            fpath = outdir / fname
+            if fpath.exists():
+                print(f"    ✅ {fname}")
+            else:
+                print(f"    ❌ {fname} - 未生成")
+
+        print(f"\nWikiPathways 数据库构建完成 → {outdir}")
+        # 自动生成 GMT 文件
+        self.generate_gmt_files(species, str(outdir))
+        return str(outdir)
+
+    # ============================
+    # TRRUST 数据库构建
+    # ============================
+    def build_trrust(self, species: str, taxid: int) -> str:
+        """构建指定物种的 TRRUST 数据库
+
+        从 database/basic/trrust/TRRUSTv2/ 中读取 TRRUST 原始 TSV 文件，
+        使用 TRRUSTParser 生成标准格式的数据库文件。
+
+        TRRUST 仅支持 Human (hsa) 和 Mouse (mmu)。
+
+        Args:
+            species: 物种缩写（如 hsa, mmu）
+            taxid: NCBI 物种分类学 ID（如 9606）
+
+        Returns:
+            str: 输出目录路径
+
+        Raises:
+            ValueError: 物种不被 TRRUST 支持时抛出
+            FileNotFoundError: 基础数据文件不存在时抛出
+        """
+        # 检查物种支持
+        latin_name = TRRUSTFetcher.get_latin_name(species)
+        if latin_name is None:
+            raise ValueError(
+                f"TRRUST 不支持物种 '{species}'，"
+                f"支持的物种: {TRRUSTFetcher.get_supported_species()}"
+            )
+
+        # 查找 TRRUST 原始数据文件
+        trrust_raw = self.basic_dir / "trrust" / "TRRUSTv2" / f"trrust_rawdata.{species}.tsv"
+        if not trrust_raw.exists():
+            raise FileNotFoundError(
+                f"TRRUST 原始数据文件不存在: {trrust_raw}\n"
+                f"请先运行 download 下载数据：\n"
+                f"  allenricher download trrust"
+            )
+
+        # 输出目录
+        date_str = datetime.now().strftime("%Y%m%d")
+        outdir = self.organism_dir / f"v{date_str}" / species
+        outdir.mkdir(parents=True, exist_ok=True)
+
+        # 尝试加载有效基因集合用于过滤
+        gene_info_path = self._get_gene_info_path()
+        valid_genes = None
+        if gene_info_path:
+            valid_genes = self._load_valid_genes(str(gene_info_path), taxid)
+
+        print(f"\n{'='*60}")
+        print(f"构建 TRRUST 数据库: {species} (taxid={taxid})")
+        print(f"拉丁名: {latin_name}")
+        print(f"数据源: {trrust_raw}")
+        print(f"输出目录: {outdir}")
+        print(f"{'='*60}")
+
+        # 使用 TRRUSTParser 构建数据库
+        print("|--- 从 TRRUST TSV 提取 TF-target 转录调控关系...")
+        TRRUSTParser.build_database(
+            tsv_path=str(trrust_raw),
+            output_dir=str(outdir),
+            species=species,
+            valid_genes=valid_genes
+        )
+
+        # 验证输出文件
+        expected_files = [
+            f"{species}.TF2target.tab.gz",
+            f"{species}.gene2TF.tab.gz",
+            f"{species}.TF2disc.gz",
+        ]
+        for fname in expected_files:
+            fpath = outdir / fname
+            if fpath.exists():
+                print(f"    [OK] {fname}")
+            else:
+                print(f"    [MISSING] {fname} - 未生成")
+
+        print(f"\nTRRUST 数据库构建完成 -> {outdir}")
+        # 自动生成 GMT 文件
+        self.generate_gmt_files(species, str(outdir))
+        return str(outdir)
+
+    # ============================
+    # ChEA3 数据库构建
+    # ============================
+    def build_chea3(self, species: str, taxid: int,
+                    merge_method: str = "union") -> str:
+        """构建指定物种的 ChEA3 数据库
+
+        从 database/basic/chea3/ChEA3v2024/ 中读取所有 *_tf.gmt 文件，
+        使用 ChEA3Parser 合并后生成标准格式的数据库文件。
+
+        ChEA3 支持 Human (hsa)、Mouse (mmu)、Rat (rno)。
+
+        Args:
+            species: 物种缩写（如 hsa, mmu, rno）
+            taxid: NCBI 物种分类学 ID（如 9606）
+            merge_method: 合并方法，"union"（并集）或 "intersection"（交集）
+
+        Returns:
+            str: 输出目录路径
+
+        Raises:
+            FileNotFoundError: 基础数据目录或 GMT 文件不存在时抛出
+        """
+        # 添加物种警告
+        if species != "hsa":
+            print(f"|--- [警告] ChEA3 数据主要针对人类 (hsa)，当前物种 {species} 的结果可能不准确")
+            print(f"|--- 建议仅将 ChEA3 用于人类数据分析")
+
+        # 查找 ChEA3 GMT 文件
+        chea3_dir = self.basic_dir / "chea3" / "ChEA3v2024"
+        if not chea3_dir.exists():
+            raise FileNotFoundError(
+                f"ChEA3 基础数据目录不存在: {chea3_dir}\n"
+                f"请先运行 download 下载数据：\n"
+                f"  allenricher download chea3"
+            )
+
+        gmt_files = sorted(chea3_dir.glob("*_tf.gmt"))
+        if not gmt_files:
+            raise FileNotFoundError(
+                f"在 {chea3_dir} 中未找到 *_tf.gmt 文件。\n"
+                f"请先运行 download 下载数据：\n"
+                f"  allenricher download chea3"
+            )
+
+        # 输出目录
+        date_str = datetime.now().strftime("%Y%m%d")
+        outdir = self.organism_dir / f"v{date_str}" / species
+        outdir.mkdir(parents=True, exist_ok=True)
+
+        # 获取有效基因集合（从 gene_info）
+        gene_info_path = self._get_gene_info_path()
+        valid_genes = None
+        if gene_info_path:
+            valid_genes = self._load_valid_genes(str(gene_info_path), taxid)
+            if valid_genes:
+                print(f"|--- 有效基因过滤: {len(valid_genes)} 个基因")
+
+        print(f"\n{'='*60}")
+        print(f"构建 ChEA3 数据库: {species} (taxid={taxid})")
+        print(f"数据源: {chea3_dir} ({len(gmt_files)} 个 GMT 库)")
+        print(f"合并方法: {merge_method}")
+        print(f"输出目录: {outdir}")
+        print(f"{'='*60}")
+
+        # 使用 ChEA3Parser 构建数据库
+        print("|--- 从 ChEA3 GMT 文件提取 TF-target 关系...")
+        ChEA3Parser.build_database(
+            gmt_paths=[str(f) for f in gmt_files],
+            output_dir=str(outdir),
+            species=species,
+            merge_method=merge_method,
+            valid_genes=valid_genes  # 确保传递
+        )
+
+        # 验证输出文件
+        expected_files = [
+            f"{species}.ChEA3_2gene.tab.gz",
+            f"{species}.ChEA3_2disc.gz",
+        ]
+        for fname in expected_files:
+            fpath = outdir / fname
+            if fpath.exists():
+                print(f"    [OK] {fname}")
+            else:
+                print(f"    [MISSING] {fname} - 未生成")
+
+        print(f"\nChEA3 数据库构建完成 -> {outdir}")
+        # 自动生成 GMT 文件
+        self.generate_gmt_files(species, str(outdir))
+        return str(outdir)
+
+    # ============================
     # GMT 基因集文件生成
     # ============================
     def generate_gmt_files(self, species: str,
@@ -867,12 +1215,273 @@ class DatabaseBuilder:
         return generator.generate_all_gmt(species)
 
     # ============================
+    # hTFtarget 数据库构建（人类专用）
+    # ============================
+    def build_htftarget(self, species: str, taxid: int) -> str:
+        """构建 hTFtarget 数据库（人类专用）
+
+        Args:
+            species: 物种代码（如 hsa）
+            taxid: NCBI TaxID
+
+        Returns:
+            输出目录路径
+        """
+        from .parsers.htftarget import HTFtargetParser
+
+        htftarget_file = self.basic_dir / "htftarget" / "tf-target-information.txt"
+
+        if not htftarget_file.exists():
+            print(f"|--- [跳过] 未找到 hTFtarget 文件: {htftarget_file}")
+            print("|--- 请先运行: allenricher download --animaltfdb")
+            return ""
+
+        date_str = datetime.now().strftime("%Y%m%d")
+        outdir = self.organism_dir / f"v{date_str}" / species
+        outdir.mkdir(parents=True, exist_ok=True)
+
+        print(f"\n{'='*60}")
+        print(f"构建 hTFtarget 数据库: {species} (taxid={taxid})")
+        print(f"数据源: {htftarget_file}")
+        print(f"输出目录: {outdir}")
+        print(f"{'='*60}")
+
+        gene_info_path = self._get_gene_info_path()
+        valid_genes = None
+        if gene_info_path:
+            valid_genes = self._load_valid_genes(str(gene_info_path), taxid)
+
+        HTFtargetParser.build_database(
+            tsv_path=str(htftarget_file),
+            output_dir=str(outdir),
+            species=species,
+            valid_genes=valid_genes,
+        )
+
+        expected_files = [
+            f"{species}.hTF_2gene.tab.gz",
+            f"{species}.hTF_2disc.gz",
+        ]
+        for fname in expected_files:
+            fpath = outdir / fname
+            if fpath.exists():
+                print(f"    ✅ {fname}")
+            else:
+                print(f"    ❌ {fname} - 未生成")
+
+        # 对于人类，也更新注册表
+        if species == 'hsa':
+            try:
+                # 从 hTFtarget 文件获取 TF 统计
+                human_tf_to_targets, _, _ = HTFtargetParser.parse_tsv(str(htftarget_file))
+                tf_count = len(human_tf_to_targets) if human_tf_to_targets else 0
+                
+                registry = SpeciesRegistry.load_default(str(self.root_dir))
+                registry.update_animaltfdb_stats(
+                    species_code='hsa',
+                    tf_count=tf_count,
+                    mapped_target_count=0,  # hTFtarget 直接数据，非映射
+                    has_data=True
+                )
+                registry.save()
+                print(f"✅ 物种注册表已更新: hsa -> hTFtarget")
+            except Exception as e:
+                print(f"⚠️  更新物种注册表失败: {e}")
+
+        print(f"\nhTFtarget 数据库构建完成 → {outdir}")
+        return str(outdir)
+
+    # ============================
+    # AnimalTFDB 数据库构建（同源映射）
+    # ============================
+    def build_animaltfdb(self, species: str, taxid: int,
+                         species_latin: str = "") -> str:
+        """构建 AnimalTFDB 数据库（通过同源映射）
+
+        对于人类(hsa)：直接构建 hTFtarget 数据库
+        对于其他物种：通过同源映射推断TF-target关系
+
+        Args:
+            species: 物种代码（如 bta 代表牛）
+            taxid: NCBI TaxID
+            species_latin: 物种拉丁名（下划线格式，如 Bos_taurus）
+
+        Returns:
+            输出目录路径
+        """
+        from .parsers.animaltfdb import AnimalTFDBParser
+        from .parsers.htftarget import HTFtargetParser
+        from .ortholog_mapper import OrthologMapper
+
+        if species == 'hsa':
+            return self.build_htftarget(species, taxid)
+
+        if not species_latin:
+            from .species_registry import SpeciesRegistry
+            registry = SpeciesRegistry.load_default(str(self.root_dir))
+            entry = registry.query_by_kegg_code(species)
+            if entry and entry.latin_name:
+                species_latin = entry.latin_name.replace(' ', '_')
+            else:
+                print(f"|--- [错误] 无法确定物种 {species} 的拉丁名，请使用 --latin-name 参数")
+                return ""
+
+        cache_dir = self.basic_dir / "animaltfdb" / "AnimalTFDBv4.0"
+        tf_list_file = cache_dir / f"{species_latin}_TF"
+        ortholog_file = cache_dir / f"{species_latin}_ortholog_to_human"
+        htftarget_file = self.basic_dir / "htftarget" / "tf-target-information.txt"
+
+        missing = []
+        if not tf_list_file.exists():
+            missing.append(f"TF列表: {tf_list_file}")
+        if not ortholog_file.exists():
+            missing.append(f"同源映射: {ortholog_file}")
+        if not htftarget_file.exists():
+            missing.append(f"hTFtarget: {htftarget_file}")
+
+        if missing:
+            print(f"|--- [跳过] 缺少必要文件:")
+            for m in missing:
+                print(f"|---   - {m}")
+            print(f"|--- 请先运行: allenricher download --animaltfdb --species {species_latin}")
+            return ""
+
+        date_str = datetime.now().strftime("%Y%m%d")
+        outdir = self.organism_dir / f"v{date_str}" / species
+        outdir.mkdir(parents=True, exist_ok=True)
+
+        print(f"\n{'='*60}")
+        print(f"构建 AnimalTFDB 数据库: {species} ({species_latin}, taxid={taxid})")
+        print(f"策略: 同源映射 (hTFtarget → {species_latin})")
+        print(f"输出目录: {outdir}")
+        print(f"{'='*60}")
+
+        gene_info_path = self._get_gene_info_path()
+        valid_genes = None
+        if gene_info_path:
+            valid_genes = self._load_valid_genes(str(gene_info_path), taxid)
+
+        print("\n[1/3] 解析 AnimalTFDB 数据...")
+        tf_df, ortholog_map = AnimalTFDBParser.build_database(
+            tf_list_path=str(tf_list_file),
+            ortholog_path=str(ortholog_file),
+            output_dir=str(outdir),
+            species=species,
+            valid_genes=valid_genes,
+        )
+
+        print("[2/3] 解析 hTFtarget 人类TF-target关系...")
+        human_tf_to_targets, _, _ = HTFtargetParser.parse_tsv(str(htftarget_file))
+
+        print("[3/3] 执行同源映射...")
+        species_tf_set = set(tf_df['Symbol'].values) if 'Symbol' in tf_df.columns else None
+
+        mapper = OrthologMapper(
+            human_tf_to_targets=human_tf_to_targets,
+            species_to_human=ortholog_map,
+            species_tf_set=species_tf_set,
+        )
+
+        tf_to_targets, gene_to_tfs = mapper.map_tf_targets()
+
+        # 获取映射统计
+        dedup_stats = mapper.get_duplicate_stats()
+        mapping_stats = {
+            'species': species,
+            'species_latin': species_latin,
+            'total_species_genes': len(ortholog_map),
+            'total_human_tfs': len(human_tf_to_targets),
+            'species_tfs_found': len(species_tf_set) if species_tf_set else 0,
+            'mapped_tfs': len(tf_to_targets),
+            'mapped_targets': len(gene_to_tfs),
+            'avg_targets_per_tf': sum(len(t) for t in tf_to_targets.values()) / len(tf_to_targets) if tf_to_targets else 0,
+            'multi_mapping_human_genes': dedup_stats.get('multi_mapping_count', 0),
+            'coverage_ratio': len(tf_to_targets) / (len(species_tf_set) if species_tf_set else 1) * 100,
+        }
+
+        # 输出统计报告
+        print("\n" + "="*60)
+        print("映射质量统计报告")
+        print("="*60)
+        print(f"物种: {species_latin} ({species})")
+        print(f"同源映射基因数: {mapping_stats['total_species_genes']}")
+        print(f"人类TF总数: {mapping_stats['total_human_tfs']}")
+        print(f"物种TF数: {mapping_stats['species_tfs_found']}")
+        print(f"成功映射TF数: {mapping_stats['mapped_tfs']} ({mapping_stats['coverage_ratio']:.1f}% 覆盖率)")
+        print(f"推断靶基因数: {mapping_stats['mapped_targets']}")
+        print(f"平均每TF靶基因数: {mapping_stats['avg_targets_per_tf']:.1f}")
+        print(f"多对一映射人类基因数: {mapping_stats['multi_mapping_human_genes']}")
+        print("="*60)
+
+        # 低覆盖率警告
+        if mapping_stats['coverage_ratio'] < 50:
+            print(f"\n警告: TF映射覆盖率仅 {mapping_stats['coverage_ratio']:.1f}%，")
+            print(f"   可能原因: 该物种与人类亲缘关系较远，直系同源映射有限。")
+            print(f"   建议: 考虑使用 motif 扫描方法补充预测。")
+
+        # 保存统计到文件
+        import json
+        stats_file = outdir / f"{species}.AnimalTFDB_mapping_stats.json"
+        with open(stats_file, 'w', encoding='utf-8') as f:
+            json.dump(mapping_stats, f, indent=2, ensure_ascii=False)
+        print(f"统计报告已保存: {stats_file}")
+
+        if not tf_to_targets:
+            print("|--- [警告] 同源映射结果为空，无法构建TF-target关系")
+            return str(outdir)
+
+        OrthologMapper.build_mapped_database(
+            tf_to_targets=tf_to_targets,
+            gene_to_tfs=gene_to_tfs,
+            species_tf_df=tf_df,
+            output_dir=str(outdir),
+            species=species,
+        )
+
+        expected_files = [
+            f"{species}.AnimalTFDB_2tf.tab.gz",
+            f"{species}.AnimalTFDB_2disc.gz",
+            f"{species}.AnimalTFDB_ortholog.gz",
+            f"{species}.AnimalTFDB_2gene.tab.gz",
+            f"{species}.AnimalTFDB_mapped_2disc.gz",
+        ]
+        for fname in expected_files:
+            fpath = outdir / fname
+            if fpath.exists():
+                print(f"    ✅ {fname}")
+            else:
+                print(f"    ❌ {fname} - 未生成")
+
+        # 自动更新物种注册表
+        try:
+            registry = SpeciesRegistry.load_default(str(self.root_dir))
+            
+            # 统计数据
+            tf_count = len(tf_to_targets) if tf_to_targets else 0
+            mapped_target_count = len(gene_to_tfs) if gene_to_tfs else 0
+            
+            registry.update_animaltfdb_stats(
+                species_code=species,
+                tf_count=tf_count,
+                mapped_target_count=mapped_target_count,
+                has_data=True
+            )
+            registry.save()
+            print(f"✅ 物种注册表已更新: {species} -> AnimalTFDB")
+        except Exception as e:
+            print(f"⚠️  更新物种注册表失败: {e}")
+
+        print(f"\nAnimalTFDB 数据库构建完成 → {outdir}")
+        return str(outdir)
+
+    # ============================
     # 一键构建（对应 make_speciesDB）
     # ============================
     def build_species_db(self, species: str, taxid: int,
                          databases: List[str] = None,
                          go_version: Optional[str] = None,
-                         reactome_version: Optional[str] = None) -> str:
+                         reactome_version: Optional[str] = None,
+                         **kwargs) -> str:
         """一键构建指定物种的所有数据库
 
         对应 v1 的 make_speciesDB 脚本。
@@ -940,6 +1549,17 @@ class DatabaseBuilder:
                         self.build_disgenet(taxid, go_version)
                     else:
                         print(f"|--- [跳过] DisGeNET 仅支持人类 (hsa)")
+                elif db_upper == 'WIKIPATHWAYS':
+                    self.build_wikipathways(species, taxid)
+                elif db_upper == 'TRRUST':
+                    self.build_trrust(species, taxid)
+                elif db_upper == 'CHEA3':
+                    self.build_chea3(species, taxid)
+                elif db_upper == 'ANIMALTFDB':
+                    latin_name = kwargs.get('latin_name', '')
+                    self.build_animaltfdb(species, taxid, species_latin=latin_name)
+                elif db_upper == 'HTFTARGET':
+                    self.build_htftarget(species, taxid)
                 else:
                     print(f"|--- [警告] 未知数据库: {db_name}")
             except Exception as e:

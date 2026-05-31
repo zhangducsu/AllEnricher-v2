@@ -12,6 +12,8 @@ import logging
 from pathlib import Path
 from typing import Dict, List, Optional, Set
 
+import pandas as pd
+
 logger = logging.getLogger(__name__)
 
 
@@ -188,6 +190,11 @@ class DatabaseManager:
             'REACTOME': 'Reactome',
             'DO': 'DO',
             'DISGENET': 'CUI',  # DisGeNET 使用 CUI 前缀
+            'WIKIPATHWAYS': 'WikiPathways',
+            'TRRUST': 'TF2target',  # TRRUST 使用 TF2target 前缀
+            'CHEA3': 'ChEA3_2gene',  # ChEA3 使用 ChEA3_2gene 前缀
+            'ANIMALTFDB': 'AnimalTFDB_2gene',
+            'HTFTARGET': 'hTF_2gene',
         }
         prefix = name_to_prefix.get(name.upper(), name)
 
@@ -315,6 +322,7 @@ class DatabaseManager:
             'REACTOME': 'Reactome',
             'DO': 'DO',
             'DISGENET': 'CUI',
+            'WIKIPATHWAYS': 'WikiPathways',
         }
         prefix = name_to_prefix.get(db_name.upper(), db_name)
 
@@ -465,7 +473,7 @@ class DatabaseManager:
             species_code: KEGG 物种代码（如 'hsa'），用于从 KEGG_CODE_TO_TAXID 推断 taxid
 
         Returns:
-            Set[str]: 全基因组基因 ID 集合
+            Set[str]: 全基因组 Gene Symbol 集合（第3列，与 GO/KEGG 注释标识符一致）
         """
         # 如果提供了 species_code，尝试从中推断 taxid
         if taxid is None and species_code is not None:
@@ -501,19 +509,158 @@ class DatabaseManager:
                 return set()
 
         genes = set()
+        # 只包含真正的基因类型，排除 biological-region（基因组区域，非基因）、pseudo（假基因）
+        _VALID_GENE_TYPES = frozenset({
+            "protein-coding", "ncRNA", "snoRNA", "rRNA", "tRNA", "snRNA",
+            "scRNA", "other",
+        })
         with gzip.open(genome_file, "rt", encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if not line or line.startswith("#"):
                     continue
                 parts = line.split("\t")
-                if len(parts) >= 2:
+                if len(parts) >= 10:
                     file_taxid = parts[0]
-                    gene_id = parts[1]
-                    # 过滤只保留指定 taxid 的基因
+                    gene_symbol = parts[2]  # 第3列：Gene Symbol（如 A1BG）
+                    gene_type = parts[9]    # 第10列：基因类型
+                    # 过滤只保留指定 taxid 且是真正基因类型的条目
                     try:
-                        if int(file_taxid) == taxid:
-                            genes.add(gene_id)
+                        if int(file_taxid) == taxid and gene_type in _VALID_GENE_TYPES:
+                            if gene_symbol and gene_symbol != "-" and not gene_symbol.startswith("NEW|"):
+                                genes.add(gene_symbol)
                     except ValueError:
                         continue
         return genes
+
+    def load_trrust(self, species: Optional[str] = None) -> Optional[Dict[str, 'pd.DataFrame']]:
+        """加载 TRRUST 转录因子-靶基因数据库
+
+        查找并加载以下文件:
+        - {species}.TF2target.tab.gz: TF 到靶基因的映射
+        - {species}.gene2TF.tab.gz: 基因到 TF 的映射
+        - {species}.TF2disc.gz: TF 描述信息
+
+        Args:
+            species: 物种代码，为 None 时使用实例的 self.species
+
+        Returns:
+            包含三个 DataFrame 的字典 {'tf2target': DataFrame, 'gene2tf': DataFrame, 'tf_info': DataFrame}，
+            如果任一必要文件不存在则返回 None
+        """
+        sp = species or self.species
+        base_dir = self._find_species_dir(self.database_dir, sp)
+
+        tf2target_file = base_dir / f"{sp}.TF2target.tab.gz"
+        gene2tf_file = base_dir / f"{sp}.gene2TF.tab.gz"
+        tf2disc_file = base_dir / f"{sp}.TF2disc.gz"
+
+        # 检查必要文件是否存在
+        if not tf2target_file.exists() and not gene2tf_file.exists():
+            logger.warning("TRRUST 数据库文件不存在: %s", base_dir)
+            return None
+
+        result: Dict[str, 'pd.DataFrame'] = {}
+
+        if tf2target_file.exists():
+            result['tf2target'] = pd.read_csv(tf2target_file, sep='\t', compression='gzip')
+        else:
+            result['tf2target'] = pd.DataFrame()
+
+        if gene2tf_file.exists():
+            result['gene2tf'] = pd.read_csv(gene2tf_file, sep='\t', compression='gzip')
+        else:
+            result['gene2tf'] = pd.DataFrame()
+
+        if tf2disc_file.exists():
+            result['tf_info'] = pd.read_csv(tf2disc_file, sep='\t', compression='gzip')
+        else:
+            result['tf_info'] = pd.DataFrame()
+
+        return result
+
+    def load_chea3(self, species: Optional[str] = None) -> Optional[Dict[str, 'pd.DataFrame']]:
+        """加载 ChEA3 转录因子-靶基因数据库
+
+        查找并加载以下文件:
+        - {species}.ChEA3_2gene.tab.gz: 基因到 TF 的映射
+        - {species}.ChEA3_2disc.gz: TF 描述信息
+
+        Args:
+            species: 物种代码，为 None 时使用实例的 self.species
+
+        Returns:
+            包含两个 DataFrame 的字典 {'gene2tf': DataFrame, 'tf_info': DataFrame}，
+            如果必要文件不存在则返回 None
+        """
+        sp = species or self.species
+        base_dir = self._find_species_dir(self.database_dir, sp)
+
+        gene2tf_file = base_dir / f"{sp}.ChEA3_2gene.tab.gz"
+        tf2disc_file = base_dir / f"{sp}.ChEA3_2disc.gz"
+
+        # 检查必要文件是否存在
+        if not gene2tf_file.exists():
+            logger.warning("ChEA3 数据库文件不存在: %s", base_dir)
+            return None
+
+        result: Dict[str, 'pd.DataFrame'] = {}
+
+        result['gene2tf'] = pd.read_csv(gene2tf_file, sep='\t', compression='gzip')
+
+        if tf2disc_file.exists():
+            result['tf_info'] = pd.read_csv(tf2disc_file, sep='\t', compression='gzip')
+        else:
+            result['tf_info'] = pd.DataFrame()
+
+        return result
+
+    def load_htftarget(self, species: Optional[str] = None) -> Optional[Dict[str, pd.DataFrame]]:
+        """加载 hTFtarget 数据库
+
+        Returns:
+            {'gene2tf': DataFrame, 'tf_info': DataFrame}
+        """
+        sp = species or self.species
+        db_dir = self._find_species_db_dir(sp)
+        if db_dir is None:
+            return None
+
+        gene2tf_file = db_dir / f"{sp}.hTF_2gene.tab.gz"
+        disc_file = db_dir / f"{sp}.hTF_2disc.gz"
+
+        if not gene2tf_file.exists():
+            return None
+
+        result = {}
+        result['gene2tf'] = pd.read_csv(gene2tf_file, sep='\t', compression='gzip', low_memory=False)
+
+        if disc_file.exists():
+            result['tf_info'] = pd.read_csv(disc_file, sep='\t', compression='gzip')
+
+        return result
+
+    def load_animaltfdb(self, species: Optional[str] = None) -> Optional[Dict[str, pd.DataFrame]]:
+        """加载 AnimalTFDB 数据库（同源映射结果）
+
+        Returns:
+            {'gene2tf': DataFrame, 'tf_info': DataFrame}
+        """
+        sp = species or self.species
+        db_dir = self._find_species_db_dir(sp)
+        if db_dir is None:
+            return None
+
+        gene2tf_file = db_dir / f"{sp}.AnimalTFDB_2gene.tab.gz"
+        disc_file = db_dir / f"{sp}.AnimalTFDB_mapped_2disc.gz"
+
+        if not gene2tf_file.exists():
+            return self.load_htftarget(sp)
+
+        result = {}
+        result['gene2tf'] = pd.read_csv(gene2tf_file, sep='\t', compression='gzip', low_memory=False)
+
+        if disc_file.exists():
+            result['tf_info'] = pd.read_csv(disc_file, sep='\t', compression='gzip')
+
+        return result

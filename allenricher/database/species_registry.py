@@ -8,9 +8,14 @@
 from __future__ import annotations
 
 import csv
+import difflib
+import logging
 from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import Optional, Dict, List, Any
+from typing import Optional, Dict, List, Any, Tuple
+
+
+logger = logging.getLogger(__name__)
 
 
 # TSV 列定义，保持与文件格式一致
@@ -20,6 +25,11 @@ _FIELD_NAMES: List[str] = [
     "has_kegg", "kegg_code", "kegg_code_source", "kegg_gene_count", "kegg_pathway_count",
     "has_reactome", "reactome_code", "reactome_gene_count", "reactome_pathway_count",
     "has_do", "do_gene_count", "do_term_count",
+    "has_wikipathways", "wikipathways_data_type", "wikipathways_gene_count", "wikipathways_pathway_count",
+    "has_trrust", "trrust_tf_count", "trrust_target_count",
+    "has_chea3", "chea3_tf_count", "chea3_target_count",
+    "has_animaltfdb", "animaltfdb_tf_count", "animaltfdb_mapped_target_count",
+    "synonyms",
 ]
 
 
@@ -78,6 +88,24 @@ class SpeciesEntry:
     has_do: bool = False
     do_gene_count: Optional[int] = None
     do_term_count: Optional[int] = None
+    # WikiPathways 相关字段
+    has_wikipathways: bool = False
+    wikipathways_data_type: Optional[str] = None  # 'gmt', 'gpml', or None
+    wikipathways_gene_count: Optional[int] = None
+    wikipathways_pathway_count: Optional[int] = None
+    # TRRUST 相关字段
+    has_trrust: bool = False
+    trrust_tf_count: Optional[int] = None
+    trrust_target_count: Optional[int] = None
+    # ChEA3 相关字段
+    has_chea3: bool = False
+    chea3_tf_count: Optional[int] = None
+    chea3_target_count: Optional[int] = None
+    # AnimalTFDB 相关字段
+    has_animaltfdb: bool = False
+    animaltfdb_tf_count: Optional[int] = None
+    animaltfdb_mapped_target_count: Optional[int] = None
+    synonyms: Optional[str] = None  # 所有可检索别名，分号分隔
 
 
 class SpeciesRegistry:
@@ -99,6 +127,7 @@ class SpeciesRegistry:
         """
         self.registry_path = Path(registry_path)
         self.entries: Dict[int, SpeciesEntry] = {}
+        self._synonym_index: Dict[str, int] = {}  # 名称(小写) → taxid
 
     def load(self) -> None:
         """从 TSV 文件加载物种注册表数据
@@ -118,6 +147,8 @@ class SpeciesRegistry:
                 entry = self._parse_row(row)
                 if entry is not None:
                     self.entries[entry.taxid] = entry
+
+        self._load_synonyms_from_names_dmp()
 
     def save(self) -> None:
         """将当前注册表数据保存到 TSV 文件
@@ -175,6 +206,9 @@ class SpeciesRegistry:
     def query_by_kegg_code(self, code: str) -> Optional[SpeciesEntry]:
         """通过 KEGG 物种代码精确查询
 
+        当同一 KEGG 代码对应多个物种时，优先返回数据库支持最完整的条目
+        （按 has_go + has_kegg + has_reactome + has_do 综合评分排序）。
+
         Args:
             code: KEGG 物种缩写代码（如 'hsa'）
 
@@ -182,10 +216,148 @@ class SpeciesRegistry:
             对应的 SpeciesEntry，未找到则返回 None
         """
         code_normalized = code.strip().lower()
+        matches: List[SpeciesEntry] = []
         for entry in self.entries.values():
             if entry.has_kegg and entry.kegg_code is not None and entry.kegg_code.lower() == code_normalized:
-                return entry
-        return None
+                matches.append(entry)
+
+        if not matches:
+            return None
+        if len(matches) == 1:
+            return matches[0]
+
+        # 多个匹配：按以下优先级排序
+        # 1) 数据库支持完整度（GO+KEGG+Reactome+DO）
+        # 2) Latin 名称完整性：全属名（首词长度>1，如 "Homo"）优于缩写属名（首词长度=1，如 "H."）
+        # 3) 拉丁名单词数（更多单词的完整命名优先）
+        def _completeness_score(e: SpeciesEntry) -> int:
+            return sum([int(e.has_go), int(e.has_kegg), int(e.has_reactome), int(e.has_do)])
+        def _name_fullness(e: SpeciesEntry) -> int:
+            parts = e.latin_name.split()
+            # 全属名（首词>1字符）权重大于缩写属名
+            genus_full = 2 if len(parts) > 0 and len(parts[0]) > 1 else 1
+            return genus_full * 100 + len(parts)
+        matches.sort(key=lambda e: (_completeness_score(e), _name_fullness(e)), reverse=True)
+        logger.info(
+            f"KEGG code '{code}' 对应 {len(matches)} 个物种，"
+            f"优先选择 taxid={matches[0].taxid} ({matches[0].latin_name})"
+            f"（数据库支持评分: {_completeness_score(matches[0])}）"
+        )
+        return matches[0]
+
+    def fuzzy_search(self, query: str, cutoff: float = 0.6) -> List[Tuple[SpeciesEntry, float, str]]:
+        """模糊搜索物种（支持学名变更后的旧名匹配）"""
+        query_lower = query.strip().lower()
+        if not query_lower:
+            return []
+
+        results: List[Tuple[SpeciesEntry, float, str]] = []
+        seen_taxids = set()
+
+        # 0. 同义词/旧名映射匹配（最高优先级，仅次于精确匹配）
+        synonym_matches = self._check_synonyms(query_lower)
+        for entry, syn_name in synonym_matches:
+            if entry.taxid not in seen_taxids:
+                results.append((entry, 0.95, f'synonym:{syn_name}'))
+                seen_taxids.add(entry.taxid)
+
+        # 1. 精确匹配
+        for entry in self.entries.values():
+            if entry.taxid in seen_taxids:
+                continue
+            if entry.latin_name.lower() == query_lower:
+                results.append((entry, 1.0, 'exact'))
+                seen_taxids.add(entry.taxid)
+
+        # 2. 子串匹配
+        for entry in self.entries.values():
+            if entry.taxid in seen_taxids:
+                continue
+            if query_lower in entry.latin_name.lower():
+                score = len(query_lower) / len(entry.latin_name.lower())
+                results.append((entry, score, 'substring'))
+                seen_taxids.add(entry.taxid)
+
+        # 3. 模糊匹配（使用 difflib.SequenceMatcher）
+        for entry in self.entries.values():
+            if entry.taxid in seen_taxids:
+                continue
+            similarity = difflib.SequenceMatcher(None, query_lower, entry.latin_name.lower()).ratio()
+            if similarity >= cutoff:
+                results.append((entry, similarity, 'fuzzy'))
+                seen_taxids.add(entry.taxid)
+
+        # 按分数降序排序
+        results.sort(key=lambda x: x[1], reverse=True)
+        return results
+
+    _NAME_CLASSES_FOR_SEARCH = {
+        "scientific name", "synonym", "common name",
+        "genbank common name", "blast name", "equivalent name", "acronym",
+    }
+
+    def _load_synonyms_from_names_dmp(self) -> None:
+        """从 NCBI taxonomy names.dmp 构建同义词索引"""
+        self._synonym_index.clear()
+
+        # 确定 names.dmp 路径
+        candidates = [
+            self.registry_path.parent / "basic" / "taxonomy" / "names.dmp",
+            self.registry_path.parent.parent / "basic" / "taxonomy" / "names.dmp",
+        ]
+        names_dmp = None
+        for p in candidates:
+            if p.exists():
+                names_dmp = p
+                break
+
+        if names_dmp is None:
+            return
+
+        target_taxids = set(self.entries.keys())
+        all_synonyms: Dict[int, List[str]] = {}
+
+        with open(names_dmp, "r", encoding="utf-8") as fh:
+            for line in fh:
+                parts = line.rstrip("\n").split("\t|\t")
+                if len(parts) < 4:
+                    continue
+                taxid_str, name, _, name_class = parts[0], parts[1], parts[2], parts[3].strip().rstrip("\t|").strip()
+                try:
+                    taxid = int(taxid_str)
+                except ValueError:
+                    continue
+
+                if taxid not in target_taxids:
+                    continue
+
+                if name_class not in self._NAME_CLASSES_FOR_SEARCH:
+                    continue
+
+                name = name.strip()
+                if not name:
+                    continue
+
+                name_lower = name.lower()
+                self._synonym_index[name_lower] = taxid
+
+                all_synonyms.setdefault(taxid, []).append(name)
+
+        for taxid, names in all_synonyms.items():
+            entry = self.entries.get(taxid)
+            if entry:
+                unique_names = list(dict.fromkeys(names))
+                entry.synonyms = ";".join(unique_names)
+
+    def _check_synonyms(self, query_lower: str) -> List[Tuple[SpeciesEntry, str]]:
+        """检查查询词是否匹配 names.dmp 中的同义词/别名"""
+        results = []
+        taxid = self._synonym_index.get(query_lower)
+        if taxid is not None:
+            entry = self.entries.get(taxid)
+            if entry:
+                results.append((entry, query_lower))
+        return results
 
     def filter_by_databases(
         self,
@@ -193,6 +365,10 @@ class SpeciesRegistry:
         kegg: Optional[bool] = None,
         reactome: Optional[bool] = None,
         do: Optional[bool] = None,
+        wikipathways: Optional[bool] = None,
+        trrust: Optional[bool] = None,
+        chea3: Optional[bool] = None,
+        animaltfdb: Optional[bool] = None,
     ) -> List[SpeciesEntry]:
         """按数据库覆盖状态过滤物种
 
@@ -203,6 +379,10 @@ class SpeciesRegistry:
             kegg: 是否要求有 KEGG 数据
             reactome: 是否要求有 Reactome 数据
             do: 是否要求有 DO 数据
+            wikipathways: 是否要求有 WikiPathways 数据
+            trrust: 是否要求有 TRRUST 数据
+            chea3: 是否要求有 ChEA3 数据
+            animaltfdb: 是否要求有 AnimalTFDB 数据
 
         Returns:
             满足所有过滤条件的 SpeciesEntry 列表
@@ -217,6 +397,14 @@ class SpeciesRegistry:
                 continue
             if do is not None and entry.has_do != do:
                 continue
+            if wikipathways is not None and entry.has_wikipathways != wikipathways:
+                continue
+            if trrust is not None and entry.has_trrust != trrust:
+                continue
+            if chea3 is not None and entry.has_chea3 != chea3:
+                continue
+            if animaltfdb is not None and entry.has_animaltfdb != animaltfdb:
+                continue
             results.append(entry)
         return results
 
@@ -230,6 +418,7 @@ class SpeciesRegistry:
             - kegg: {count, with_gene_count, with_pathway_count}
             - reactome: {count, with_gene_count, with_pathway_count}
             - do: {count, with_gene_count, with_term_count}
+            - wikipathways: {count, with_gene_count, with_pathway_count}
         """
         go_count = 0
         go_with_genes = 0
@@ -243,6 +432,15 @@ class SpeciesRegistry:
         do_count = 0
         do_with_genes = 0
         do_with_terms = 0
+        wikipathways_count = 0
+        wikipathways_with_genes = 0
+        wikipathways_with_pathways = 0
+        trrust_count = 0
+        trrust_with_tfs = 0
+        trrust_with_targets = 0
+        chea3_count = 0
+        chea3_with_tfs = 0
+        chea3_with_targets = 0
 
         for entry in self.entries.values():
             if entry.has_go:
@@ -269,6 +467,24 @@ class SpeciesRegistry:
                     do_with_genes += 1
                 if entry.do_term_count is not None:
                     do_with_terms += 1
+            if entry.has_wikipathways:
+                wikipathways_count += 1
+                if entry.wikipathways_gene_count is not None:
+                    wikipathways_with_genes += 1
+                if entry.wikipathways_pathway_count is not None:
+                    wikipathways_with_pathways += 1
+            if entry.has_trrust:
+                trrust_count += 1
+                if entry.trrust_tf_count is not None:
+                    trrust_with_tfs += 1
+                if entry.trrust_target_count is not None:
+                    trrust_with_targets += 1
+            if entry.has_chea3:
+                chea3_count += 1
+                if entry.chea3_tf_count is not None:
+                    chea3_with_tfs += 1
+                if entry.chea3_target_count is not None:
+                    chea3_with_targets += 1
 
         return {
             "total_species": len(self.entries),
@@ -291,6 +507,21 @@ class SpeciesRegistry:
                 "count": do_count,
                 "with_gene_count": do_with_genes,
                 "with_term_count": do_with_terms,
+            },
+            "wikipathways": {
+                "count": wikipathways_count,
+                "with_gene_count": wikipathways_with_genes,
+                "with_pathway_count": wikipathways_with_pathways,
+            },
+            "trrust": {
+                "count": trrust_count,
+                "with_tf_count": trrust_with_tfs,
+                "with_target_count": trrust_with_targets,
+            },
+            "chea3": {
+                "count": chea3_count,
+                "with_tf_count": chea3_with_tfs,
+                "with_target_count": chea3_with_targets,
             },
         }
 
@@ -349,6 +580,25 @@ class SpeciesRegistry:
         registry = cls(registry_path=Path(root_dir) / "supported_species.tsv")
         registry.load()
         return registry
+
+    def update_animaltfdb_stats(self, species_code: str, tf_count: int,
+                                mapped_target_count: int, has_data: bool = True) -> None:
+        """更新物种注册表中的 AnimalTFDB 统计信息
+
+        Args:
+            species_code: 物种代码（如 bta）
+            tf_count: TF 数量
+            mapped_target_count: 映射后的靶基因数量
+            has_data: 是否有数据
+        """
+        entry = self.query_by_kegg_code(species_code)
+        if entry:
+            entry.has_animaltfdb = has_data
+            entry.animaltfdb_tf_count = tf_count
+            entry.animaltfdb_mapped_target_count = mapped_target_count
+            logger.info(f"更新物种注册表: {species_code} - AnimalTFDB TF={tf_count}, targets={mapped_target_count}")
+        else:
+            logger.warning(f"物种 {species_code} 未在注册表中找到")
 
     # ------------------------------------------------------------------
     # 内部辅助方法
@@ -432,6 +682,20 @@ class SpeciesRegistry:
             has_do=self._parse_bool(row.get("has_do", "False")),
             do_gene_count=self._parse_optional_int(row.get("do_gene_count", "")),
             do_term_count=self._parse_optional_int(row.get("do_term_count", "")),
+            has_wikipathways=self._parse_bool(row.get("has_wikipathways", "False")),
+            wikipathways_data_type=self._parse_optional_str(row.get("wikipathways_data_type", "")),
+            wikipathways_gene_count=self._parse_optional_int(row.get("wikipathways_gene_count", "")),
+            wikipathways_pathway_count=self._parse_optional_int(row.get("wikipathways_pathway_count", "")),
+            has_trrust=self._parse_bool(row.get("has_trrust", "False")),
+            trrust_tf_count=self._parse_optional_int(row.get("trrust_tf_count", "")),
+            trrust_target_count=self._parse_optional_int(row.get("trrust_target_count", "")),
+            has_chea3=self._parse_bool(row.get("has_chea3", "False")),
+            chea3_tf_count=self._parse_optional_int(row.get("chea3_tf_count", "")),
+            chea3_target_count=self._parse_optional_int(row.get("chea3_target_count", "")),
+            has_animaltfdb=self._parse_bool(row.get("has_animaltfdb", "False")),
+            animaltfdb_tf_count=self._parse_optional_int(row.get("animaltfdb_tf_count", "")),
+            animaltfdb_mapped_target_count=self._parse_optional_int(row.get("animaltfdb_mapped_target_count", "")),
+            synonyms=self._parse_optional_str(row.get("synonyms", "")),
         )
 
     @staticmethod

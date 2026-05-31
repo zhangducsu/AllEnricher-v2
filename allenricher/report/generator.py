@@ -317,22 +317,32 @@ class ReportGenerator:
                 continue
 
             rows = []
+            is_gsea = 'NES' in df.columns or 'nes' in df.columns
             for idx, row in df.iterrows():
-                tid = row.get('Term_ID', 'N/A')
-                tname = row.get('Term_Name', 'N/A')
-                gcount = row.get('Gene_Count', 0)
-                rf = f"{row.get('Rich_Factor', 0):.4f}"
-                pv = f"{row.get('P_Value', 1):.2e}"
-                adjpv = f"{row.get('Adjusted_P_Value', 1):.2e}"
+                if is_gsea:
+                    tid = row.get('Term_ID', row.get('Term', row.get('ID', 'N/A')))
+                    tname = row.get('Term_Name', row.get('Description', row.get('Term_Name', 'N/A')))
+                    gcount = row.get('setSize', row.get('Gene_Count', 0))
+                    rf = f"{row.get('NES', row.get('nes', 0)):.4f}"
+                    pv = f"{row.get('p_value', row.get('NOM p-val', row.get('pvalue', row.get('P_Value', 1)))):.2e}"
+                    adjpv = f"{row.get('FDR', row.get('FDR q-val', row.get('p.adjust', row.get('Adjusted_P_Value', 1)))):.2e}"
+                    genes_str = str(row.get('matched_genes', row.get('core_enrichment', row.get('Genes', ''))))
+                else:
+                    tid = row.get('Term_ID', 'N/A')
+                    tname = row.get('Term_Name', 'N/A')
+                    gcount = row.get('Gene_Count', 0)
+                    rf = f"{row.get('Rich_Factor', 0):.4f}"
+                    pv = f"{row.get('P_Value', 1):.2e}"
+                    adjpv = f"{row.get('Adjusted_P_Value', 1):.2e}"
+                    genes_str = str(row.get('Genes', ''))
                 term_url = row.get('Term_URL', '')
-                genes_str = str(row.get('Genes', ''))
 
                 if term_url:
                     tid_cell = f'<a href="{term_url}" target="_blank">{tid}</a>'
                 else:
                     tid_cell = tid
 
-                # GeneList 作为独立可见列展示，悬停显示完整列表
+                rf_header = 'NES' if is_gsea else 'Rich Factor'
                 rows.append(
                     f'<tr><td>{tid_cell}</td><td>{tname}</td><td>{gcount}</td>'
                     f'<td>{rf}</td><td>{pv}</td><td>{adjpv}</td>'
@@ -349,7 +359,7 @@ class ReportGenerator:
                                 <th>Term ID</th>
                                 <th>Term Name</th>
                                 <th>Gene Count</th>
-                                <th>Rich Factor</th>
+                                <th>{'NES' if is_gsea else 'Rich Factor'}</th>
                                 <th>P-value</th>
                                 <th>Adj. P-value</th>
                                 <th>Gene List</th>

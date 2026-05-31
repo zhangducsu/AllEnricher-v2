@@ -39,18 +39,22 @@ class Plotter:
             - term: Term 名称
             - qvalue: 校正后 P 值
             - gene_count: 基因数量
-            - rich_factor: 富集因子（可选）
+            - rich_factor: 富集因子（可选，GSEA 时使用 NES 替代）
         """
         df = data.copy()
         result = pd.DataFrame()
+
+        # 检测是否为 GSEA 结果
+        is_gsea = 'NES' in df.columns or 'nes' in df.columns
 
         # 映射常见列名到标准列名
         column_mappings = {
             'term': ['Term_Name', 'term_name', 'Term', 'term', 'Description', 'description'],
             'qvalue': ['Adjusted_P_Value', 'adjusted_p_value', 'adjP', 'qvalue', 'Qvalue', 'FDR', 'fdr'],
-            'gene_count': ['Gene_Count', 'gene_count', 'ObservedGeneNum', 'Count', 'count'],
-            'rich_factor': ['Rich_Factor', 'rich_factor', 'RichFactor', 'richfactor'],
+            'gene_count': ['Gene_Count', 'gene_count', 'setSize', 'ObservedGeneNum', 'Count', 'count'],
         }
+        if not is_gsea:
+            column_mappings['rich_factor'] = ['Rich_Factor', 'rich_factor', 'RichFactor', 'richfactor']
 
         for std_col, possible_cols in column_mappings.items():
             for col in possible_cols:
@@ -58,15 +62,22 @@ class Plotter:
                     result[std_col] = df[col]
                     break
 
-        # 如果没有找到 rich_factor，尝试计算
-        if 'rich_factor' not in result.columns and 'gene_count' in result.columns:
-            bg_col = None
-            for col in ['Background_Count', 'background_count', 'TermGeneNum']:
+        if is_gsea:
+            # GSEA：用 NES 作为数值轴，替代 Rich_Factor
+            for col in ['NES', 'nes', 'ES', 'es']:
                 if col in df.columns:
-                    bg_col = df[col]
+                    result['rich_factor'] = df[col]
                     break
-            if bg_col is not None:
-                result['rich_factor'] = result['gene_count'] / bg_col
+        else:
+            # 如果没有找到 rich_factor，尝试计算
+            if 'rich_factor' not in result.columns and 'gene_count' in result.columns:
+                bg_col = None
+                for col in ['Background_Count', 'background_count', 'TermGeneNum']:
+                    if col in df.columns:
+                        bg_col = df[col]
+                        break
+                if bg_col is not None:
+                    result['rich_factor'] = result['gene_count'] / bg_col
 
         return result
 
@@ -79,20 +90,23 @@ class Plotter:
         Returns:
             格式化后的 DataFrame，包含以下列：
             - Term_Name: Term 名称
-            - RichFactor: 富集因子
+            - RichFactor: 富集因子（GSEA 时使用 NES 替代）
             - GeneCount: 基因数量
             - Qvalue: 校正后 P 值
         """
         df = data.copy()
         result = pd.DataFrame()
 
+        is_gsea = 'NES' in df.columns or 'nes' in df.columns
+
         # 映射常见列名到标准列名
         column_mappings = {
             'Term_Name': ['Term_Name', 'term_name', 'Term', 'term', 'Description', 'description'],
-            'RichFactor': ['Rich_Factor', 'rich_factor', 'RichFactor', 'richfactor', 'Rich Factor'],
-            'GeneCount': ['Gene_Count', 'gene_count', 'ObservedGeneNum', 'Count', 'count'],
+            'GeneCount': ['Gene_Count', 'gene_count', 'setSize', 'ObservedGeneNum', 'Count', 'count'],
             'Qvalue': ['Adjusted_P_Value', 'adjusted_p_value', 'adjP', 'qvalue', 'Qvalue', 'FDR', 'fdr'],
         }
+        if not is_gsea:
+            column_mappings['RichFactor'] = ['Rich_Factor', 'rich_factor', 'RichFactor', 'richfactor', 'Rich Factor']
 
         for std_col, possible_cols in column_mappings.items():
             for col in possible_cols:
@@ -100,15 +114,22 @@ class Plotter:
                     result[std_col] = df[col]
                     break
 
-        # 如果没有 RichFactor，尝试计算
-        if 'RichFactor' not in result.columns and 'GeneCount' in result.columns:
-            bg_col = None
-            for col in ['Background_Count', 'background_count', 'TermGeneNum']:
+        if is_gsea:
+            # GSEA：用 NES 作为气泡 X 轴，替代 RichFactor
+            for col in ['NES', 'nes', 'ES', 'es']:
                 if col in df.columns:
-                    bg_col = df[col]
+                    result['RichFactor'] = df[col]
                     break
-            if bg_col is not None:
-                result['RichFactor'] = result['GeneCount'] / bg_col
+        else:
+            # 如果没有 RichFactor，尝试计算
+            if 'RichFactor' not in result.columns and 'GeneCount' in result.columns:
+                bg_col = None
+                for col in ['Background_Count', 'background_count', 'TermGeneNum']:
+                    if col in df.columns:
+                        bg_col = df[col]
+                        break
+                if bg_col is not None:
+                    result['RichFactor'] = result['GeneCount'] / bg_col
 
         return result
 
@@ -206,7 +227,9 @@ class Plotter:
                 title=f"{database} Enrichment",
             )
             if fig:
-                fig.savefig(output_path, dpi=dpi, bbox_inches='tight')
+                # 使用 save_figure_dual 同时生成 PNG 和 PDF
+                from .plot_theme import save_figure_dual
+                save_figure_dual(fig, str(output_path), dpi=dpi)
                 import matplotlib.pyplot as plt
                 plt.close(fig)
         except Exception as e:

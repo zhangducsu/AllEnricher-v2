@@ -38,3 +38,30 @@ Thumbs.db
 
 # Species lookup cache
 .species_cache.json
+
+# Test outputs and artifacts
+test_output/
+test_artifacts/
+test_reports/
+test_e2e_2026/
+gsea_test_output/
+test_wikipathways_output/
+database_test/
+test_results.xml
+test_output.log
+serve_test_*.txt
+temp_*.txt
+
+# Temporary input data
+00_input_data/
+test_data/custom_species/
+test_data/e2e_results/
+test_data/custom_db_test_report.json
+
+# Root-level temp/report files
+*_report.md
+*_REPORT.md
+test_genes.txt
+allenricher.yaml
+c002_custom_config.yaml
+test_wikipathways_support.py

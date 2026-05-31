@@ -756,6 +756,8 @@ class PlotTheme:
         rc_params = {
             # === 字体配置 ===
             "font.family": preset.font_family,
+            "font.sans-serif": ["Helvetica", "Arial", "DejaVu Sans", "Liberation Sans",
+                                 "Tahoma", "Verdana", "sans-serif"],
             "font.weight": preset.font_weight,
             "font.size": preset.font_size,
             "axes.titlesize": preset.title_size,

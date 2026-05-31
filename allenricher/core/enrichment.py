@@ -30,8 +30,9 @@ from __future__ import annotations
 import os
 import csv
 import logging
+import collections
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple, Any
 from pathlib import Path
 import math
@@ -111,7 +112,6 @@ class EnrichmentResult:
     富集分析结果的数据容器
 
     用于封装单个富集条目（term）的所有统计指标和元信息。
-    该类使用 dataclass 装饰器自动生成 __init__、__repr__ 等方法。
 
     属性说明：
         term_id: 条目ID（如 GO:0008150）
@@ -120,73 +120,92 @@ class EnrichmentResult:
         pvalue: 原始 p 值
         adjusted_pvalue: 多重检验校正后的 p 值（如 FDR q 值）
         gene_count: 在该条目中富集到的基因数量
-        background_count: 背景基因集中属于该条目的基因数量
-        expected_count: 期望基因数量（基于背景比例计算）
-        rich_factor: 富集因子（观察值/期望值）
+        background_count: 背景基因集中属于该条目的基因数量（仅 ORA）
+        expected_count: 期望基因数量（仅 ORA）
+        rich_factor: 富集因子（仅 ORA）
         gene_list: 富集到的基因列表
-        gene_ratio: 基因比例字符串（如 "10/500"，格式为 "命中数/基因列表总数"）
-        background_ratio: 背景比例字符串（如 "50/20000"，格式为 "背景命中数/背景总数"）
-        term_url: 条目的数据库链接 URL（如 https://amigo.geneontology.org/amigo/term/GO:0008150）
+        gene_ratio: 基因比例字符串（仅 ORA）
+        background_ratio: 背景比例字符串（仅 ORA）
+        term_url: 条目的数据库链接 URL
         nes: 归一化富集分数（Normalized Enrichment Score，仅 GSEA）
         es: 富集分数（Enrichment Score，仅 GSEA）
-        fdr: FDR q 值（仅 GSEA，基于置换检验计算）
-        leading_edge: 前沿基因列表（仅 GSEA，对富集分数贡献最大的基因）
+        fdr: FDR q 值（仅 GSEA）
+        leading_edge: 前沿基因列表（仅 GSEA）
+        set_size: 基因集大小（经过 min/max 过滤后，仅 GSEA）
+        rank_at_max: 达到最大 ES 时的排位（仅 GSEA）
     """
-    term_id: str  # 条目唯一标识符
-    term_name: str  # 条目名称
-    database: str  # 来源数据库名称
-    pvalue: float  # 原始 p 值（未校正）
-    adjusted_pvalue: float  # 多重检验校正后的 p 值
-    gene_count: int  # 在该条目中命中的基因数量
-    background_count: int  # 背景基因集中属于该条目的基因数量
-    expected_count: float  # 期望命中基因数 = (background_count / background_total) * gene_total
-    rich_factor: float  # 富集因子 = gene_count / expected_count
-    gene_list: List[str]  # 命中的基因名称列表
-    gene_ratio: str  # 基因比例，格式 "命中数/基因列表总数"，如 "10/500"
-    background_ratio: str  # 背景比例，格式 "背景命中数/背景总数"，如 "50/20000"
-    term_url: str = ""  # 条目的数据库链接 URL，默认为空字符串
+    term_id: str
+    term_name: str
+    database: str
+    pvalue: float
+    adjusted_pvalue: float
+    gene_count: int
+    background_count: int = 0
+    expected_count: float = 0.0
+    rich_factor: float = 0.0
+    gene_list: List[str] = field(default_factory=list)
+    gene_ratio: str = ""
+    background_ratio: str = ""
+    term_url: str = ""
 
     # GSEA 特有字段
-    nes: Optional[float] = None  # 归一化富集分数（Normalized Enrichment Score）
-    es: Optional[float] = None  # 富集分数（Enrichment Score）
-    fdr: Optional[float] = None  # FDR q 值（基于置换检验计算）
-    leading_edge: Optional[List[str]] = None  # 前沿基因（对 ES 贡献最大的基因子集）
+    nes: Optional[float] = None
+    es: Optional[float] = None
+    fdr: Optional[float] = None
+    leading_edge: Optional[List[str]] = None
+    set_size: Optional[int] = None
+    rank_at_max: Optional[int] = None
+    fwerp: Optional[float] = None          # gseapy: FWER p-val
+    tag_pct: str = ""                       # gseapy: Tag %（如 "6/37"）
+    gene_pct: str = ""                      # gseapy: Gene %（如 "30.00%"）
     
     def to_dict(self) -> Dict[str, Any]:
         """
         将富集结果转换为字典格式，便于序列化和导出
 
         返回值:
-            Dict[str, Any]: 包含所有富集统计指标的字典，键名使用大写下划线命名
-                           （如 "Term_ID"、"P_Value"），基因列表以分号分隔。
-                           GSEA 特有字段（NES、ES、FDR、Leading_Edge）仅在
-                           有值时才包含在字典中。
+            Dict[str, Any]: 包含所有富集统计指标的字典。
+                           对于 GSEA 结果（nes 不为 None），
+                           列名对齐 gseapy.res2d 标准输出：
+                           Term, Description, setSize, ES, NES,
+                           NOM p-val, FDR q-val, FWER p-val,
+                           rank, Tag %, Gene %, Lead_genes,
+                           core_enrichment
+                           对于 ORA 结果，输出全部 ORA 字段。
         """
-        result = {
-            "Term_ID": self.term_id,
-            "Term_Name": self.term_name,
-            "Database": self.database,
-            "P_Value": self.pvalue,
-            "Adjusted_P_Value": self.adjusted_pvalue,
-            "Gene_Count": self.gene_count,
-            "Background_Count": self.background_count,
-            "Expected_Count": round(self.expected_count, 4),  # 保留4位小数
-            "Rich_Factor": round(self.rich_factor, 4),  # 保留4位小数
-            "Gene_Ratio": self.gene_ratio,
-            "Background_Ratio": self.background_ratio,
-            "Term_URL": self.term_url,  # 条目的数据库链接 URL
-            "Genes": ";".join(self.gene_list),  # 基因列表以分号连接为字符串
-        }
+        is_gsea = self.nes is not None
         
-        # 仅在 GSEA 分析时输出以下字段
-        if self.nes is not None:
-            result["NES"] = round(self.nes, 4)
-        if self.es is not None:
-            result["ES"] = round(self.es, 4)
-        if self.fdr is not None:
-            result["FDR"] = round(self.fdr, 4)
-        if self.leading_edge is not None:
-            result["Leading_Edge"] = ";".join(self.leading_edge)  # 前沿基因以分号连接
+        result = collections.OrderedDict() if is_gsea else {}
+        
+        if is_gsea:
+            result["Term_ID"] = self.term_id
+            result["Term_Name"] = self.term_name
+            result["Database"] = self.database
+            result["setSize"] = self.set_size if self.set_size is not None else self.gene_count
+            result["ES"] = round(self.es, 4) if self.es is not None else 0.0
+            result["NES"] = round(self.nes, 4) if self.nes is not None else 0.0
+            result["p_value"] = self.pvalue
+            result["FDR"] = self.fdr if self.fdr is not None else self.adjusted_pvalue
+            result["rank"] = self.rank_at_max if self.rank_at_max is not None else 0
+            result["Tag %"] = self.tag_pct if self.tag_pct else ""
+            result["Gene %"] = self.gene_pct if self.gene_pct else ""
+            result["Lead_genes"] = ";".join(self.leading_edge) if self.leading_edge else ""
+            result["matched_genes"] = ";".join(self.gene_list)
+            result["Term_URL"] = self.term_url
+        else:
+            result["Term_ID"] = self.term_id
+            result["Term_Name"] = self.term_name
+            result["Database"] = self.database
+            result["P_Value"] = self.pvalue
+            result["Adjusted_P_Value"] = self.adjusted_pvalue
+            result["Gene_Count"] = self.gene_count
+            result["Background_Count"] = self.background_count
+            result["Expected_Count"] = round(self.expected_count, 4)
+            result["Rich_Factor"] = round(self.rich_factor, 4)
+            result["Gene_Ratio"] = self.gene_ratio
+            result["Background_Ratio"] = self.background_ratio
+            result["Term_URL"] = self.term_url
+            result["Genes"] = ";".join(self.gene_list)
             
         return result
 
@@ -605,66 +624,56 @@ class GSEA(EnrichmentMethodBase):
         ranked_genes: List[str],
         gene_set: Set[str],
         gene_weights: Optional[Dict[str, float]] = None
-    ) -> Tuple[float, List[str]]:
+    ) -> Tuple[float, List[str], int]:
         """
         计算基因集的富集分数（Enrichment Score, ES）
 
         算法步骤：
         1. 确定基因集中与排序列表有交集的基因数（nh）
         2. 计算命中增量（hit_inc）和未命中增量（miss_inc）
-           - hit_inc = 1 / N_hit，其中 N_hit 是基因集中基因的权重之和
-           - miss_inc = 1 / (N - nh)，其中 N 是排序列表的总基因数
-        3. 从排序列表顶部开始遍历，维护一个累积分数（running_sum）：
-           - 遇到属于基因集的基因：running_sum += hit_inc * weight
-           - 遇到不属于基因集的基因：running_sum -= miss_inc
-        4. ES = 遍历过程中 running_sum 的最大值
-        5. 前沿基因（leading edge）= 达到最大 running_sum 时已遍历的基因中，
-           属于该基因集的基因
+        3. 从排序列表顶部开始遍历，维护一个累积分数（running_sum）
+        4. ES = 遍历过程中 running_sum 的最大绝对值（正值）
+        5. 前沿基因（leading edge）= 达到最大 ES 时已遍历的基因中，属于该基因集的基因
 
         参数:
-            ranked_genes: 按某种指标排序的基因列表（如按 log2 fold change 降序排列）
+            ranked_genes: 按某种指标排序的基因列表
             gene_set: 当前条目（term）所包含的基因集合
-            gene_weights: 可选的基因权重字典（如 log2 fold change 值），
-                         如果未提供则使用等权重 1.0
+            gene_weights: 可选的基因权重字典
 
         返回值:
-            Tuple[float, List[str]]: 元组，包含两个元素：
-                - enrichment_score: 富集分数（ES），正值表示在排序列表顶部富集
-                - leading_edge_genes: 前沿基因列表（对 ES 贡献最大的基因）
+            Tuple[float, List[str], int]: (ES, leading_edge_genes, rank_at_max)
+                - enrichment_score: 富集分数（ES）
+                - leading_edge_genes: 前沿基因列表
+                - rank_at_max: 达到最大 ES 时排序列表中的排位（1-based）
         """
-        n = len(ranked_genes)  # 排序列表中的基因总数
-        nh = len(gene_set & set(ranked_genes))  # 基因集中出现在排序列表中的基因数
-        
-        # 如果没有交集，ES 为 0
+        n = len(ranked_genes)
+        nh = len(gene_set & set(ranked_genes))
+
         if nh == 0:
-            return 0.0, []
-        
-        # 初始化累积分数和相关变量
-        running_sum = 0.0  # 累积富集分数
-        max_es = 0.0  # 最大富集分数（即 ES）
-        leading_edge = []  # 前沿基因（临时存储）
-        
-        # 计算命中增量和未命中增量
-        # N_hit：基因集中基因的权重绝对值之和（有权重时）或基因数量（无权重时）
+            return 0.0, [], 0
+
+        running_sum = 0.0
+        max_es = 0.0
+        rank_at_max = 0
+        leading_edge_indices = []
+
         nr = sum(abs(gene_weights.get(g, 1.0)) for g in gene_set if g in gene_weights) if gene_weights else nh
-        hit_inc = 1.0 / nr if nr > 0 else 0  # 命中时的增量
-        miss_inc = 1.0 / (n - nh) if (n - nh) > 0 else 0  # 未命中时的减量
-        
-        # 遍历排序列表，计算累积富集分数
+        hit_inc = 1.0 / nr if nr > 0 else 0
+        miss_inc = 1.0 / (n - nh) if (n - nh) > 0 else 0
+
         for i, gene in enumerate(ranked_genes):
             if gene in gene_set:
-                # 命中：基因属于当前基因集
                 weight = abs(gene_weights.get(gene, 1.0)) if gene_weights else 1.0
-                running_sum += hit_inc * weight  # 增加加权命中增量
+                running_sum += hit_inc * weight
                 if running_sum > max_es:
-                    max_es = running_sum  # 更新最大富集分数
-                    leading_edge = ranked_genes[:i+1]  # 记录当前前沿基因位置
+                    max_es = running_sum
+                    rank_at_max = i + 1  # 1-based rank
+                    leading_edge_indices = list(range(i + 1))
             else:
-                # 未命中：基因不属于当前基因集
-                running_sum -= miss_inc  # 减少未命中增量
-        
-        # 从前沿基因中筛选出属于当前基因集的基因
-        return max_es, [g for g in leading_edge if g in gene_set]
+                running_sum -= miss_inc
+
+        leading_edge = [ranked_genes[idx] for idx in leading_edge_indices if ranked_genes[idx] in gene_set]
+        return max_es, leading_edge, rank_at_max
 
     def _run_permutation_test(
         self,
@@ -707,7 +716,7 @@ class GSEA(EnrichmentMethodBase):
             # 随机打乱基因标签顺序（仅打乱排序列表，不改变基因集本身）
             permuted_genes = rng.permutation(ranked_array).tolist()
             # 计算打乱后的富集分数（只取 ES，忽略 leading_edge）
-            permuted_es, _ = self.calculate_enrichment_score(
+            permuted_es, _, _ = self.calculate_enrichment_score(
                 permuted_genes, gene_set, gene_weights
             )
             # 统计打乱后 ES 大于等于观察 ES 的次数
@@ -723,12 +732,12 @@ class GSEA(EnrichmentMethodBase):
         ranked_genes: List[str],
         gene_set: Set[str],
         gene_weights: Optional[Dict[str, float]] = None
-    ) -> Tuple[float, float, float, List[str]]:
+    ) -> Tuple[float, float, float, List[str], int]:
         """
         计算基于置换检验的归一化富集分数 (NES)
 
         步骤:
-        1. 计算实际 ES 和 leading edge
+        1. 计算实际 ES、leading edge 和 rank_at_max
         2. 进行 self.permutations 次置换，每次打乱基因标签重新计算 ES
         3. 分别计算正向和负向 null ES 分布的均值
         4. NES = ES / mean(|ES_null|)（正负分别归一化）
@@ -740,16 +749,16 @@ class GSEA(EnrichmentMethodBase):
             gene_weights: 可选的基因权重字典
 
         返回值:
-            Tuple[float, float, float, List[str]]: (ES, NES, pvalue, leading_edge_genes)
+            Tuple[float, float, float, List[str], int]: (ES, NES, pvalue, leading_edge_genes, rank_at_max)
         """
-        # 步骤 1: 计算实际 ES 和前沿基因
-        es, leading_edge = self.calculate_enrichment_score(
+        # 步骤 1: 计算实际 ES、前沿基因和 rank_at_max
+        es, leading_edge, rank_at_max = self.calculate_enrichment_score(
             ranked_genes, gene_set, gene_weights
         )
 
         # 空基因集或无交集的情况
         if es == 0.0:
-            return 0.0, 0.0, 1.0, []
+            return 0.0, 0.0, 1.0, [], 0
 
         # 步骤 2: 进行置换检验
         rng = np.random.default_rng(self.seed)
@@ -760,7 +769,7 @@ class GSEA(EnrichmentMethodBase):
 
         for _ in range(self.permutations):
             permuted_genes = rng.permutation(ranked_array).tolist()
-            permuted_es, _ = self.calculate_enrichment_score(
+            permuted_es, _, _ = self.calculate_enrichment_score(
                 permuted_genes, gene_set, gene_weights
             )
 
@@ -787,7 +796,7 @@ class GSEA(EnrichmentMethodBase):
         # 步骤 5: pvalue = 置换检验中 |ES_null| >= |ES| 的比例
         pvalue = (count_ge + 1) / (self.permutations + 1)
 
-        return es, nes, pvalue, leading_edge
+        return es, nes, pvalue, leading_edge, rank_at_max
 
     def calculate_enrichment(
         self,
@@ -825,19 +834,20 @@ class GSEA(EnrichmentMethodBase):
         """
         # 检查基因集大小是否在允许范围内
         overlap = gene_set & term_genes
-        if len(overlap) < self.min_size or len(overlap) > self.max_size:
+        set_size = len(overlap)
+        if set_size < self.min_size or set_size > self.max_size:
             return None
 
         # 如果未提供排序列表，使用背景基因集作为默认排序列表
         if ranked_genes is None:
             ranked_genes = list(background_set)
 
-        # 使用基于置换检验的归一化方法计算 ES、NES、pvalue 和前沿基因
-        es, nes, pvalue, leading_edge = self.calculate_normalized_es(
+        # 使用基于置换检验的归一化方法计算 ES、NES、pvalue、前沿基因和 rank_at_max
+        es, nes, pvalue, leading_edge, rank_at_max = self.calculate_normalized_es(
             ranked_genes, term_genes, gene_weights
         )
 
-        # FDR 暂时设为 pvalue，后续在 adjust_pvalues 中统一进行 BH 校正
+        # FDR 初始设为 pvalue，adjust_pvalues() 中会统一进行 BH 校正
         fdr = pvalue
 
         # 生成条目的数据库链接 URL
@@ -850,18 +860,15 @@ class GSEA(EnrichmentMethodBase):
             database=database,
             pvalue=pvalue,
             adjusted_pvalue=pvalue,
-            gene_count=len(overlap),
-            background_count=len(term_genes),
-            expected_count=0,  # GSEA 不使用期望值概念
-            rich_factor=0,  # GSEA 不使用富集因子概念
+            gene_count=set_size,
             gene_list=list(overlap),
-            gene_ratio=f"{len(overlap)}/{len(gene_set)}",
-            background_ratio=f"{len(term_genes)}/{len(background_set)}",
-            term_url=term_url,  # 条目的数据库链接 URL
-            nes=nes,  # 归一化富集分数（基于置换检验）
-            es=es,  # 原始富集分数
-            fdr=fdr,  # FDR q 值
-            leading_edge=leading_edge  # 前沿基因
+            term_url=term_url,
+            nes=nes,
+            es=es,
+            fdr=fdr,
+            leading_edge=leading_edge,
+            set_size=set_size,
+            rank_at_max=rank_at_max,
         )
 
     def analyze_matrix(
@@ -1228,15 +1235,14 @@ class EnrichmentAnalyzer:
         根据配置创建对应的富集分析方法实例
 
         返回值:
-            EnrichmentMethodBase: 富集分析方法实例（FisherExactTest / HypergeometricTest / GSEA）
+            EnrichmentMethodBase: 富集分析方法实例（HypergeometricTest / GSEA / SSGSEA / GSVA）
 
         异常:
             ValueError: 当配置中指定了未知的方法名称时抛出
         """
         # 方法名称到实例的映射表
         methods = {
-            EnrichmentMethod.FISHER.value: FisherExactTest(),  # Fisher 精确检验
-            EnrichmentMethod.HYPERGEOMETRIC.value: HypergeometricTest(),  # 超几何检验
+            EnrichmentMethod.HYPERGEOMETRIC.value: HypergeometricTest(),  # 超几何检验（ORA默认方法）
             EnrichmentMethod.GSEA.value: GSEA(  # GSEA 基因集富集分析
                 permutations=self.config.gsea_permutations,
                 min_size=self.config.gsea_min_size,
@@ -1320,6 +1326,53 @@ class EnrichmentAnalyzer:
         
         logger.info(f"从 {file_path} 加载了 {len(genes)} 个基因")
         return genes
+    
+    def load_ranked_gene_list(self, file_path: str) -> List[Tuple[str, float]]:
+        """
+        加载排序基因列表文件（GSEA 专用）
+
+        文件格式要求：TSV格式，包含以下列：
+        - gene: 基因名称（必需）
+        - weight: 排序权重值（必需，如 log2 fold change）
+        - rank: 可选，排序位置
+
+        参数:
+            file_path: 排序基因列表文件的路径
+
+        返回值:
+            List[Tuple[str, float]]: (基因名称, 权重值) 元组列表，按 rank 升序排列
+
+        异常:
+            FileNotFoundError: 文件不存在时抛出
+            ValueError: 文件格式不正确时抛出
+        """
+        file_path_obj = Path(file_path)
+        if not file_path_obj.exists():
+            raise FileNotFoundError(f"排序基因列表文件不存在: {file_path}")
+        
+        df = pd.read_csv(file_path_obj, sep='\t')
+        
+        # 检查必需列
+        if 'gene' not in df.columns:
+            raise ValueError(
+                f"排序基因列表文件必须包含 'gene' 列。"
+                f"当前列名: {list(df.columns)}"
+            )
+        
+        # 检查 weight 列，如果不存在则使用默认值 1.0
+        if 'weight' not in df.columns:
+            logger.warning("排序基因列表文件未包含 'weight' 列，默认使用权重 1.0")
+            df['weight'] = 1.0
+        
+        # 按 rank 列排序（如果存在）
+        if 'rank' in df.columns:
+            df = df.sort_values('rank')
+        
+        # 构建 (基因, 权重) 元组列表
+        result = list(zip(df['gene'].tolist(), df['weight'].tolist()))
+        
+        logger.info(f"从 {file_path} 加载了 {len(result)} 个排序基因")
+        return result
     
     def _load_from_excel(self, file_path: Path) -> Set[str]:
         """
@@ -1446,10 +1499,27 @@ class EnrichmentAnalyzer:
                 pass  # CSV 解析失败，回退到按行解析
         
         # 情况3：默认按每行一个基因解析（原有格式）
-        for line in valid_lines:
-            gene = line.strip()
-            if gene and not gene.startswith('#'):
+        # 先检测是否为 TSV 格式（含制表符的多列数据）
+        tab_count = sum(1 for line in valid_lines if '\t' in line)
+        is_tsv = tab_count > 0 and tab_count >= len(valid_lines) * 0.5  # 超过50%的行含制表符
+        
+        if is_tsv:
+            # TSV 格式：按制表符拆分，取第一列；跳过表头行
+            for i, line in enumerate(valid_lines):
+                parts = line.split('\t')
+                gene = parts[0].strip()
+                if not gene:
+                    continue
+                # 跳过表头行（第0行且值为常见列名）
+                if i == 0 and gene.lower() in ('gene', 'symbol', 'id', 'gene_id', 'gene_symbol', 'name', 'genes'):
+                    continue
                 genes.add(gene)
+        else:
+            # 普通每行一个基因格式
+            for line in valid_lines:
+                gene = line.strip()
+                if gene and not gene.startswith('#'):
+                    genes.add(gene)
         
         return genes
     
@@ -1518,6 +1588,9 @@ class EnrichmentAnalyzer:
         # 将校正后的 p 值写回每个结果对象
         for result, adj_p in zip(results, adjusted):
             result.adjusted_pvalue = adj_p
+            # GSEA 的 FDR 字段也应同步为校正后值
+            if result.fdr is not None:
+                result.fdr = adj_p
         
         return results
     
@@ -1563,100 +1636,93 @@ class EnrichmentAnalyzer:
         gene_set: Set[str],
         background_set: Set[str],
         term_data: Dict[str, Dict[str, Any]],
-        database: str
+        database: str,
+        ranked_gene_list: Optional[List[Tuple[str, float]]] = None
     ) -> List[EnrichmentResult]:
         """
-        对单个数据库执行富集分析（v1.0 语义兼容）
+        对单个数据库执行富集分析
 
-        本方法实现了与 AllEnricher v1.0 完全一致的两遍扫描逻辑：
+        对于 ORA 方法（Fisher / Hypergeometric），使用 v1.0 语义兼容的两遍扫描逻辑。
+        对于 GSEA/ssGSEA/GSVA 方法，使用各方法自身的 calculate_enrichment 计算逻辑。
 
-        === v1.0 语义说明 ===
+        v1.0 ORA 语义说明：
         - background_total: 注释文件中所有基因的总数（即 gene2term 矩阵的总行数），
           而非用户提供的背景基因集大小
         - gene_total: 输入基因列表中至少命中一个条目的基因数（在第一遍扫描完成后确定），
           而非输入基因列表的总数
-        - num_in_C (background_count): 条目基因与用户背景基因集的交集大小
-        - 仅保留 num_in_O > 1 的条目（即至少有2个输入基因命中）
+        - 仅保留 num_in_O > 1 的条目
 
-        === 两遍扫描逻辑 ===
-        第一遍扫描：
-        - 遍历所有条目，计算每个条目的基础统计量
-        - 收集所有至少命中一个条目的输入基因（genes_with_hits）
-        - 跳过 num_in_O <= 1 的条目
-        - 最终 gene_total = len(genes_with_hits)
-
-        第二遍扫描：
-        - 使用第一遍确定的 gene_total 计算每个条目的 p 值
-        - 计算期望值和富集因子
-        - 构建 EnrichmentResult 对象
-
-        注意：v1.0 中 ExpectedGeneNum/RichFactor 使用动态增长的 gene_total，
-        但 p 值计算使用最终的 gene_total。本实现统一使用最终 gene_total
-        以保持结果的自洽性。
+        === 两遍扫描逻辑（ORA 方法）===
+        第一遍扫描：遍历所有条目，收集基础统计量，确定 gene_total
+        第二遍扫描：使用最终 gene_total 计算 p 值和其他统计量
 
         参数:
             gene_set: 输入基因集合（查询基因列表）
             background_set: 背景基因集合（用户提供的背景基因）
             term_data: 条目数据字典，格式为 {term_id: {"name": str, "genes": List[str]}}
             database: 数据库名称
+            ranked_gene_list: 可选的排序基因列表（GSEA/ssGSEA 使用）
 
         返回值:
             List[EnrichmentResult]: 该数据库的富集分析结果列表
         """
+        # 对于 GSEA/ssGSEA/GSVA 方法，使用各方法自身的计算逻辑
+        if self.config.method in (EnrichmentMethod.GSEA.value, EnrichmentMethod.SSGSEA.value):
+            return self._analyze_gsea_like(
+                gene_set, background_set, term_data, database,
+                ranked_gene_list=ranked_gene_list
+            )
+        elif self.config.method == EnrichmentMethod.GSVA.value:
+            return self._analyze_gsva(
+                gene_set, background_set, term_data, database
+            )
+        
+        # === ORA 方法（Fisher / Hypergeometric）原有逻辑 ===
         results = []
         
         # --- 输入验证 ---
-        # 检查 gene_set 是否为空
         if not gene_set:
             logger.error("输入基因列表（gene_set）为空，无法执行富集分析。请检查输入文件是否有效。")
             return results
         
-        # 检查 background_set 是否为空（给出警告但不中断，因为某些场景下可能不需要背景集）
         if not background_set:
             logger.warning("背景基因集（background_set）为空，分析结果可能不可靠。建议提供背景基因集。")
         
-        # 检查 term_data 是否为空
         if not term_data:
             logger.warning(f"数据库 {database} 的条目数据（term_data）为空，跳过该数据库。")
             return results
         
-        # --- v1.0 语义：background_total = 注释文件中所有基因的总数 ---
-        # 收集注释文件中出现过的所有基因（即 gene2term 矩阵中所有行）
-        all_annotated_genes: Set[str] = set()
-        for term_info in term_data.values():
-            all_annotated_genes.update(term_info.get("genes", []))
-        background_total = len(all_annotated_genes)
+        # --- background_total = 背景基因集的总大小 ---
+        background_total = len(background_set) if background_set else 0
         
         if background_total == 0:
-            logger.warning(f"No annotated genes found for {database}")
+            logger.warning(f"背景基因集为空，无法执行富集分析。")
             return results
         
         # --- 第一遍扫描：计算每个条目的基础统计量，并确定最终的 gene_total ---
-        term_stats = {}  # term_id -> {num_in_O, num_in_C, genes_in_term, term_name}
-        genes_with_hits: Set[str] = set()  # 至少命中一个条目的输入基因
+        term_stats = {}
+        genes_with_hits: Set[str] = set()
         
         for term_id, term_info in term_data.items():
             term_genes = set(term_info.get("genes", []))
-            genes_in_term = gene_set & term_genes  # 输入基因与条目基因的交集
-            num_in_O = len(genes_in_term)  # 观察到的命中基因数
+            genes_in_term = gene_set & term_genes
+            num_in_O = len(genes_in_term)
             
-            # v1.0 语义：仅保留 num_in_O > 1 的条目（至少2个输入基因命中）
             if num_in_O <= 1:
                 continue
             
-            # 记录命中的基因（用于后续计算 gene_total）
             genes_with_hits.update(genes_in_term)
-            # num_in_C: 条目基因总数（与 v1 一致，不是与背景的交集）
-            num_in_C = len(term_genes)
+            # 背景中属于该条目的基因数（使用 background_set 过滤）
+            background_in_term = background_set & term_genes if background_set else term_genes
+            num_in_C = len(background_in_term)
             
             term_stats[term_id] = {
-                "num_in_O": num_in_O,  # 观察到的命中基因数
-                "num_in_C": num_in_C,  # 背景中属于该条目的基因数
-                "genes_in_term": genes_in_term,  # 命中的基因集合
-                "term_name": term_info.get("name", term_id),  # 条目名称
+                "num_in_O": num_in_O,
+                "num_in_C": num_in_C,
+                "genes_in_term": genes_in_term,
+                "term_name": term_info.get("name", term_id),
             }
         
-        # 最终 gene_total（v1.0 语义：等价于 R 代码中 %gene_list1 在完整循环后的值）
         gene_total = len(genes_with_hits)
         
         if gene_total == 0:
@@ -1669,44 +1735,314 @@ class EnrichmentAnalyzer:
             leave=False
         ):
             try:
-                num_in_O = ts["num_in_O"]  # 观察到的命中基因数
-                num_in_C = ts["num_in_C"]  # 背景中属于该条目的基因数
+                num_in_O = ts["num_in_O"]
+                num_in_C = ts["num_in_C"]
                 
-                # 使用选定的统计检验方法计算 p 值
                 pvalue = self.method.calculate_pvalue(
                     gene_count=num_in_O,
                     background_count=num_in_C,
-                    gene_total=gene_total,  # 使用第一遍扫描确定的最终值
-                    background_total=background_total  # 使用注释文件中的基因总数
+                    gene_total=gene_total,
+                    background_total=background_total
                 )
                 
-                # 计算期望命中基因数 = (条目在背景中的比例) * 输入基因总数
                 expected = num_in_C / background_total * gene_total if background_total > 0 else 0
-                # 计算富集因子 = 观察值 / 期望值
                 rich_factor = num_in_O / expected if expected > 0 else 0
                 
-                # 生成条目的数据库链接 URL
                 term_url = generate_term_url(term_id, database)
                 
-                # 构建富集结果对象
                 result = EnrichmentResult(
                     term_id=term_id,
                     term_name=ts["term_name"],
                     database=database,
                     pvalue=pvalue,
-                    adjusted_pvalue=pvalue,  # 初始值，后续由 adjust_pvalues 统一校正
+                    adjusted_pvalue=pvalue,
                     gene_count=num_in_O,
                     background_count=num_in_C,
                     expected_count=round(expected, 6),
                     rich_factor=round(rich_factor, 6),
-                    gene_list=sorted(ts["genes_in_term"]),  # 基因列表按字母排序
+                    gene_list=sorted(ts["genes_in_term"]),
                     gene_ratio=f"{num_in_O}/{gene_total}",
                     background_ratio=f"{num_in_C}/{background_total}",
-                    term_url=term_url  # 条目的数据库链接 URL
+                    term_url=term_url
                 )
                 results.append(result)
             except Exception as e:
-                # 单个条目计算失败不应中断整个分析，记录错误并跳过该条目
+                logger.warning(f"计算条目 {term_id}（{database}）时出错，已跳过：{e}")
+                continue
+        
+        return results
+    
+    def _analyze_gsea_like(
+        self,
+        gene_set: Set[str],
+        background_set: Set[str],
+        term_data: Dict[str, Dict[str, Any]],
+        database: str,
+        ranked_gene_list: Optional[List[Tuple[str, float]]] = None
+    ) -> List[EnrichmentResult]:
+        """
+        使用 GSEA/ssGSEA 方法对单个数据库执行富集分析
+
+        - GSEA: 使用 gseapy.prerank（批量分析所有通路，含置换检验 + FDR 校正）
+        - ssGSEA: 沿用原有的逐条目循环
+
+        参数:
+            gene_set: 输入基因集合
+            background_set: 背景基因集合
+            term_data: 条目数据字典
+            database: 数据库名称
+            ranked_gene_list: 可选的 (基因, 权重) 元组列表
+
+        返回值:
+            List[EnrichmentResult]: 该数据库的富集分析结果列表
+        """
+        if not term_data:
+            logger.warning(f"数据库 {database} 的条目数据为空，跳过。")
+            return []
+        
+        # 从 ranked_gene_list 中提取基因名称列表和权重字典
+        gene_names = None
+        gene_weights = None
+        if ranked_gene_list:
+            gene_names = [g for g, w in ranked_gene_list]
+            gene_weights = {g: w for g, w in ranked_gene_list}
+        
+        # ---------------------------------------------------------------
+        # GSEA：使用 gseapy.prerank（准确、经过验证的行业标准实现）
+        # ---------------------------------------------------------------
+        if self.config.method == EnrichmentMethod.GSEA.value:
+            try:
+                return self._run_gsea_with_gseapy(
+                    term_data, database, gene_names, gene_weights
+                )
+            except ImportError:
+                logger.warning("gseapy 未安装，回退至内置 GSEA 实现。请运行 pip install gseapy")
+            except Exception as e:
+                logger.warning(f"gseapy 执行失败 ({e})，回退至内置 GSEA 实现。")
+        
+        # ---------------------------------------------------------------
+        # ssGSEA / 回退：原有逐条目循环
+        # ---------------------------------------------------------------
+        results = []
+        for term_id, term_info in tqdm(
+            term_data.items(),
+            desc=f"Analyzing {database}",
+            leave=False
+        ):
+            try:
+                term_genes = set(term_info.get("genes", []))
+                
+                # 直接使用方法实例的 calculate_enrichment
+                result = self.method.calculate_enrichment(
+                    gene_set=gene_set,
+                    background_set=background_set,
+                    term_genes=term_genes,
+                    term_name=term_info.get("name", term_id),
+                    term_id=term_id,
+                    database=database,
+                    ranked_genes=gene_names,
+                    gene_weights=gene_weights
+                )
+                
+                if result is not None:
+                    results.append(result)
+            except Exception as e:
+                logger.warning(f"计算条目 {term_id}（{database}）时出错，已跳过：{e}")
+                continue
+        
+        return results
+    
+    def _run_gsea_with_gseapy(
+        self,
+        term_data: Dict[str, Dict[str, Any]],
+        database: str,
+        gene_names: Optional[List[str]],
+        gene_weights: Optional[Dict[str, float]],
+    ) -> List[EnrichmentResult]:
+        """
+        使用 gseapy.prerank 对单个数据库执行 GSEA 分析
+
+        将数据库的所有基因集一次性传给 gseapy，批量完成 ES/NES/pvalue/FDR 计算，
+        然后将结果映射为 EnrichmentResult 列表。
+
+        参数:
+            term_data: 条目数据字典 {term_id: {name, genes}}
+            database: 数据库名称
+            gene_names: 排序基因列表（基因名称）
+            gene_weights: 基因权重字典
+
+        返回值:
+            List[EnrichmentResult]: 富集分析结果列表
+        """
+        import gseapy
+        import pandas as pd
+        import numpy as np
+
+        # 构建 gseapy 所需的基因集字典: {term_id: [gene1, gene2, ...]}
+        gene_sets_dict: Dict[str, List[str]] = {}
+        term_names: Dict[str, str] = {}
+        for term_id, term_info in term_data.items():
+            term_genes = list(term_info.get("genes", []))
+            if term_genes:
+                gene_sets_dict[term_id] = term_genes
+                term_names[term_id] = term_info.get("name", term_id)
+
+        if not gene_sets_dict:
+            logger.warning(f"数据库 {database} 无有效基因集数据，跳过。")
+            return []
+
+        # 构建排序列表为 pandas Series
+        if gene_names and gene_weights:
+            # 保留原始符号权重
+            rnk = pd.Series(
+                data=[gene_weights.get(g, 0.0) for g in gene_names],
+                index=gene_names,
+            )
+        elif gene_names:
+            rnk = pd.Series(data=np.ones(len(gene_names)), index=gene_names)
+        else:
+            logger.warning("未提供排序基因列表，跳过 GSEA 分析。")
+            return []
+
+        # 获取 GSEA 参数（从 self.method 中读取）
+        gsea_min_size = getattr(self.method, 'min_size', 10)
+        gsea_max_size = getattr(self.method, 'max_size', 500)
+        gsea_permutations = getattr(self.method, 'permutations', 1000)
+        gsea_seed = getattr(self.method, 'seed', 42)
+
+        logger.info(
+            f"gseapy.prerank: {len(gene_sets_dict)} gene sets, "
+            f"{len(rnk)} ranked genes, "
+            f"{gsea_permutations} permutations"
+        )
+
+        # 执行 gseapy.prerank（行业标准 GSEA 实现）
+        gs_res = gseapy.prerank(
+            rnk=rnk,
+            gene_sets=gene_sets_dict,
+            min_size=gsea_min_size,
+            max_size=gsea_max_size,
+            permutation_num=gsea_permutations,
+            no_plot=True,
+            verbose=False,
+            seed=gsea_seed,
+            threads=min(4, getattr(self.config, 'n_jobs', 1)),
+            ascending=False,
+        )
+
+        # 映射 gseapy 结果 → EnrichmentResult
+        # gs_res.results = {term_id: {es, nes, pval, fdr, lead_genes, matched_genes, tag%, gene%, ...}}
+        results: List[EnrichmentResult] = []
+        n_ranked = len(gene_names) if gene_names else 0
+        for term_id, gs_term in gs_res.results.items():
+            try:
+                # 解析前沿基因
+                lead_genes_str = gs_term.get('lead_genes', '')
+                lead_genes = lead_genes_str.split(';') if lead_genes_str else []
+
+                # 解析匹配基因
+                matched_genes_str = gs_term.get('matched_genes', '')
+                matched_genes = matched_genes_str.split(';') if matched_genes_str else []
+
+                # 从 tag% 解析 setSize（格式: "lead_count/setSize"）
+                tag = str(gs_term.get('tag %', '0/0'))
+                tag_parts = tag.split('/')
+                set_size = int(tag_parts[1]) if len(tag_parts) > 1 else len(matched_genes)
+
+                # 从 gene% 计算 rank_at_max
+                gene_pct_str = str(gs_term.get('gene %', '0%')).replace('%', '')
+                try:
+                    gene_pct = float(gene_pct_str) / 100.0
+                    rank_at_max = int(gene_pct * n_ranked)
+                except (ValueError, ZeroDivisionError):
+                    rank_at_max = 0
+
+                # gseapy 的 fdr 已基于置换检验 + BH 校正
+                fdr = float(gs_term['fdr'])
+                pval = float(gs_term['pval'])
+                nes = float(gs_term['nes'])
+                es = float(gs_term['es'])
+                fwerp = float(gs_term.get('fwerp', 0.0))
+
+                result = EnrichmentResult(
+                    term_id=term_id,
+                    term_name=term_names.get(term_id, term_id),
+                    database=database,
+                    pvalue=pval,
+                    adjusted_pvalue=fdr,  # gseapy 直接提供 BH 校正后的 FDR
+                    gene_count=set_size,
+                    gene_list=matched_genes,
+                    term_url=generate_term_url(term_id, database),
+                    nes=nes,
+                    es=es,
+                    fdr=fdr,
+                    leading_edge=lead_genes,
+                    set_size=set_size,
+                    rank_at_max=rank_at_max,
+                    fwerp=fwerp,
+                    tag_pct=tag,
+                    gene_pct=str(gs_term.get('gene %', '0%')),
+                )
+                results.append(result)
+            except Exception as e:
+                logger.warning(f"解析 gseapy 结果 {term_id} 时出错: {e}")
+                continue
+
+        logger.info(
+            f"gseapy 完成 {database}: {len(results)} enriched terms"
+        )
+        return results
+    
+    def _analyze_gsva(
+        self,
+        gene_set: Set[str],
+        background_set: Set[str],
+        term_data: Dict[str, Dict[str, Any]],
+        database: str
+    ) -> List[EnrichmentResult]:
+        """
+        使用 GSVA 方法对单个数据库执行富集分析
+
+        GSVA 的核心输出是通路活性矩阵（通过 analyze_matrix），
+        但为保持接口统一，此处对每个条目调用 calculate_enrichment 返回占位结果。
+
+        参数:
+            gene_set: 输入基因集合
+            background_set: 背景基因集合（未使用，为保持接口一致）
+            term_data: 条目数据字典
+            database: 数据库名称
+
+        返回值:
+            List[EnrichmentResult]: 该数据库的富集分析结果列表
+        """
+        results = []
+        
+        if not term_data:
+            logger.warning(f"数据库 {database} 的条目数据为空，跳过。")
+            return results
+        
+        for term_id, term_info in tqdm(
+            term_data.items(),
+            desc=f"Analyzing {database}",
+            leave=False
+        ):
+            try:
+                term_genes = set(term_info.get("genes", []))
+                
+                result = self.method.calculate_enrichment(
+                    gene_set=gene_set,
+                    background_set=background_set,
+                    term_genes=term_genes,
+                    term_name=term_info.get("name", term_id),
+                    term_id=term_id,
+                    database=database,
+                    ranked_genes=None,
+                    gene_weights=None
+                )
+                
+                if result is not None:
+                    results.append(result)
+            except Exception as e:
                 logger.warning(f"计算条目 {term_id}（{database}）时出错，已跳过：{e}")
                 continue
         
@@ -1717,7 +2053,8 @@ class EnrichmentAnalyzer:
         gene_set: Set[str],
         background_set: Set[str],
         database_data: Dict[str, Dict[str, Dict[str, Any]]],
-        parallel: bool = True
+        parallel: bool = True,
+        ranked_gene_list: Optional[List[Tuple[str, float]]] = None
     ) -> Dict[str, pd.DataFrame]:
         """
         对所有数据库执行富集分析
@@ -1732,12 +2069,11 @@ class EnrichmentAnalyzer:
         支持两种执行模式：
         - 并行模式（parallel=True 且 n_jobs > 1）：
           使用 ThreadPoolExecutor 并行处理多个数据库。
-          注意：由于 EnrichmentAnalyzer 实例持有不可 pickle 的对象（如 Config），
-          因此使用线程池而非进程池。对于 CPU 密集型的统计计算，
-          线程池在 CPython 中受 GIL 限制，但数据库 I/O 和
-          结果处理仍可从并行中受益。
         - 串行模式（parallel=False 或 n_jobs = 1）：
           逐个处理数据库
+
+        对于 GSEA/ssGSEA 方法，ranked_gene_list 会被传递给 analyze_database，
+        进而传递给方法实例的 calculate_enrichment。
 
         参数:
             gene_set: 输入基因集合（查询基因列表）
@@ -1745,6 +2081,7 @@ class EnrichmentAnalyzer:
             database_data: 数据库数据字典，格式为：
                           {database_name: {term_id: {"name": str, "genes": List[str]}}}
             parallel: 是否使用并行处理，默认为 True
+            ranked_gene_list: 可选的 (基因, 权重) 元组列表（GSEA/ssGSEA 使用）
 
         返回值:
             Dict[str, pd.DataFrame]: 各数据库的富集分析结果，
@@ -1754,9 +2091,6 @@ class EnrichmentAnalyzer:
         
         if parallel and self.config.n_jobs > 1 and len(database_data) > 1:
             # 并行处理模式：使用线程池并行分析多个数据库
-            # 注意：使用 ThreadPoolExecutor 而非 ProcessPoolExecutor，
-            # 因为 EnrichmentAnalyzer 对象包含不可 pickle 的成员，
-            # 无法在进程间序列化传递。
             logger.info(f"使用并行模式分析 {len(database_data)} 个数据库（线程数: {self.config.n_jobs}）")
             with ThreadPoolExecutor(max_workers=self.config.n_jobs) as executor:
                 # 提交所有数据库的分析任务
@@ -1766,7 +2100,8 @@ class EnrichmentAnalyzer:
                         gene_set,
                         background_set,
                         term_data,
-                        database
+                        database,
+                        ranked_gene_list
                     ): database
                     for database, term_data in database_data.items()
                 }
@@ -1776,9 +2111,11 @@ class EnrichmentAnalyzer:
                     database = futures[future]
                     try:
                         results = future.result()
-                        results = self.adjust_pvalues(results, self.config.correction)  # 多重检验校正
-                        results = self.filter_results(results)  # 过滤结果
-                        results.sort(key=lambda x: x.adjusted_pvalue)  # 按校正后 p 值排序
+                        # gseapy 已内置 FDR 校正，GSEA 方法跳过二次校正
+                        if self.config.method != EnrichmentMethod.GSEA.value:
+                            results = self.adjust_pvalues(results, self.config.correction)
+                        results = self.filter_results(results)
+                        results.sort(key=lambda x: x.adjusted_pvalue)
                         self.results[database] = results
                         logger.info(f"Completed {database}: {len(results)} enriched terms")
                     except Exception as e:
@@ -1788,11 +2125,14 @@ class EnrichmentAnalyzer:
             for database, term_data in database_data.items():
                 try:
                     results = self.analyze_database(
-                        gene_set, background_set, term_data, database
+                        gene_set, background_set, term_data, database,
+                        ranked_gene_list=ranked_gene_list
                     )
-                    results = self.adjust_pvalues(results, self.config.correction)  # 多重检验校正
-                    results = self.filter_results(results)  # 过滤结果
-                    results.sort(key=lambda x: x.adjusted_pvalue)  # 按校正后 p 值排序
+                    # gseapy 已内置 FDR 校正，GSEA 方法跳过二次校正
+                    if self.config.method != EnrichmentMethod.GSEA.value:
+                        results = self.adjust_pvalues(results, self.config.correction)
+                    results = self.filter_results(results)
+                    results.sort(key=lambda x: x.adjusted_pvalue)
                     self.results[database] = results
                     logger.info(f"Completed {database}: {len(results)} enriched terms")
                 except Exception as e:
@@ -1856,11 +2196,11 @@ class EnrichmentAnalyzer:
                         for src_name, src_ver in source_versions.items():
                             header_lines.append(f"#   {src_name}: {src_ver}")
                     header_lines.append("#")
-                    with open(output_file, 'w', encoding='utf-8') as f:
+                    with open(output_file, 'w', encoding='utf-8', newline='') as f:
                         f.write("\n".join(header_lines) + "\n")
-                        df.to_csv(f, sep='\t', index=False)
+                        df.to_csv(f, sep='\t', index=False, lineterminator='\n')
                 else:
-                    df.to_csv(output_file, sep='\t', index=False)
+                    df.to_csv(output_file, sep='\t', index=False, lineterminator='\n')
 
                 logger.info(f"Saved {database} results to {output_file}")
 

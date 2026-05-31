@@ -41,14 +41,12 @@ class EnrichmentMethod(Enum):
     的方法和基于基因集富集分析（GSEA）的方法。
 
     Attributes:
-        FISHER: Fisher精确检验，适用于基因列表的过表示分析
-        HYPERGEOMETRIC: 超几何检验，另一种过表示分析方法
+        HYPERGEOMETRIC: 超几何检验（ORA默认方法）
         GSEA: 基因集富集分析（Gene Set Enrichment Analysis），适用于排序基因列表
         SSGSEA: 单样本GSEA（Single Sample GSEA），适用于单样本的基因集富集分析
         GSVA: 基因集变异分析（Gene Set Variation Analysis），适用于样本级别的基因集活性评估
     """
-    FISHER = "fisher"                    # Fisher精确检验
-    HYPERGEOMETRIC = "hypergeometric"    # 超几何检验
+    HYPERGEOMETRIC = "hypergeometric"    # 超几何检验（ORA默认方法）
     GSEA = "gsea"                        # 基因集富集分析（Gene Set Enrichment Analysis）
     SSGSEA = "ssgsea"                    # 单样本GSEA
     GSVA = "gsva"                        # 基因集变异分析（Gene Set Variation Analysis）
@@ -208,7 +206,7 @@ class Config:
     # Analysis settings
     # 分析设置
     databases: List[str] = field(default_factory=lambda: ["GO", "KEGG"])  # 要使用的数据库列表，默认使用GO和KEGG
-    method: str = "fisher"                 # 富集分析方法，默认为Fisher精确检验
+    method: str = "hypergeometric"         # 富集分析方法，默认超几何检验（ORA）
     correction: str = "BH"                 # 多重检验校正方法，默认为BH（Benjamini-Hochberg）
     pvalue_cutoff: float = 0.05            # p值显著性阈值，默认为0.05
     qvalue_cutoff: float = 0.05            # 校正后q值（FDR）显著性阈值，默认为0.05
@@ -581,7 +579,7 @@ species: "hsa"  # KEGG species code / KEGG物种代码
 databases:
   - "GO"        # Gene Ontology / 基因本体数据库
   - "KEGG"      # KEGG pathways / KEGG通路数据库
-method: "fisher"  # fisher, hypergeometric, gsea, ssgsea / 富集分析方法
+method: "hypergeometric"  # hypergeometric, gsea, ssgsea, gsva / 富集分析方法
 correction: "BH"  # BH, BY, bonferroni, holm, none / 多重检验校正方法
 pvalue_cutoff: 0.05  # P-value cutoff / p值显著性阈值
 qvalue_cutoff: 0.05  # Q-value (FDR) cutoff / q值（FDR）显著性阈值

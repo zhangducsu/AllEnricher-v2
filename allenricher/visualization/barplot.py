@@ -93,7 +93,10 @@ def _parse_kegg_category(term_str: str) -> str:
         类别名称
     """
     if "|" in term_str:
-        return term_str.split("|")[0].strip()
+        category = term_str.split("|")[0].strip()
+        # 将空格转为下划线，以匹配 color_config.py 中字典 key 的格式
+        category = category.replace(" ", "_")
+        return category
     return "default"
 
 
