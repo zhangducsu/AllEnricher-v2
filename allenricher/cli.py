@@ -48,7 +48,7 @@ logger = logging.getLogger(__name__)
 
 # 各方法支持的图表类型白名单
 _METHOD_PLOT_TYPES = {
-    'gsea': {'enrichment', 'nes_barplot', 'dotplot'},
+    'gsea': {'enrichment', 'nes_barplot', 'dotplot', 'barplot', 'ridgeplot', 'emapplot', 'cnetplot', 'circos'},
     'ssgsea': {'heatmap', 'group_comparison', 'dotplot', 'correlation'},
     'gsva': {'heatmap', 'group_comparison', 'dotplot', 'correlation'},
 }
@@ -162,6 +162,7 @@ def _generate_plots(
     plot_dpi: int = 300,
     plot_style: str = 'nature',
     plot_palette: Optional[str] = None,
+    use_r_plots: bool = False,
 ) -> List[str]:
     """根据方法类型生成可视化图表
 
@@ -207,78 +208,197 @@ def _generate_plots(
 
     # ---- GSEA 图表 ----
     if method == 'gsea':
-        from allenricher.visualization.gsea_plots import (
-            plot_gsea_enrichment,
-            plot_gsea_nes_barplot,
-            plot_gsea_dotplot,
-        )
+        if use_r_plots:
+            # R 绘图模式
+            from allenricher.visualization.r_plotter import (
+                check_r_environment,
+                plot_gsea_dotplot_r, plot_gsea_barplot_r, plot_gsea_nes_plot_r,
+                plot_gsea_ridgeplot_r, plot_gsea_emapplot_r, plot_gsea_cnetplot_r,
+                plot_gsea_circos_r, plot_gsea_enrichment_r, plot_gsea_enrichment2_r,
+            )
 
-        for db_name, df in results.items():
-            if df is None or len(df) == 0:
-                continue
-
-            # NES 条形图
-            if 'nes_barplot' in valid_types and ('NES' in df.columns or 'nes' in df.columns):
-                out_file = str(plot_dir / f"{db_name}_nes_barplot.{plot_format}")
-                try:
-                    plot_gsea_nes_barplot(df, output_file=out_file, dpi=plot_dpi,
-                                          style=plot_style, palette=plot_palette)
-                    generated_files.append(out_file)
-                    logger.info(f"NES条形图已生成: {out_file}")
-                except Exception as e:
-                    logger.error(f"NES条形图生成失败 ({db_name}): {e}")
-
-            # GSEA 气泡图
-            if 'dotplot' in valid_types and ('NES' in df.columns or 'nes' in df.columns):
-                out_file = str(plot_dir / f"{db_name}_dotplot.{plot_format}")
-                try:
-                    plot_gsea_dotplot(df, output_file=out_file, dpi=plot_dpi,
-                                      style=plot_style, palette=plot_palette)
-                    generated_files.append(out_file)
-                    logger.info(f"GSEA气泡图已生成: {out_file}")
-                except Exception as e:
-                    logger.error(f"GSEA气泡图生成失败 ({db_name}): {e}")
-
-            # 富集曲线图
-            if 'enrichment' in valid_types and ranked_genes and gene_sets:
-                for set_name, gene_set in gene_sets.items():
-                    # 从结果中查找该基因集的统计数据
-                    match = None
-                    pathway_col = None
-                    for c in ['Description', 'pathway', 'Term_Name', 'term_name']:
-                        if c in df.columns:
-                            pathway_col = c
-                            break
-                    if pathway_col:
-                        match_rows = df[df[pathway_col] == set_name]
-                        if len(match_rows) > 0:
-                            match = match_rows.iloc[0]
-
-                    if match is None:
+            if not check_r_environment():
+                logger.warning("R environment not found, falling back to Python plotting")
+                use_r_plots = False  # fallback
+            else:
+                # 保存 TSV 供 R 脚本使用
+                for db_name, df in results.items():
+                    if df is None or len(df) == 0:
                         continue
+                    tsv_path = str(plot_dir / f"{db_name}_enrichment.tsv")
+                    df.to_csv(tsv_path, sep='\t', index=False)
 
-                    es_val = match.get('ES', match.get('enrichmentScore', match.get('es', 0.0)))
-                    nes_val = match.get('NES', match.get('nes', 0.0))
-                    pval = match.get('p_value', match.get('NOM p-val', match.get('pvalue', match.get('P_Value', 1.0))))
+                    # dotplot
+                    if 'dotplot' in valid_types:
+                        out_file = str(plot_dir / f"{db_name}_dotplot.{plot_format}")
+                        if plot_gsea_dotplot_r(tsv_path, out_file, top_n=20):
+                            generated_files.append(out_file)
 
-                    out_file = str(plot_dir / f"{set_name}_enrichment.{plot_format}")
+                    # nes_barplot -> nes_plot (R)
+                    if 'nes_barplot' in valid_types:
+                        out_file = str(plot_dir / f"{db_name}_nes_barplot.{plot_format}")
+                        if plot_gsea_nes_plot_r(tsv_path, out_file):
+                            generated_files.append(out_file)
+
+                    # barplot
+                    if 'barplot' in valid_types:
+                        out_file = str(plot_dir / f"{db_name}_barplot.{plot_format}")
+                        if plot_gsea_barplot_r(tsv_path, out_file, top_n=20):
+                            generated_files.append(out_file)
+
+                    # ridgeplot
+                    if 'ridgeplot' in valid_types:
+                        out_file = str(plot_dir / f"{db_name}_ridgeplot.{plot_format}")
+                        if plot_gsea_ridgeplot_r(tsv_path, out_file, top_n=15):
+                            generated_files.append(out_file)
+
+                    # emapplot
+                    if 'emapplot' in valid_types:
+                        out_file = str(plot_dir / f"{db_name}_emapplot.{plot_format}")
+                        if plot_gsea_emapplot_r(tsv_path, out_file, top_n=30):
+                            generated_files.append(out_file)
+
+                    # cnetplot
+                    if 'cnetplot' in valid_types:
+                        out_file = str(plot_dir / f"{db_name}_cnetplot.{plot_format}")
+                        if plot_gsea_cnetplot_r(tsv_path, out_file, top_n=10):
+                            generated_files.append(out_file)
+
+                    # circos
+                    if 'circos' in valid_types:
+                        out_file = str(plot_dir / f"{db_name}_circos.{plot_format}")
+                        if plot_gsea_circos_r(tsv_path, out_file, top_n=30):
+                            generated_files.append(out_file)
+
+                    # enrichment (单个通路)
+                    if 'enrichment' in valid_types:
+                        nes_col = next((c for c in ['NES', 'nes'] if c in df.columns), None)
+                        if nes_col:
+                            _abs_col = f'_{nes_col}_abs'
+                            df[_abs_col] = df[nes_col].abs()
+                            top_pathways = df.nlargest(5, _abs_col).drop(columns=[_abs_col])
+                            for _, row in top_pathways.iterrows():
+                                term_id = row.get('Term_ID', row.get('term_id', ''))
+                                if not term_id:
+                                    continue
+                                safe_name = str(term_id).replace('/', '_').replace(' ', '_')
+                                out_file = str(plot_dir / f"{safe_name}_enrichment.{plot_format}")
+                                if plot_gsea_enrichment_r(tsv_path, str(term_id), out_file):
+                                    generated_files.append(out_file)
+
+        if not use_r_plots:
+            # Python matplotlib 绘图模式（原有代码）
+            from allenricher.visualization.gsea_plots import (
+                plot_gsea_enrichment,
+                plot_gsea_nes_barplot,
+                plot_gsea_dotplot,
+            )
+
+            for db_name, df in results.items():
+                if df is None or len(df) == 0:
+                    continue
+
+                # NES 条形图
+                if 'nes_barplot' in valid_types and ('NES' in df.columns or 'nes' in df.columns):
+                    out_file = str(plot_dir / f"{db_name}_nes_barplot.{plot_format}")
                     try:
-                        plot_gsea_enrichment(
-                            ranked_genes=ranked_genes,
-                            gene_weights=gene_weights or {},
-                            gene_set=gene_set,
-                            es=es_val,
-                            nes=nes_val,
-                            pvalue=pval,
-                            title=set_name,
-                            output_file=out_file,
-                            dpi=plot_dpi,
-                            style=plot_style,
-                            palette=plot_palette,
-                        )
+                        plot_gsea_nes_barplot(df, output_file=out_file, dpi=plot_dpi,
+                                              style=plot_style, palette=plot_palette)
                         generated_files.append(out_file)
+                        logger.info(f"NES条形图已生成: {out_file}")
                     except Exception as e:
-                        logger.error(f"富集曲线图生成失败 ({set_name}): {e}")
+                        logger.error(f"NES条形图生成失败 ({db_name}): {e}")
+
+                # GSEA 气泡图
+                if 'dotplot' in valid_types and ('NES' in df.columns or 'nes' in df.columns):
+                    out_file = str(plot_dir / f"{db_name}_dotplot.{plot_format}")
+                    try:
+                        plot_gsea_dotplot(df, output_file=out_file, dpi=plot_dpi,
+                                          style=plot_style, palette=plot_palette)
+                        generated_files.append(out_file)
+                        logger.info(f"GSEA气泡图已生成: {out_file}")
+                    except Exception as e:
+                        logger.error(f"GSEA气泡图生成失败 ({db_name}): {e}")
+
+                # 富集曲线图（仅对 NES top 10 且显著的通路逐一绘图）
+                if 'enrichment' in valid_types and ranked_genes and gene_sets:
+                    # 1. 筛选显著通路：优先 FDR < 0.05，若无则 fallback 到 p_value < 0.05
+                    fdr_col = next((c for c in ['FDR', 'Adjusted_P_Value', 'adj_pval', 'qvalue'] if c in df.columns), None)
+                    pval_col = next((c for c in ['p_value', 'P_Value', 'NOM p-val', 'pvalue', 'P-value'] if c in df.columns), None)
+                    sig_df = df.copy()
+                    if fdr_col:
+                        sig_df_fdr = sig_df[sig_df[fdr_col] < 0.05]
+                        if len(sig_df_fdr) > 0:
+                            sig_df = sig_df_fdr
+                        elif pval_col:
+                            # FDR 无显著结果，fallback 到 p_value
+                            sig_df = sig_df[sig_df[pval_col] < 0.05]
+                    elif pval_col:
+                        sig_df = sig_df[sig_df[pval_col] < 0.05]
+
+                    if len(sig_df) == 0:
+                        logger.info("  无显著通路 (FDR<0.05 或 p<0.05)，跳过富集曲线图")
+                    else:
+                        # 2. 按 |NES| 降序排列取 top 10
+                        nes_col = next((c for c in ['NES', 'nes'] if c in sig_df.columns), None)
+                        if nes_col:
+                            sig_df = sig_df.reindex(sig_df[nes_col].abs().sort_values(ascending=False).index)
+                        top_pathways = sig_df.head(10)
+
+                        # 3. 确定通路ID列名（用于匹配gene_sets的键）和通路名列名
+                        term_id_col = next((c for c in ['Term_ID', 'term_id', 'ID', 'id'] if c in df.columns), None)
+                        pathway_col = next((c for c in ['Description', 'pathway', 'Term_Name', 'term_name'] if c in df.columns), None)
+
+                        # 使用Term_ID来匹配gene_sets的键名
+                        if term_id_col:
+                            top_names = set(top_pathways[term_id_col].tolist())
+                        elif pathway_col:
+                            top_names = set(top_pathways[pathway_col].tolist())
+                        else:
+                            top_names = set()
+
+                        # 4. 只对 top 10 显著通路生成富集曲线
+                        for set_name, gene_set in gene_sets.items():
+                            if set_name not in top_names:
+                                continue
+
+                            match = None
+                            # 优先使用Term_ID匹配，其次使用pathway_col
+                            if term_id_col:
+                                match_rows = df[df[term_id_col] == set_name]
+                                if len(match_rows) > 0:
+                                    match = match_rows.iloc[0]
+                            if match is None and pathway_col:
+                                match_rows = df[df[pathway_col] == set_name]
+                                if len(match_rows) > 0:
+                                    match = match_rows.iloc[0]
+
+                            if match is None:
+                                continue
+
+                            es_val = match.get('ES', match.get('enrichmentScore', match.get('es', 0.0)))
+                            nes_val = match.get('NES', match.get('nes', 0.0))
+                            pval = match.get('p_value', match.get('NOM p-val', match.get('pvalue', match.get('P_Value', 1.0))))
+
+                            out_file = str(plot_dir / f"{set_name}_enrichment.{plot_format}")
+                            try:
+                                plot_gsea_enrichment(
+                                    ranked_genes=ranked_genes,
+                                    gene_weights=gene_weights or {},
+                                    gene_set=gene_set,
+                                    es=es_val,
+                                    nes=nes_val,
+                                    pvalue=pval,
+                                    title=set_name,
+                                    output_file=out_file,
+                                    dpi=plot_dpi,
+                                    style=plot_style,
+                                    palette=plot_palette,
+                                )
+                                generated_files.append(out_file)
+                                logger.info(f"  富集曲线已生成: {set_name} (NES={nes_val:.2f})")
+                            except Exception as e:
+                                logger.error(f"富集曲线图生成失败 ({set_name}): {e}")
 
     # ---- 通用图表类型（network, upset, volcano）----
     # 通用图表不依赖于特定的分析方法，可以在任何结果上生成
@@ -566,6 +686,7 @@ Examples:
                                 help='Include TF enrichment analysis using TRRUST, ChEA3, or both databases')
     analyze_parser.add_argument('--tf-only', action='store_true',
                                 help='Only perform TF enrichment, skip standard databases (GO/KEGG/Reactome etc.)')
+    analyze_parser.add_argument('--use-r-plots', action='store_true', help='Use R scripts for GSEA plotting (requires R environment)')
     
     # ==================== download 子命令 ====================
     # 从远程数据源下载指定的富集分析数据库到本地
@@ -998,15 +1119,17 @@ def cmd_analyze(args) -> int:
         if not tf_only_mode:
             logger.info(f"Significant results: {sig_total}/{all_total} terms (p<={config.pvalue_cutoff}, q<={config.qvalue_cutoff})")
         
-        # ---- 第9步：生成可视化图表 ----
-        # 除非用户指定 --no-plot，否则为每个数据库的显著结果生成图表
-        if not args.no_plot and significant_results:
-            logger.info("Generating plots (significant results only)...")
-            plotter = Plotter(str(output_dir / "plots"), config)
-            for db_name, df in significant_results.items():
-                if len(df) > 0:
-                    plotter.plot_all(df, db_name, top_n=config.top_terms,
-                                     style=config.plot_style, palette=config.plot_palette)
+        # ---- 第9步：生成可视化图表（仅针对 ORA 富集分析）----
+        # GSEA/ssGSEA/GSVA 方法有专用图表（NES barplot、dotplot、富集曲线等），
+        # 不使用 ORA 的通用 barplot/bubble 图表
+        if config.method not in _METHOD_PLOT_TYPES:
+            if not args.no_plot and significant_results:
+                logger.info("Generating ORA-style plots (significant results only)...")
+                plotter = Plotter(str(output_dir / "plots"), config)
+                for db_name, df in significant_results.items():
+                    if len(df) > 0:
+                        plotter.plot_all(df, db_name, top_n=config.top_terms,
+                                         style=config.plot_style, palette=config.plot_palette)
         
         # ---- 第9.5步：生成GSEA/GSVA/ssGSEA专用可视化图表 ----
         # 如果方法为 GSEA/ssGSEA/GSVA，自动使用默认图表类型（用户可通过 --plot-types 覆盖）
@@ -1039,6 +1162,7 @@ def cmd_analyze(args) -> int:
                 plot_dpi=plot_dpi,
                 plot_style=config.plot_style,
                 plot_palette=config.plot_palette,
+                use_r_plots=args.use_r_plots,
             )
             if gsea_plot_files:
                 logger.info(f"GSEA/GSVA/ssGSEA 可视化完成: {len(gsea_plot_files)} 个图表")
@@ -1079,12 +1203,44 @@ def cmd_analyze(args) -> int:
         if not args.no_report and significant_results:
             logger.info("Generating HTML report (significant results only)...")
             report_gen = ReportGenerator(str(output_dir), config)
+
+            # 提取 ssGSEA/GSVA 活性得分矩阵（用于报告中的可视化）
+            _gsva_scores_df = None
+            if config.method in ('ssgsea', 'gsva') and results:
+                import pandas as _pd
+                for _db_name, _df in results.items():
+                    if _df is not None and len(_df) > 0 and isinstance(_df, _pd.DataFrame):
+                        _numeric_cols = _df.select_dtypes(include='number').columns
+                        _non_metric_cols = {'p_value', 'FDR',
+                                            'NOM p-val', 'FDR q-val', 'FWER p-val',
+                                            'pvalue', 'P_Value', 'Adjusted_P_Value',
+                                            'p.adjust', 'qvalues',
+                                            'nes', 'es', 'fdr', 'gene_count', 'Gene_Count',
+                                            'NES', 'enrichmentScore', 'setSize'}
+                        _sample_cols = [c for c in _numeric_cols if c not in _non_metric_cols]
+                        if _sample_cols:
+                            _name_col = None
+                            for col in ['Description', 'pathway', 'Term_Name', 'Term_ID', _df.index.name]:
+                                if col and col in _df.columns:
+                                    _name_col = col
+                                    break
+                            if _name_col:
+                                _gsva_scores_df = _df.set_index(_name_col)[_sample_cols]
+                            else:
+                                _gsva_scores_df = _df[_sample_cols]
+                                _gsva_scores_df.index.name = 'pathway'
+                            break
+
             report_gen.generate(
                 significant_results,
                 str(output_dir / "report.html"),
                 gene_list=list(gene_set),
                 ai_interpretation=ai_interpretation,
-                metadata=metadata
+                metadata=metadata,
+                gsva_results=_gsva_scores_df,
+                gsva_groups=groups_dict,
+                analysis_method=config.method,
+                plot_types=_effective_plot_types
             )
         
         # ---- 打印分析摘要 ----

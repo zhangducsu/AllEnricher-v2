@@ -33,6 +33,257 @@ class ReportGenerator:
     - 清晰层级：通过字体大小和字重区分信息重要性
     """
 
+    _TABLE_JS = '''
+    <script>
+        // Vanilla JS Table Component
+        (function() {
+            const tables = document.querySelectorAll('.data-table');
+
+            tables.forEach(table => {
+                const tbody = table.querySelector('tbody');
+                const rows = Array.from(tbody.querySelectorAll('tr'));
+                const headers = Array.from(table.querySelectorAll('thead th'));
+                const dbName = table.id.replace('table-', '');
+
+                // State
+                let currentPage = 1;
+                let pageSize = 20;
+                let sortColumn = 5;
+                let sortDirection = 'asc';
+                let searchTerm = '';
+                let filteredRows = [...rows];
+
+                // Make headers sortable
+                headers.forEach((th, index) => {
+                    if (index !== 6) {  // Skip Action column
+                        th.classList.add('sortable');
+                        th.addEventListener('click', () => {
+                            if (sortColumn === index) {
+                                sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+                            } else {
+                                sortColumn = index;
+                                sortDirection = 'asc';
+                            }
+                            updateSortIcons();
+                            applyFilters();
+                        });
+                    } else {
+                        th.classList.add('sortable', 'sort-disabled');
+                    }
+                });
+
+                function updateSortIcons() {
+                    headers.forEach((th, index) => {
+                        th.classList.remove('sort-asc', 'sort-desc');
+                        if (index === sortColumn) {
+                            th.classList.add(sortDirection === 'asc' ? 'sort-asc' : 'sort-desc');
+                        }
+                    });
+                }
+
+                // Create controls container
+                const controlsDiv = document.createElement('div');
+                controlsDiv.className = 'table-controls';
+                controlsDiv.innerHTML = `
+                    <div class="table-length">
+                        <label>Show</label>
+                        <select class="page-size-select">
+                            <option value="10" ${pageSize === 10 ? 'selected' : ''}>10</option>
+                            <option value="20" ${pageSize === 20 ? 'selected' : ''}>20</option>
+                            <option value="50" ${pageSize === 50 ? 'selected' : ''}>50</option>
+                            <option value="100" ${pageSize === 100 ? 'selected' : ''}>100</option>
+                        </select>
+                        <label>entries</label>
+                    </div>
+                    <div class="table-search">
+                        <label>Search:</label>
+                        <input type="text" class="search-input" placeholder="Filter results..." value="${searchTerm}">
+                    </div>
+                `;
+                table.parentNode.insertBefore(controlsDiv, table);
+
+                // Create info and pagination container
+                const footerDiv = document.createElement('div');
+                footerDiv.innerHTML = `
+                    <div class="table-info"></div>
+                    <div class="pagination"></div>
+                `;
+                table.parentNode.insertBefore(footerDiv, table.nextSibling);
+
+                const pageSizeSelect = controlsDiv.querySelector('.page-size-select');
+                const searchInput = controlsDiv.querySelector('.search-input');
+                const infoDiv = footerDiv.querySelector('.table-info');
+                const paginationDiv = footerDiv.querySelector('.pagination');
+
+                // Event listeners
+                pageSizeSelect.addEventListener('change', (e) => {
+                    pageSize = parseInt(e.target.value);
+                    currentPage = 1;
+                    applyFilters();
+                });
+
+                searchInput.addEventListener('input', (e) => {
+                    searchTerm = e.target.value.toLowerCase();
+                    currentPage = 1;
+                    applyFilters();
+                });
+
+                function filterRows() {
+                    if (!searchTerm) return [...rows];
+                    return rows.filter(row => {
+                        const cells = row.querySelectorAll('td');
+                        return Array.from(cells).some(cell =>
+                            cell.textContent.toLowerCase().includes(searchTerm)
+                        );
+                    });
+                }
+
+                function sortRows(rowsToSort) {
+                    const sorted = [...rowsToSort].sort((a, b) => {
+                        const aVal = a.cells[sortColumn]?.textContent.trim() || '';
+                        const bVal = b.cells[sortColumn]?.textContent.trim() || '';
+
+                        // Try numeric comparison
+                        const aNum = parseFloat(aVal);
+                        const bNum = parseFloat(bVal);
+
+                        if (!isNaN(aNum) && !isNaN(bNum)) {
+                            return sortDirection === 'asc' ? aNum - bNum : bNum - aNum;
+                        }
+
+                        // String comparison
+                        return sortDirection === 'asc'
+                            ? aVal.localeCompare(bVal)
+                            : bVal.localeCompare(aVal);
+                    });
+                    // Re-append rows in sorted order to update DOM
+                    sorted.forEach(row => tbody.appendChild(row));
+                    return sorted;
+                }
+
+                function renderPagination() {
+                    const totalPages = Math.ceil(filteredRows.length / pageSize);
+                    let html = '';
+
+                    // Previous button
+                    html += `<button ${currentPage === 1 ? 'disabled' : ''} onclick="goToPage('${dbName}', ${currentPage - 1})">Previous</button>`;
+
+                    // Page numbers
+                    const maxButtons = 5;
+                    let startPage = Math.max(1, currentPage - Math.floor(maxButtons / 2));
+                    let endPage = Math.min(totalPages, startPage + maxButtons - 1);
+
+                    if (endPage - startPage < maxButtons - 1) {
+                        startPage = Math.max(1, endPage - maxButtons + 1);
+                    }
+
+                    if (startPage > 1) {
+                        html += `<button onclick="goToPage('${dbName}', 1)">1</button>`;
+                        if (startPage > 2) html += `<button disabled>...</button>`;
+                    }
+
+                    for (let i = startPage; i <= endPage; i++) {
+                        html += `<button class="${i === currentPage ? 'active' : ''}" onclick="goToPage('${dbName}', ${i})">${i}</button>`;
+                    }
+
+                    if (endPage < totalPages) {
+                        if (endPage < totalPages - 1) html += `<button disabled>...</button>`;
+                        html += `<button onclick="goToPage('${dbName}', ${totalPages})">${totalPages}</button>`;
+                    }
+
+                    // Next button
+                    html += `<button ${currentPage === totalPages || totalPages === 0 ? 'disabled' : ''} onclick="goToPage('${dbName}', ${currentPage + 1})">Next</button>`;
+
+                    paginationDiv.innerHTML = html;
+                }
+
+                function renderTable() {
+                    const start = (currentPage - 1) * pageSize;
+                    const end = start + pageSize;
+                    const pageRows = filteredRows.slice(start, end);
+
+                    // Hide all rows first
+                    rows.forEach(row => row.style.display = 'none');
+
+                    // Show only page rows
+                    pageRows.forEach(row => row.style.display = '');
+
+                    // Update info
+                    const total = filteredRows.length;
+                    const showingStart = total === 0 ? 0 : start + 1;
+                    const showingEnd = Math.min(end, total);
+                    infoDiv.textContent = `Showing ${showingStart} to ${showingEnd} of ${total} entries${searchTerm ? ' (filtered from ' + rows.length + ' total entries)' : ''}`;
+
+                    renderPagination();
+                }
+
+                function applyFilters() {
+                    filteredRows = filterRows();
+                    filteredRows = sortRows(filteredRows);
+                    renderTable();
+                }
+
+                // Store table state globally for pagination callbacks
+                if (!window.tableStates) window.tableStates = {};
+                window.tableStates[dbName] = {
+                    setPage: (page) => {
+                        currentPage = page;
+                        renderTable();
+                    }
+                };
+
+                // Initial render
+                updateSortIcons();
+                applyFilters();
+            });
+
+            // Global pagination function
+            window.goToPage = function(dbName, page) {
+                if (window.tableStates && window.tableStates[dbName]) {
+                    window.tableStates[dbName].setPage(page);
+                }
+            };
+        })();
+
+        function downloadTable(dbName) {
+            const table = document.getElementById('table-' + dbName);
+            let tsv = [];
+            const headers = Array.from(table.querySelectorAll('th')).map(th => th.textContent.trim());
+            tsv.push(headers.join('\\t'));
+            const rows = table.querySelectorAll('tbody tr');
+            rows.forEach(row => {
+                if (row.style.display !== 'none') {
+                    const cells = Array.from(row.querySelectorAll('td')).map(td => td.textContent.trim());
+                    tsv.push(cells.join('\\t'));
+                }
+            });
+            const blob = new Blob([tsv.join('\\n')], { type: 'text/tab-separated-values' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = dbName + '_enrichment.tsv';
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        function copyTable(dbName) {
+            const table = document.getElementById('table-' + dbName);
+            const visibleRows = Array.from(table.querySelectorAll('tbody tr')).filter(row => row.style.display !== 'none');
+            const clone = table.cloneNode(true);
+            const cloneTbody = clone.querySelector('tbody');
+            cloneTbody.innerHTML = '';
+            visibleRows.forEach(row => cloneTbody.appendChild(row.cloneNode(true)));
+
+            const range = document.createRange();
+            range.selectNode(clone);
+            window.getSelection().removeAllRanges();
+            window.getSelection().addRange(range);
+            document.execCommand('copy');
+            window.getSelection().removeAllRanges();
+            alert('Table copied to clipboard');
+        }
+    </script>'''
+
     def __init__(self, output_dir: str, config=None):
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -65,22 +316,92 @@ class ReportGenerator:
             return output_file
 
         # 过滤显著结果：只保留通过 P-value 和 Q-value 阈值的条目
+        # ssGSEA/GSVA 方法跳过 P 值过滤（这些方法不依赖 P 值进行筛选）
         sig_results = {}
-        for db_name, df in results.items():
-            if len(df) == 0:
-                continue
-            mask = pd.Series(True, index=df.index)
-            if 'P_Value' in df.columns:
-                mask &= df['P_Value'] <= pvalue_cutoff
-            if 'Adjusted_P_Value' in df.columns:
-                mask &= df['Adjusted_P_Value'] <= qvalue_cutoff
-            sig_results[db_name] = df.loc[mask]
+        if analysis_method in ('ssgsea', 'gsva'):
+            # ssGSEA/GSVA：直接使用全部结果，不进行 P 值过滤
+            sig_results = {db_name: df.copy() for db_name, df in results.items() if len(df) > 0}
+        else:
+            for db_name, df in results.items():
+                if len(df) == 0:
+                    continue
+                mask = pd.Series(True, index=df.index)
+                if 'P_Value' in df.columns:
+                    mask &= df['P_Value'] <= pvalue_cutoff
+                if 'Adjusted_P_Value' in df.columns:
+                    mask &= df['Adjusted_P_Value'] <= qvalue_cutoff
+                sig_results[db_name] = df.loc[mask]
 
         # 如果过滤后无结果，回退到无结果页面
         if not sig_results or all(len(df) == 0 for df in sig_results.values()):
             html = self._generate_no_results_page(gene_list, metadata=metadata)
             with open(output_file, 'w', encoding='utf-8') as f:
                 f.write(html)
+            return output_file
+
+        if gsea_results is not None and len(gsea_results) > 0:
+            db_col = 'Database' if 'Database' in gsea_results.columns else None
+            if db_col:
+                gsea_sig = {}
+                for db_name in gsea_results[db_col].unique():
+                    sub = gsea_results[gsea_results[db_col] == db_name].copy()
+                    mask = pd.Series(True, index=sub.index)
+                    if 'FDR' in sub.columns:
+                        mask &= sub['FDR'] <= qvalue_cutoff
+                    if 'p_value' in sub.columns:
+                        mask &= sub['p_value'] <= pvalue_cutoff
+                    filtered = sub.loc[mask]
+                    if len(filtered) > 0:
+                        gsea_sig[db_name] = filtered
+                if gsea_sig:
+                    sig_results = gsea_sig
+
+        # ssGSEA/GSVA 处理分支 - 不使用 P 值过滤，直接使用全部结果
+        # ssGSEA 只需 analysis_method 为 'ssgsea' 即可进入（gsva_results 可选）
+        # GSVA 需要 gsva_results 不为 None 才能生成图表
+        is_ssgsea_branch = analysis_method == 'ssgsea'
+        is_gsva_branch = analysis_method == 'gsva' and gsva_results is not None
+        if is_ssgsea_branch or is_gsva_branch:
+            sections = {}
+            for db_name, df in results.items():
+                if 'NES' in df.columns:
+                    df = df.reindex(df['NES'].abs().sort_values(ascending=False).index)
+                sections[f'{db_name}_table'] = self._generate_tables(
+                    {db_name: df}, analysis_method=analysis_method
+                )
+
+            # 生成 GSVA 专属图表（仅当 gsva_results 不为 None 时）
+            gsva_section = ''
+            if gsva_results is not None:
+                gsva_section = self._generate_gsva_plots_section(
+                    gsva_results=gsva_results,
+                    groups=gsva_groups,
+                    plot_types=plot_types or ['heatmap', 'group_comparison', 'correlation']
+                )
+            if gsva_section:
+                sections['gsva_visualization'] = gsva_section
+
+            # 生成摘要
+            sections['summary'] = self._generate_summary(
+                results, analysis_method=analysis_method
+            )
+
+            # 构建 HTML
+            active_db_names = [db for db, df in results.items() if len(df) > 0]
+            html = self._build_html(
+                summary=sections.get('summary', ''),
+                tables='\n'.join(v for k, v in sections.items() if k.endswith('_table')),
+                plots='',
+                ai_section='',
+                db_names=active_db_names,
+                gsva_plots_html=sections.get('gsva_visualization', ''),
+                analysis_method=analysis_method,
+                metadata=metadata
+            )
+
+            with open(output_file, 'w', encoding='utf-8') as f:
+                f.write(html)
+
             return output_file
 
         summary = self._generate_summary(sig_results, gene_list)
@@ -254,10 +575,132 @@ class ReportGenerator:
 </html>'''
         return html
 
-    def _generate_summary(self, results: Dict[str, pd.DataFrame], gene_list: List[str] = None) -> str:
+    def _generate_summary(self, results: Dict[str, pd.DataFrame], gene_list: List[str] = None, analysis_method: str = None) -> str:
         """生成统计摘要部分"""
         total_terms = sum(len(df) for df in results.values())
         databases = list(results.keys())
+
+        # ssGSEA 专属摘要
+        if analysis_method == 'ssgsea':
+            all_nes = []
+            all_gene_counts = []
+            summary_stats = []
+            for db_name, df in results.items():
+                if len(df) > 0:
+                    if 'NES' in df.columns:
+                        all_nes.extend(df['NES'].dropna().tolist())
+                    gc_col = 'Gene_Count' if 'Gene_Count' in df.columns else ('setSize' if 'setSize' in df.columns else None)
+                    if gc_col:
+                        all_gene_counts.extend(df[gc_col].dropna().tolist())
+                    summary_stats.append({
+                        "database": db_name,
+                        "terms": len(df),
+                    })
+
+            nes_min = min(all_nes) if all_nes else 0
+            nes_max = max(all_nes) if all_nes else 0
+            gc_min = int(min(all_gene_counts)) if all_gene_counts else 0
+            gc_max = int(max(all_gene_counts)) if all_gene_counts else 0
+
+            rows_html = "".join([
+                f'<tr><td><a href="#{s["database"]}-table">{s["database"]}</a></td>'
+                f'<td>{s["terms"]}</td></tr>'
+                for s in summary_stats
+            ])
+
+            html = f'''
+            <div class="section" id="summary">
+                <h2>ssGSEA Analysis Summary</h2>
+                <div class="summary-grid">
+                    <div class="stat-item">
+                        <span class="stat-value">{total_terms}</span>
+                        <span class="stat-label">Pathways</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-value">{nes_min:.2f} ~ {nes_max:.2f}</span>
+                        <span class="stat-label">NES Range</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-value">{gc_min} ~ {gc_max}</span>
+                        <span class="stat-label">Gene Set Size Range</span>
+                    </div>
+                </div>
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Database</th>
+                            <th>Pathways</th>
+                        </tr>
+                    </thead>
+                    <tbody>{rows_html}</tbody>
+                </table>
+            </div>'''
+            return html
+
+        # GSVA 专属摘要
+        if analysis_method == 'gsva':
+            all_scores = []
+            sample_cols_set = set()
+            summary_stats = []
+            for db_name, df in results.items():
+                if len(df) > 0:
+                    # 只保留数值类型的列作为样本列
+                    sample_cols = [c for c in df.columns if c not in [
+                        'Term_ID', 'Term_Name', 'Gene_Count', 'Background_Count',
+                        'Term_URL', 'NES', 'ES', 'P_Value', 'Adjusted_P_Value',
+                        'FDR', 'Genes', 'Leading_Edge', 'Database',
+                        'Rich_Factor', 'Gene_Ratio', 'Background_Ratio',
+                        'Expected_Count'
+                    ] and pd.api.types.is_numeric_dtype(df[c])]
+                    sample_cols_set.update(sample_cols)
+                    for col in sample_cols:
+                        vals = pd.to_numeric(df[col], errors='coerce').dropna()
+                        all_scores.extend(vals.tolist())
+                    summary_stats.append({
+                        "database": db_name,
+                        "terms": len(df),
+                    })
+
+            # 过滤非数值值，确保 min/max 计算安全
+            numeric_scores = [x for x in all_scores if isinstance(x, (int, float))]
+            score_min = min(numeric_scores) if numeric_scores else 0
+            score_max = max(numeric_scores) if numeric_scores else 0
+            n_samples = len(sample_cols_set)
+
+            rows_html = "".join([
+                f'<tr><td><a href="#{s["database"]}-table">{s["database"]}</a></td>'
+                f'<td>{s["terms"]}</td></tr>'
+                for s in summary_stats
+            ])
+
+            html = f'''
+            <div class="section" id="summary">
+                <h2>GSVA Analysis Summary</h2>
+                <div class="summary-grid">
+                    <div class="stat-item">
+                        <span class="stat-value">{total_terms}</span>
+                        <span class="stat-label">Pathways</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-value">{n_samples}</span>
+                        <span class="stat-label">Samples</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-value">{score_min:.2f} ~ {score_max:.2f}</span>
+                        <span class="stat-label">Activity Score Range</span>
+                    </div>
+                </div>
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Database</th>
+                            <th>Pathways</th>
+                        </tr>
+                    </thead>
+                    <tbody>{rows_html}</tbody>
+                </table>
+            </div>'''
+            return html
 
         summary_stats = []
         for db_name, df in results.items():
@@ -265,8 +708,10 @@ class ReportGenerator:
                 summary_stats.append({
                     "database": db_name,
                     "terms": len(df),
-                    "min_pval": df['P_Value'].min() if 'P_Value' in df.columns else 0,
-                    "min_adj_pval": df['Adjusted_P_Value'].min() if 'Adjusted_P_Value' in df.columns else 0
+                    "min_pval": df['P_Value'].min() if 'P_Value' in df.columns
+                                else (df['p_value'].min() if 'p_value' in df.columns else 0),
+                    "min_adj_pval": df['Adjusted_P_Value'].min() if 'Adjusted_P_Value' in df.columns
+                                    else (df['FDR'].min() if 'FDR' in df.columns else 0)
                 })
 
         rows_html = "".join([
@@ -308,26 +753,153 @@ class ReportGenerator:
         </div>'''
         return html
 
-    def _generate_tables(self, results: Dict[str, pd.DataFrame]) -> str:
+    def _generate_tables(self, results: Dict[str, pd.DataFrame], analysis_method: str = None) -> str:
         """生成交互式数据表格（含 GeneList 列）"""
         tables_html = []
+
+        is_ssgsea = analysis_method == 'ssgsea'
+        is_gsva = analysis_method == 'gsva'
 
         for db_name, df in results.items():
             if len(df) == 0:
                 continue
 
             rows = []
-            is_gsea = 'NES' in df.columns or 'nes' in df.columns
+            is_gsea = 'NES' in df.columns or ('ES' in df.columns and 'setSize' in df.columns)
+
+            # ssGSEA 专属 8 列表格
+            if is_ssgsea:
+                html_parts = []
+                html_parts.append(f'<div class="section" id="{db_name}-table">')
+                html_parts.append(f'<h2>{db_name} ssGSEA Results <span class="result-count">({len(df)} pathways)</span></h2>')
+                headers = ['Term ID', 'Term Name', 'NES', 'ES', 'Gene Count', 'Gene Ratio', 'Genes', 'Leading Edge']
+                html_parts.append('<div class="table-wrapper"><table class="data-table" id="table-{0}">'.format(db_name))
+                html_parts.append('<thead><tr>')
+                for h in headers:
+                    html_parts.append(f'<th>{h}</th>')
+                html_parts.append('</tr></thead><tbody>')
+                for _, row in df.iterrows():
+                    term_id = row.get('Term_ID', '')
+                    term_url = row.get('Term_URL', '')
+                    term_name = row.get('Term_Name', '')
+                    nes = row.get('NES', '')
+                    es = row.get('ES', '')
+                    gene_count = row.get('Gene_Count', row.get('setSize', ''))
+                    gene_ratio = row.get('Gene_Ratio', '')
+                    genes = row.get('Genes', '')
+                    leading_edge = row.get('Leading_Edge', '')
+
+                    html_parts.append('<tr>')
+                    if term_url:
+                        html_parts.append(f'<td><a href="{term_url}" target="_blank">{term_id}</a></td>')
+                    else:
+                        html_parts.append(f'<td>{term_id}</td>')
+                    html_parts.append(f'<td>{term_name}</td>')
+                    html_parts.append(f'<td>{nes}</td>')
+                    html_parts.append(f'<td>{es}</td>')
+                    html_parts.append(f'<td>{gene_count}</td>')
+                    html_parts.append(f'<td>{gene_ratio}</td>')
+                    genes_display = self._truncate_genes(str(genes)) if genes else ''
+                    html_parts.append(f'<td class="genes" data-full="{genes}">{genes_display}</td>')
+                    le_display = self._truncate_genes(str(leading_edge)) if leading_edge else ''
+                    html_parts.append(f'<td class="genes" data-full="{leading_edge}">{le_display}</td>')
+                    html_parts.append('</tr>')
+                html_parts.append('</tbody></table></div>')
+                html_parts.append('<div class="table-actions">')
+                html_parts.append(f'<button onclick="downloadTable(\'{db_name}\')">Download TSV</button>')
+                html_parts.append(f'<button onclick="copyTable(\'{db_name}\')">Copy</button>')
+                html_parts.append('</div></div>')
+                tables_html.append('\n'.join(html_parts))
+                continue
+
+            # GSVA 专属动态样本列表格
+            if is_gsva:
+                html_parts = []
+                html_parts.append(f'<div class="section" id="{db_name}-table">')
+                html_parts.append(f'<h2>{db_name} GSVA Results <span class="result-count">({len(df)} pathways)</span></h2>')
+                sample_cols = [c for c in df.columns if c not in [
+                    'Term_ID', 'Term_Name', 'Gene_Count', 'Background_Count',
+                    'Term_URL', 'NES', 'ES', 'P_Value', 'Adjusted_P_Value',
+                    'FDR', 'Genes', 'Leading_Edge'
+                ]]
+                headers = ['Term ID', 'Term Name', 'Gene Count'] + sample_cols
+                html_parts.append('<div class="table-wrapper"><table class="data-table" id="table-{0}">'.format(db_name))
+                html_parts.append('<thead><tr>')
+                for h in headers:
+                    html_parts.append(f'<th>{h}</th>')
+                html_parts.append('</tr></thead><tbody>')
+                for _, row in df.iterrows():
+                    term_id = row.get('Term_ID', '')
+                    term_url = row.get('Term_URL', '')
+                    term_name = row.get('Term_Name', '')
+                    gene_count = row.get('Gene_Count', '')
+
+                    html_parts.append('<tr>')
+                    if term_url:
+                        html_parts.append(f'<td><a href="{term_url}" target="_blank">{term_id}</a></td>')
+                    else:
+                        html_parts.append(f'<td>{term_id}</td>')
+                    html_parts.append(f'<td>{term_name}</td>')
+                    html_parts.append(f'<td>{gene_count}</td>')
+                    for col in sample_cols:
+                        val = row.get(col, '')
+                        html_parts.append(f'<td>{val}</td>')
+                    html_parts.append('</tr>')
+                html_parts.append('</tbody></table></div>')
+                html_parts.append('<div class="table-actions">')
+                html_parts.append(f'<button onclick="downloadTable(\'{db_name}\')">Download TSV</button>')
+                html_parts.append(f'<button onclick="copyTable(\'{db_name}\')">Copy</button>')
+                html_parts.append('</div></div>')
+                tables_html.append('\n'.join(html_parts))
+                continue
+
             for idx, row in df.iterrows():
+                term_url = row.get('Term_URL', '')
                 if is_gsea:
+                    # GSEA 13-column 格式
                     tid = row.get('Term_ID', row.get('Term', row.get('ID', 'N/A')))
-                    tname = row.get('Term_Name', row.get('Description', row.get('Term_Name', 'N/A')))
-                    gcount = row.get('setSize', row.get('Gene_Count', 0))
-                    rf = f"{row.get('NES', row.get('nes', 0)):.4f}"
-                    pv = f"{row.get('p_value', row.get('NOM p-val', row.get('pvalue', row.get('P_Value', 1)))):.2e}"
-                    adjpv = f"{row.get('FDR', row.get('FDR q-val', row.get('p.adjust', row.get('Adjusted_P_Value', 1)))):.2e}"
-                    genes_str = str(row.get('matched_genes', row.get('core_enrichment', row.get('Genes', ''))))
+                    tname = row.get('Term_Name', row.get('Description', 'N/A'))
+                    db = row.get('Database', db_name)
+                    set_size = row.get('setSize', row.get('Gene_Count', 0))
+                    es = row.get('ES', row.get('es', 0))
+                    nes = row.get('NES', row.get('nes', 0))
+                    pv = row.get('p_value', row.get('NOM p-val', row.get('pvalue', row.get('P_Value', 1))))
+                    fdr = row.get('FDR', row.get('FDR q-val', row.get('p.adjust', row.get('Adjusted_P_Value', 1))))
+                    rank = row.get('rank', row.get('Rank', 0))
+                    tag_pct = row.get('tag %', row.get('Tag_%', row.get('tag_percent', '')))
+                    gene_pct = row.get('gene %', row.get('Gene_%', row.get('gene_percent', '')))
+                    lead_genes = str(row.get('lead_genes', row.get('Lead_genes', '')))
+                    matched_genes = str(row.get('matched_genes', row.get('core_enrichment', row.get('Genes', ''))))
+
+                    tid_cell = f'<a href="{term_url}" target="_blank">{tid}</a>' if term_url else tid
+
+                    es_str = f"{es:.4f}" if isinstance(es, (int, float)) else str(es)
+                    nes_str = f"{nes:.4f}" if isinstance(nes, (int, float)) else str(nes)
+                    pv_str = f"{pv:.2e}" if isinstance(pv, (int, float)) else str(pv)
+                    fdr_str = f"{fdr:.2e}" if isinstance(fdr, (int, float)) else str(fdr)
+
+                    gene_preview = self._truncate_genes(matched_genes)
+                    lead_preview = self._truncate_genes(lead_genes)
+
+                    rows.append(
+                        f'<tr>'
+                        f'<td>{tid_cell}</td>'
+                        f'<td>{tname}</td>'
+                        f'<td>{db}</td>'
+                        f'<td>{set_size}</td>'
+                        f'<td>{es_str}</td>'
+                        f'<td>{nes_str}</td>'
+                        f'<td>{pv_str}</td>'
+                        f'<td>{fdr_str}</td>'
+                        f'<td>{rank}</td>'
+                        f'<td>{tag_pct}</td>'
+                        f'<td>{gene_pct}</td>'
+                        f'<td class="genes" data-full="{lead_genes}">{lead_preview}</td>'
+                        f'<td class="genes" data-full="{matched_genes}">{gene_preview}</td>'
+                        f'</tr>'
+                    )
                 else:
+                    # ORA 7-column 格式
                     tid = row.get('Term_ID', 'N/A')
                     tname = row.get('Term_Name', 'N/A')
                     gcount = row.get('Gene_Count', 0)
@@ -335,19 +907,33 @@ class ReportGenerator:
                     pv = f"{row.get('P_Value', 1):.2e}"
                     adjpv = f"{row.get('Adjusted_P_Value', 1):.2e}"
                     genes_str = str(row.get('Genes', ''))
-                term_url = row.get('Term_URL', '')
 
-                if term_url:
-                    tid_cell = f'<a href="{term_url}" target="_blank">{tid}</a>'
-                else:
-                    tid_cell = tid
+                    tid_cell = f'<a href="{term_url}" target="_blank">{tid}</a>' if term_url else tid
+                    gene_preview = self._truncate_genes(genes_str)
 
-                rf_header = 'NES' if is_gsea else 'Rich Factor'
-                rows.append(
-                    f'<tr><td>{tid_cell}</td><td>{tname}</td><td>{gcount}</td>'
-                    f'<td>{rf}</td><td>{pv}</td><td>{adjpv}</td>'
-                    f'<td class="genes" title="{genes_str}">{genes_str}</td></tr>'
-                )
+                    rows.append(
+                        f'<tr>'
+                        f'<td>{tid_cell}</td>'
+                        f'<td>{tname}</td>'
+                        f'<td>{gcount}</td>'
+                        f'<td>{rf}</td>'
+                        f'<td>{pv}</td>'
+                        f'<td>{adjpv}</td>'
+                        f'<td class="genes" data-full="{genes_str}">{gene_preview}</td>'
+                        f'</tr>'
+                    )
+
+            # 构建表头
+            if is_gsea:
+                headers = [
+                    'Term ID', 'Term Name', 'Database', 'setSize', 'ES', 'NES',
+                    'p_value', 'FDR', 'rank', 'Tag %', 'Gene %',
+                    'Lead_genes', 'matched_genes'
+                ]
+            else:
+                headers = ['Term ID', 'Term Name', 'Gene Count', 'Rich Factor', 'P-value', 'Adj. P-value', 'Gene List']
+
+            header_html = "".join(f'<th>{h}</th>' for h in headers)
 
             table_html = f'''
             <div class="section" id="{db_name}-table">
@@ -355,15 +941,7 @@ class ReportGenerator:
                 <div class="table-wrapper">
                     <table class="data-table" id="table-{db_name}">
                         <thead>
-                            <tr>
-                                <th>Term ID</th>
-                                <th>Term Name</th>
-                                <th>Gene Count</th>
-                                <th>{'NES' if is_gsea else 'Rich Factor'}</th>
-                                <th>P-value</th>
-                                <th>Adj. P-value</th>
-                                <th>Gene List</th>
-                            </tr>
+                            <tr>{header_html}</tr>
                         </thead>
                         <tbody>{"".join(rows)}</tbody>
                     </table>
@@ -377,6 +955,15 @@ class ReportGenerator:
 
         return "\n".join(tables_html)
 
+    @staticmethod
+    def _truncate_genes(genes_str: str, max_len: int = 80) -> str:
+        """截断基因列表预览，超出部分用 ... 表示"""
+        if not genes_str or genes_str == 'nan':
+            return ''
+        if len(genes_str) > max_len:
+            return genes_str[:max_len] + '...'
+        return genes_str
+
     def _generate_plot_section(self, results: Dict[str, pd.DataFrame]) -> str:
         """生成图表展示区域 - 使用PNG图片直接嵌入HTML"""
         plots_html = ['<div class="section" id="plots"><h2>Visualization</h2>']
@@ -384,19 +971,28 @@ class ReportGenerator:
         has_any_plot = False
         for db_name in results.keys():
             plot_dir = self.output_dir / "plots"
-            
+            gsea_plot_dir = self.output_dir / "gsea_plots"
+
+            # ORA plots
             barplot_png = plot_dir / f"{db_name}_barplot.png"
             barplot_pdf = plot_dir / f"{db_name}_barplot.pdf"
             bubble_png = plot_dir / f"{db_name}_bubble.png"
             bubble_pdf = plot_dir / f"{db_name}_bubble.pdf"
 
+            # GSEA plots
+            gsea_nes_barplot_png = gsea_plot_dir / f"{db_name}_nes_barplot.png"
+            gsea_dotplot_png = gsea_plot_dir / f"{db_name}_dotplot.png"
+
             has_bar = barplot_png.exists() or barplot_pdf.exists()
             has_bubble = bubble_png.exists() or bubble_pdf.exists()
+            has_gsea_nes_bar = gsea_nes_barplot_png.exists()
+            has_gsea_dot = gsea_dotplot_png.exists()
 
-            if has_bar or has_bubble:
+            if has_bar or has_bubble or has_gsea_nes_bar or has_gsea_dot:
                 has_any_plot = True
                 plots_html.append(f'<div class="plot-group"><h3>{db_name}</h3>')
-                
+
+                # ORA barplot
                 if barplot_png.exists():
                     img_data = self._encode_image_to_base64(barplot_png)
                     plots_html.append(f'''
@@ -406,7 +1002,8 @@ class ReportGenerator:
                         </div>''')
                 elif barplot_pdf.exists():
                     plots_html.append(f'<a href="plots/{barplot_pdf.name}" target="_blank" class="plot-link">Bar Plot (PDF)</a>')
-                
+
+                # ORA bubble plot
                 if bubble_png.exists():
                     img_data = self._encode_image_to_base64(bubble_png)
                     plots_html.append(f'''
@@ -416,7 +1013,25 @@ class ReportGenerator:
                         </div>''')
                 elif bubble_pdf.exists():
                     plots_html.append(f'<a href="plots/{bubble_pdf.name}" target="_blank" class="plot-link">Bubble Plot (PDF)</a>')
-                
+
+                # GSEA NES barplot
+                if gsea_nes_barplot_png.exists():
+                    img_data = self._encode_image_to_base64(gsea_nes_barplot_png)
+                    plots_html.append(f'''
+                        <div class="plot-container">
+                            <img src="data:image/png;base64,{img_data}" alt="{db_name} NES Barplot" class="plot-img">
+                            <p class="plot-caption">GSEA NES Bar Plot (Normalized Enrichment Score)</p>
+                        </div>''')
+
+                # GSEA dotplot
+                if gsea_dotplot_png.exists():
+                    img_data = self._encode_image_to_base64(gsea_dotplot_png)
+                    plots_html.append(f'''
+                        <div class="plot-container">
+                            <img src="data:image/png;base64,{img_data}" alt="{db_name} GSEA Dotplot" class="plot-img">
+                            <p class="plot-caption">GSEA Dot Plot (NES vs gene count)</p>
+                        </div>''')
+
                 plots_html.append('</div>')
 
         if not has_any_plot:
@@ -772,6 +1387,14 @@ class ReportGenerator:
         if _db_ver:
             _version_str += f" | DB: {_db_ver}"
 
+        # 根据 analysis_method 确定报告标题
+        _title_map = {
+            'ssgsea': 'ssGSEA Enrichment Analysis Report',
+            'gsva': 'GSVA Enrichment Analysis Report',
+            'gsea': 'GSEA Enrichment Analysis Report',
+        }
+        _report_title = _title_map.get(analysis_method, 'Enrichment Analysis Report')
+
         nav_items = '<li><a href="#summary">Summary</a></li>'
         nav_items += '<li><a href="#plots">Plots</a></li>'
         # GSEA/GSVA 导航链接
@@ -796,7 +1419,7 @@ class ReportGenerator:
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AllEnricher v{_version} - Enrichment Analysis Report</title>
+    <title>AllEnricher v{_version} - {_report_title}</title>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Serif:wght@400;600&family=Source+Sans+Pro:wght@400;600&display=swap" rel="stylesheet">
     <style>
         :root {{
@@ -1120,24 +1743,132 @@ class ReportGenerator:
             text-decoration: none;
         }}
 
-        /* DataTables customization */
-        .dataTables_wrapper .dataTables_length,
-        .dataTables_wrapper .dataTables_filter {{
+        /* Table Controls */
+        .table-controls {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
             margin-bottom: 1rem;
+            flex-wrap: wrap;
+            gap: 0.75rem;
         }}
 
-        .dataTables_wrapper .dataTables_info {{
+        .table-search {{
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }}
+
+        .table-search input {{
+            padding: 0.4rem 0.75rem;
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            font-size: 0.85rem;
+            min-width: 200px;
+        }}
+
+        .table-search input:focus {{
+            outline: none;
+            border-color: var(--accent-color);
+        }}
+
+        .table-length {{
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }}
+
+        .table-length select {{
+            padding: 0.4rem 0.5rem;
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            font-size: 0.85rem;
+            background: var(--bg-primary);
+        }}
+
+        .table-info {{
             color: var(--text-muted);
             font-size: 0.8rem;
+            margin-top: 0.75rem;
         }}
 
-        .paginate_button {{
-            color: var(--text-secondary) !important;
+        /* Pagination */
+        .pagination {{
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 0.25rem;
+            margin-top: 1rem;
+            flex-wrap: wrap;
         }}
 
-        .paginate_button.current {{
-            color: var(--accent-color) !important;
-            font-weight: 600;
+        .pagination button {{
+            padding: 0.4rem 0.75rem;
+            border: 1px solid var(--border-color);
+            background: var(--bg-primary);
+            color: var(--text-secondary);
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            transition: all 0.2s;
+        }}
+
+        .pagination button:hover:not(:disabled) {{
+            background: var(--bg-secondary);
+            border-color: var(--accent-color);
+        }}
+
+        .pagination button:disabled {{
+            opacity: 0.5;
+            cursor: not-allowed;
+        }}
+
+        .pagination button.active {{
+            background: var(--accent-color);
+            color: white;
+            border-color: var(--accent-color);
+        }}
+
+        /* Sortable Headers */
+        th.sortable {{
+            cursor: pointer;
+            user-select: none;
+            position: relative;
+            padding-right: 1.5rem;
+        }}
+
+        th.sortable:hover {{
+            background: var(--bg-secondary);
+        }}
+
+        th.sortable::after {{
+            content: '↕';
+            position: absolute;
+            right: 0.5rem;
+            opacity: 0.4;
+            font-size: 0.75rem;
+        }}
+
+        th.sortable.sort-asc::after {{
+            content: '↑';
+            opacity: 1;
+            color: var(--accent-color);
+        }}
+
+        th.sortable.sort-desc::after {{
+            content: '↓';
+            opacity: 1;
+            color: var(--accent-color);
+        }}
+
+        th.sortable.sort-disabled {{
+            cursor: default;
+        }}
+
+        th.sortable.sort-disabled::after {{
+            content: none;
         }}
 
         /* Plot Placeholder */
@@ -1211,7 +1942,7 @@ class ReportGenerator:
 <body>
     <header class="header">
         <div class="header-content">
-            <h1>AllEnricher Report</h1>
+            <h1>AllEnricher Report - {_report_title}</h1>
             <span class="meta">{_version_str} | {datetime.now().strftime("%Y-%m-%d")}</span>
         </div>
     </header>
@@ -1232,51 +1963,7 @@ class ReportGenerator:
         <p>Generated by <a href="https://github.com/zd105/AllEnricher">AllEnricher v{_version}</a></p>
     </footer>
 
-    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-    <link rel="stylesheet" href="https://cdn.datatables.net/1.13.4/css/jquery.dataTables.min.css">
-    <script src="https://cdn.datatables.net/1.13.4/js/jquery.dataTables.min.js"></script>
-    <script>
-        $(document).ready(function() {{
-            $('.data-table').DataTable({{
-                pageLength: 20,
-                lengthMenu: [10, 20, 50, 100],
-                order: [[5, 'asc']],
-                columnDefs: [
-                    {{ orderable: false, targets: [6] }}
-                ]
-            }});
-        }});
-
-        function downloadTable(dbName) {{
-            const table = document.getElementById('table-' + dbName);
-            let tsv = [];
-            const headers = Array.from(table.querySelectorAll('th')).map(th => th.textContent.trim());
-            tsv.push(headers.join('\t'));
-            const rows = table.querySelectorAll('tbody tr');
-            rows.forEach(row => {{
-                const cells = Array.from(row.querySelectorAll('td')).map(td => td.textContent.trim());
-                tsv.push(cells.join('\t'));
-            }});
-            const blob = new Blob([tsv.join('\n')], {{ type: 'text/tab-separated-values' }});
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = dbName + '_enrichment.tsv';
-            a.click();
-            URL.revokeObjectURL(url);
-        }}
-
-        function copyTable(dbName) {{
-            const table = document.getElementById('table-' + dbName);
-            const range = document.createRange();
-            range.selectNode(table);
-            window.getSelection().removeAllRanges();
-            window.getSelection().addRange(range);
-            document.execCommand('copy');
-            window.getSelection().removeAllRanges();
-            alert('Table copied to clipboard');
-        }}
-    </script>
+    {self._TABLE_JS}
 </body>
 </html>'''
         return html
