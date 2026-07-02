@@ -37,10 +37,11 @@ class TestGSEA:
                         "GENE_F", "GENE_G", "GENE_H", "GENE_I", "GENE_J"]
         gene_set = {"GENE_A", "GENE_B", "GENE_C"}  # 前三个基因
 
-        es, hit_genes = gsea.calculate_enrichment_score(ranked_genes, gene_set)
+        es, hit_genes, rank_at_es = gsea.calculate_enrichment_score(ranked_genes, gene_set)
 
         assert es > 0  # 正向富集，ES 应为正值
         assert len(hit_genes) > 0  # 应有前沿基因
+        assert rank_at_es > 0
 
     def test_calculate_enrichment_score_negative(self):
         """测试 GSEA 富集分数计算：基因集中在排序列表底部富集"""
@@ -50,10 +51,12 @@ class TestGSEA:
                         "GENE_F", "GENE_G", "GENE_H", "GENE_I", "GENE_J"]
         gene_set = {"GENE_H", "GENE_I", "GENE_J"}  # 最后三个基因
 
-        es, hit_genes = gsea.calculate_enrichment_score(ranked_genes, gene_set)
+        es, hit_genes, rank_at_es = gsea.calculate_enrichment_score(ranked_genes, gene_set)
 
-        # 底部富集时 ES 应为负值或较小的正值
         assert isinstance(es, float)
+        assert es < 0  # 底部富集应为负向 ES
+        assert len(hit_genes) > 0
+        assert rank_at_es > 0
 
     def test_calculate_enrichment_score_no_overlap(self):
         """测试无交集时的 ES 计算"""
@@ -62,10 +65,11 @@ class TestGSEA:
         ranked_genes = ["GENE_A", "GENE_B", "GENE_C"]
         gene_set = {"GENE_X", "GENE_Y"}  # 完全无交集
 
-        es, hit_genes = gsea.calculate_enrichment_score(ranked_genes, gene_set)
+        es, hit_genes, rank_at_es = gsea.calculate_enrichment_score(ranked_genes, gene_set)
 
         assert es == 0.0  # 无交集时 ES 应为 0
         assert len(hit_genes) == 0
+        assert rank_at_es == 0
 
     def test_calculate_enrichment_with_weights(self):
         """测试带权重的 GSEA ES 计算"""
@@ -76,11 +80,12 @@ class TestGSEA:
         gene_weights = {"GENE_A": 2.0, "GENE_B": 1.0, "GENE_C": 0.5,
                         "GENE_D": 0.1, "GENE_E": 0.1}
 
-        es, hit_genes = gsea.calculate_enrichment_score(
+        es, hit_genes, rank_at_es = gsea.calculate_enrichment_score(
             ranked_genes, gene_set, gene_weights=gene_weights
         )
 
         assert es > 0  # 带权重时仍应正向富集
+        assert rank_at_es > 0
 
     def test_permutation_test(self):
         """测试 GSEA 置换检验的 p 值计算"""
@@ -90,7 +95,7 @@ class TestGSEA:
         gene_set = {f"GENE_{i:03d}" for i in range(5)}  # 前5个基因
 
         # 先计算观察 ES
-        observed_es, _ = gsea.calculate_enrichment_score(ranked_genes, gene_set)
+        observed_es, _, _ = gsea.calculate_enrichment_score(ranked_genes, gene_set)
         # 再运行置换检验
         pvalue = gsea._run_permutation_test(ranked_genes, gene_set, observed_es)
 
@@ -185,15 +190,13 @@ class TestMethodRegistration:
         method = analyzer._get_method()
         assert isinstance(method, GSEA)
 
-    def test_fisher_registered(self):
-        """测试 fisher 方法已注册"""
-        from allenricher.core.enrichment import FisherExactTest
-
+    def test_fisher_not_registered_as_cli_method(self):
+        """测试 fisher 不再作为 CLI 方法名注册"""
         config = Config(method="fisher")
         analyzer = EnrichmentAnalyzer(config)
 
-        method = analyzer._get_method()
-        assert isinstance(method, FisherExactTest)
+        with pytest.raises(ValueError, match="Unknown method"):
+            analyzer._get_method()
 
     def test_hypergeometric_registered(self):
         """测试 hypergeometric 方法已注册"""
@@ -435,7 +438,7 @@ class TestLazyMethodInit:
 
     def test_method_lazy_loading(self):
         """测试 method 属性的延迟加载和缓存"""
-        config = Config(method="fisher")
+        config = Config(method="hypergeometric")
         analyzer = EnrichmentAnalyzer(config)
 
         # 第一次访问：创建方法实例

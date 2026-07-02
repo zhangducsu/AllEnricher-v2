@@ -14,6 +14,7 @@ import logging
 from typing import Dict, List, Optional, Set
 
 import matplotlib
+matplotlib.use("Agg", force=True)
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import numpy as np
@@ -21,6 +22,7 @@ import pandas as pd
 import seaborn as sns
 
 from .plot_theme import PlotTheme, save_figure_dual
+from .plot_utils import clean_pathway_label, term_figure_size
 
 logger = logging.getLogger(__name__)
 
@@ -265,7 +267,12 @@ def plot_gsea_nes_barplot(
     df["_abs_nes"] = df[nes_col].abs() if nes_col else df.iloc[:, 0]
     df = df.sort_values("_abs_nes", ascending=True).tail(top_n).copy()
     df = df.drop(columns=["_abs_nes"])
-
+    if pathway_col:
+        df["_display_label"] = [clean_pathway_label(value) for value in df[pathway_col]]
+    else:
+        df["_display_label"] = [f"Pathway {idx + 1}" for idx in range(len(df))]
+    if figsize == (10, 8):
+        figsize = term_figure_size(len(df), width=8.2, min_height=2.8, row_height=0.46)
     with PlotTheme.context(style or 'nature'):
         # 获取颜色
         colors = PlotTheme.get_palette(palette, n=3)
@@ -289,7 +296,26 @@ def plot_gsea_nes_barplot(
 
         # 绘图
         fig, ax = plt.subplots(figsize=figsize)
-        bars = ax.barh(range(len(df)), df[nes_col], color=bar_colors, edgecolor="none", height=0.7)
+        if len(df) == 1:
+            nes_val = float(df[nes_col].iloc[0])
+            color = color_pos if nes_val >= 0 else color_neg
+            span = max(abs(nes_val), 1.0)
+            ax.set_xlim(min(0, nes_val) - span * 0.20, max(0, nes_val) + span * 0.55)
+            ax.axvline(x=0, color="#9AA0A6", linewidth=0.8, linestyle="--")
+            ax.hlines(0, 0, nes_val, color=color, linewidth=1.2, alpha=0.85)
+            ax.scatter([nes_val], [0], s=90, color=color, edgecolor="white", linewidth=0.7, zorder=3)
+            pval = float(df[pval_col].iloc[0]) if pval_col else np.nan
+            ax.text(
+                nes_val + (0.08 if nes_val >= 0 else -0.08),
+                0,
+                f"NES={nes_val:.2f}  P={pval:.2g}",
+                va="center",
+                ha="left" if nes_val >= 0 else "right",
+                fontsize=8.5,
+                color="#333333",
+            )
+        else:
+            ax.barh(range(len(df)), df[nes_col], color=bar_colors, edgecolor="none", height=0.62)
 
         # 添加显著性标注
         for i, (nes_val, sig) in enumerate(zip(df[nes_col], sig_labels)):
@@ -305,7 +331,7 @@ def plot_gsea_nes_barplot(
                 )
 
         ax.set_yticks(range(len(df)))
-        ax.set_yticklabels(df[pathway_col], fontsize=8)
+        ax.set_yticklabels(df["_display_label"], fontsize=8)
         ax.axvline(x=0, color="gray", linewidth=0.8, linestyle="-")
         ax.set_xlabel("Normalized Enrichment Score (NES)", fontsize=10)
         ax.set_title(title, fontsize=12, fontweight="bold")
@@ -380,6 +406,12 @@ def plot_gsea_dotplot(
     df["_abs_nes"] = df[nes_col].abs() if nes_col else df.iloc[:, 0]
     df = df.sort_values("_abs_nes", ascending=True).tail(top_n).copy()
     df = df.drop(columns=["_abs_nes"])
+    if pathway_col:
+        df["_display_label"] = [clean_pathway_label(value) for value in df[pathway_col]]
+    else:
+        df["_display_label"] = [f"Pathway {idx + 1}" for idx in range(len(df))]
+    if figsize == (10, 8):
+        figsize = term_figure_size(len(df), width=8.2, min_height=2.8, row_height=0.46)
 
     # 计算 -log10(pvalue)，避免 log(0)
     df["neg_log10_p"] = -np.log10(df[pval_col].clip(lower=1e-300))
@@ -400,7 +432,7 @@ def plot_gsea_dotplot(
         )
 
         ax.set_yticks(range(len(df)))
-        ax.set_yticklabels(df[pathway_col], fontsize=8)
+        ax.set_yticklabels(df["_display_label"], fontsize=8)
         ax.axvline(x=0, color="gray", linewidth=0.8, linestyle="-")
         ax.set_xlabel("Normalized Enrichment Score (NES)", fontsize=10)
         ax.set_title(title, fontsize=12, fontweight="bold")
@@ -408,10 +440,25 @@ def plot_gsea_dotplot(
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
 
-        # 添加颜色条
-        cbar = plt.colorbar(scatter, ax=ax, shrink=0.6, pad=0.02)
-        cbar.set_label("-log10(P-value)", fontsize=9)
-        cbar.ax.tick_params(labelsize=8)
+        if df["neg_log10_p"].nunique(dropna=True) > 1:
+            cbar = plt.colorbar(scatter, ax=ax, shrink=0.55, pad=0.02)
+            cbar.set_label("-log10(P-value)", fontsize=9)
+            cbar.ax.tick_params(labelsize=8)
+        elif len(df) == 1:
+            nes_val = float(df[nes_col].iloc[0])
+            pval = float(df[pval_col].iloc[0]) if pval_col else np.nan
+            gene_count = int(df[gcount_col].iloc[0]) if gcount_col else 0
+            span = max(abs(nes_val), 1.0)
+            ax.set_xlim(min(0, nes_val) - span * 0.20, max(0, nes_val) + span * 0.58)
+            ax.text(
+                nes_val + (0.08 if nes_val >= 0 else -0.08),
+                0,
+                f"NES={nes_val:.2f}  P={pval:.2g}  Genes={gene_count}",
+                va="center",
+                ha="left" if nes_val >= 0 else "right",
+                fontsize=8.5,
+                color="#333333",
+            )
 
         plt.tight_layout()
         _save_figure(fig, output_file, dpi=dpi)

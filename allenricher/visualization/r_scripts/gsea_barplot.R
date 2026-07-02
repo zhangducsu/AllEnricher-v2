@@ -1,5 +1,4 @@
 #!/usr/bin/env Rscript
-# gsea_barplot.R — 双向柱状图 (-log10(FDR)*sign(NES))
 suppressPackageStartupMessages({
   library(ggplot2)
   library(dplyr)
@@ -13,17 +12,27 @@ output <- args$output
 top_n <- as.integer(args$top_n %||% 20)
 
 df <- read_enrichment(tsv_path) %>%
-  mutate(bar_value = -log10(pmax(Adjusted_P_Value, 1e-10)) * sign(NES),
-         direction = ifelse(NES > 0, "Up-regulated", "Down-regulated")) %>%
-  arrange(desc(abs(NES))) %>%
-  head(top_n)
+  prepare_gsea_terms(top_n = top_n, sort_by = "q", label_width = 36, max_label_chars = 88) %>%
+  arrange(NES, Adjusted_P_Value)
 
-p <- ggplot(df, aes(x = reorder(Term_Name, bar_value), y = bar_value, fill = direction)) +
-  geom_col() +
+df$Term_Label <- factor(df$Term_Label, levels = df$Term_Label)
+
+p <- ggplot(df, aes(x = Term_Label, y = NES, fill = Direction)) +
+  geom_hline(yintercept = 0, color = "#777777", linewidth = 0.35) +
+  geom_col(width = 0.72, alpha = 0.92) +
   coord_flip() +
-  scale_fill_manual(values = c("Up-regulated" = "#E41A1C", "Down-regulated" = "#377EBA")) +
-  labs(x = "", y = expression(-log[10](FDR) %*% sign(NES)), fill = "Regulation") +
-  set_nature_theme() +
-  theme(legend.position = "top")
+  scale_fill_direction(name = NULL) +
+  scale_y_continuous(expand = expansion(mult = c(0.08, 0.12))) +
+  labs(
+    x = NULL,
+    y = "Normalized enrichment score (NES)",
+    subtitle = "Direction and magnitude of enriched pathways"
+  ) +
+  set_nature_theme(base_size = 9) +
+  theme(
+    axis.text.y = element_text(size = 8.4, lineheight = 0.94),
+    legend.position = "top",
+    panel.grid.major.x = element_line(color = AE_COL_GRID, linewidth = 0.25)
+  )
 
-save_plot(p, output, width = 10, height = max(6, top_n * 0.3))
+save_plot(p, output, width = 8.4, height = max(4.8, nrow(df) * 0.32 + 1.8))

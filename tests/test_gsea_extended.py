@@ -101,12 +101,13 @@ class TestGSEAEnrichmentScore:
         gene_set = {"A", "B", "C", "D", "E"}
         ranked_genes = ["A", "B", "C", "D", "E"] + [f"X_{i}" for i in range(15)]
 
-        es, leading_edge = gsea.calculate_enrichment_score(ranked_genes, gene_set)
+        es, leading_edge, rank_at_es = gsea.calculate_enrichment_score(ranked_genes, gene_set)
 
         # 所有基因集基因在最前面，ES 应接近 1.0
         assert es > 0.9, f"ES 应接近 1.0，实际为 {es}"
         # 前沿基因应包含所有基因集基因
         assert set(leading_edge) == gene_set
+        assert rank_at_es == len(gene_set)
 
     def test_gsea_nes_positive(self):
         """正向富集时 NES 应为正值"""
@@ -116,12 +117,13 @@ class TestGSEAEnrichmentScore:
             gene_set_size=15, total_genes=100, seed=42
         )
 
-        es, nes, pvalue, leading_edge = gsea.calculate_normalized_es(
+        es, nes, pvalue, leading_edge, rank_at_es = gsea.calculate_normalized_es(
             ranked_genes, gene_set
         )
 
         assert nes > 0, f"正向富集时 NES 应为正值，实际为 {nes}"
         assert es > 0, f"正向富集时 ES 应为正值，实际为 {es}"
+        assert rank_at_es > 0
 
     def test_gsea_nes_negative(self):
         """负向富集时 NES 应为负值
@@ -136,13 +138,13 @@ class TestGSEAEnrichmentScore:
             gene_set_size=15, total_genes=100, seed=42
         )
 
-        es, nes, pvalue, leading_edge = gsea.calculate_normalized_es(
+        es, nes, pvalue, leading_edge, rank_at_es = gsea.calculate_normalized_es(
             ranked_genes, gene_set
         )
 
-        # 基因集在底部时，由于当前实现只追踪正向最大值，
-        # ES 应接近 0（miss 先扣减，hit 后累积但无法超过之前的峰值）
-        assert es >= 0, f"ES 不应为负值，实际为 {es}"
+        assert es < 0, f"底部富集时 ES 应为负值，实际为 {es}"
+        assert nes < 0, f"底部富集时 NES 应为负值，实际为 {nes}"
+        assert rank_at_es > 0
 
     def test_gsea_permutation_pvalue(self):
         """置换检验 p 值应在 [0, 1] 范围内"""
@@ -152,7 +154,7 @@ class TestGSEAEnrichmentScore:
             gene_set_size=15, total_genes=100, seed=42
         )
 
-        es, nes, pvalue, leading_edge = gsea.calculate_normalized_es(
+        es, nes, pvalue, leading_edge, rank_at_es = gsea.calculate_normalized_es(
             ranked_genes, gene_set
         )
 
@@ -166,7 +168,7 @@ class TestGSEAEnrichmentScore:
             gene_set_size=15, total_genes=100, seed=42
         )
 
-        es, nes, pvalue, leading_edge = gsea.calculate_normalized_es(
+        es, nes, pvalue, leading_edge, rank_at_es = gsea.calculate_normalized_es(
             ranked_genes, gene_set
         )
 
@@ -181,10 +183,11 @@ class TestGSEAEnrichmentScore:
         ranked_genes = [f"GENE_{i}" for i in range(50)]
         gene_set = set()  # 空基因集
 
-        es, leading_edge = gsea.calculate_enrichment_score(ranked_genes, gene_set)
+        es, leading_edge, rank_at_es = gsea.calculate_enrichment_score(ranked_genes, gene_set)
 
         assert es == 0.0, f"空基因集的 ES 应为 0，实际为 {es}"
         assert leading_edge == [], f"空基因集的前沿基因应为空列表"
+        assert rank_at_es == 0
 
 
 # ============================================================

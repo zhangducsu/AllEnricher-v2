@@ -1,5 +1,5 @@
 """
-可视化模块 - AllEnricher v2.0
+可视化模块 - AllEnricher v2.3.0
 =============================
 
 本模块负责富集分析结果的可视化展示。
@@ -180,7 +180,11 @@ class Plotter:
             )
         except Exception as e:
             logger.warning(f"柱状图生成失败: {e}")
+            return ""
 
+        if not output_path.exists():
+            logger.warning(f"Bar plot was not generated: {output_path}")
+            return ""
         return str(output_path)
 
     def plot_bubble(
@@ -234,7 +238,11 @@ class Plotter:
                 plt.close(fig)
         except Exception as e:
             logger.warning(f"气泡图生成失败: {e}")
+            return ""
 
+        if not output_path.exists():
+            logger.warning(f"Bubble plot was not generated: {output_path}")
+            return ""
         return str(output_path)
 
     def plot_all(
@@ -270,7 +278,8 @@ class Plotter:
             data, database, bar_file, top_n,
             style=style, palette=palette
         )
-        plots["barplot"] = bar_path
+        if bar_path:
+            plots["barplot"] = bar_path
 
         # 生成气泡图
         bubble_file = f"{database}_bubble.{fmt}"
@@ -278,6 +287,7 @@ class Plotter:
             data, bubble_file, database, top_n,
             style=style, palette=palette
         )
-        plots["bubble"] = bubble_path
+        if bubble_path:
+            plots["bubble"] = bubble_path
 
         return plots

@@ -1,5 +1,4 @@
 #!/usr/bin/env Rscript
-# gsea_cnetplot.R — 通路-基因关联网络图 (简化版: 基于 ggplot2 的基因-通路矩阵)
 suppressPackageStartupMessages({
   library(ggplot2)
   library(dplyr)
@@ -14,53 +13,116 @@ output <- args$output
 top_n <- as.integer(args$top_n %||% 10)
 
 df <- read_enrichment(tsv_path) %>%
-  arrange(desc(abs(NES))) %>%
-  head(top_n)
+  prepare_gsea_terms(top_n = top_n, sort_by = "q", label_width = 30, max_label_chars = 68) %>%
+  arrange(desc(abs(NES)))
 
-# 解析基因集 (用分号分隔)
-gene_sets <- list()
-for (i in 1:nrow(df)) {
-  genes <- strsplit(as.character(df$Genes[i]), ";")[[1]]
-  genes <- unique(trimws(genes))
-  gene_sets[[df$Term_Name[i]]] <- genes
-}
-
-# 构建基因-通路关联矩阵
+gene_sets <- parse_gene_list(df$Genes)
+names(gene_sets) <- df$Term_ID
 all_genes <- unique(unlist(gene_sets))
-pathway_names <- names(gene_sets)
-
-mat <- data.frame(matrix(0, nrow = length(all_genes), ncol = length(pathway_names),
-                         dimnames = list(all_genes, pathway_names)), check.names = FALSE)
-for (j in seq_along(pathway_names)) {
-  mat[gene_sets[[j]], j] <- 1
+if (length(all_genes) == 0) {
+  stop("No genes available for cnetplot")
 }
 
-# 统计每个基因出现的通路数
-gene_freq <- rowSums(mat)
-# 只保留出现在 >= 2 个通路的基因 (连接基因)
-conn_genes <- names(gene_freq[gene_freq >= 2])
-if (length(conn_genes) == 0) {
-  # fallback: 取 top 基因
-  conn_genes <- names(sort(gene_freq, decreasing = TRUE))[1:min(30, length(gene_freq))]
+gene_freq <- sort(table(unlist(gene_sets)), decreasing = TRUE)
+selected_genes <- names(gene_freq[gene_freq >= 2])
+if (nrow(df) == 1) {
+  selected_genes <- names(gene_freq)[seq_len(min(18, length(gene_freq)))]
+} else if (length(selected_genes) < 8) {
+  selected_genes <- names(gene_freq)[seq_len(min(35, length(gene_freq)))]
+} else {
+  selected_genes <- selected_genes[seq_len(min(40, length(selected_genes)))]
 }
 
-mat_sub <- mat[conn_genes, , drop = FALSE]
-mat_sub$Gene <- rownames(mat_sub)
+edge_rows <- list()
+for (i in seq_along(gene_sets)) {
+  term_id <- names(gene_sets)[i]
+  genes <- intersect(gene_sets[[i]], selected_genes)
+  if (length(genes) == 0) {
+    next
+  }
+  edge_rows[[length(edge_rows) + 1]] <- data.frame(Term_ID = term_id, Gene = genes)
+}
+edges <- bind_rows(edge_rows)
+if (nrow(edges) == 0) {
+  stop("No gene-pathway edges available for cnetplot")
+}
 
-# 使用 tidyr::pivot_longer 代替 reshape2::melt
-melted <- mat_sub %>%
-  pivot_longer(cols = -Gene, names_to = "Pathway", values_to = "Present") %>%
-  filter(Present == 1)
+path_nodes <- df %>%
+  mutate(x = 0, y = rev(seq_len(n()))) %>%
+  select(Term_ID, Term_Label, NES, Gene_Count, Direction, x, y)
 
-# 绘制基因-通路关联图
-p <- ggplot(melted, aes(x = Pathway, y = Gene, fill = Pathway)) +
-  geom_tile(color = "white", linewidth = 0.5) +
-  scale_fill_brewer(palette = "Set3", guide = "none") +
-  labs(x = "Pathway", y = "Gene",
-       title = "Gene-Pathway Network") +
-  set_nature_theme() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 8),
-        axis.text.y = element_text(size = 6),
-        plot.title = element_text(hjust = 0.5, face = "bold"))
+gene_order <- names(sort(table(edges$Gene), decreasing = TRUE))
+if (nrow(path_nodes) == 1) {
+  path_nodes$x <- 0
+  path_nodes$y <- 0
+  grid_cols <- min(6, length(gene_order))
+  grid_col <- (seq_along(gene_order) - 1) %% grid_cols
+  grid_row <- floor((seq_along(gene_order) - 1) / grid_cols)
+  gene_nodes <- data.frame(
+    Gene = gene_order,
+    x = 0.72 + grid_col * 0.23,
+    y = 0.40 - grid_row * 0.28
+  )
+  x_limits <- c(-0.58, 2.30)
+  plot_height <- max(3.6, 2.5 + max(grid_row) * 0.34)
+} else {
+  gene_nodes <- data.frame(
+    Gene = gene_order,
+    x = 1,
+    y = seq(from = max(path_nodes$y), to = 1, length.out = length(gene_order))
+  )
+  x_limits <- c(-0.72, 1.42)
+  plot_height <- max(6.2, max(nrow(path_nodes), nrow(gene_nodes)) * 0.18 + 2.2)
+}
 
-save_plot(p, output, width = 12, height = max(8, nrow(mat_sub) * 0.2))
+edges <- edges %>%
+  left_join(path_nodes[, c("Term_ID", "x", "y")], by = "Term_ID")
+gene_nodes_for_join <- gene_nodes
+colnames(gene_nodes_for_join) <- c("Gene", "xend", "yend")
+edges <- edges %>%
+  left_join(gene_nodes_for_join, by = "Gene")
+
+p <- ggplot() +
+  geom_segment(
+    data = edges,
+    aes(x = x, y = y, xend = xend, yend = yend),
+    color = "#B7BDC5",
+    linewidth = 0.28,
+    alpha = 0.52
+  ) +
+  geom_point(
+    data = path_nodes,
+    aes(x = x, y = y, size = Gene_Count, fill = NES),
+    shape = 21,
+    color = "white",
+    stroke = 0.45
+  ) +
+  geom_point(data = gene_nodes, aes(x = x, y = y), size = 1.55, color = "#30363D") +
+  geom_text(
+    data = path_nodes,
+    aes(x = x - 0.035, y = y, label = Term_Label),
+    hjust = 1,
+    size = 2.55,
+    lineheight = 0.88,
+    color = AE_COL_TEXT
+  ) +
+  geom_text(
+    data = gene_nodes,
+    aes(x = x + 0.035, y = y, label = Gene),
+    hjust = 0,
+    size = 2.25,
+    color = "#30363D"
+  ) +
+  scale_fill_nes(name = "NES") +
+  scale_size_area(max_size = 7, name = "Gene count") +
+  coord_cartesian(xlim = x_limits, clip = "off") +
+  labs(subtitle = "Concept-gene network; shared genes are prioritized for readability") +
+  theme_void(base_size = 9) +
+  theme(
+    text = element_text(color = AE_COL_TEXT),
+    plot.subtitle = element_text(size = 9, color = "#555555", hjust = 0),
+    legend.position = "right",
+    plot.margin = margin(12, 36, 12, 36)
+  )
+
+save_plot(p, output, width = ifelse(nrow(path_nodes) == 1, 8.6, 10.2), height = plot_height)

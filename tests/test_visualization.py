@@ -89,6 +89,15 @@ class TestPlotter:
         assert "GO_barplot.png" in plots["barplot"]
         assert "GO_bubble.png" in plots["bubble"]
 
+    def test_plot_all_omits_failed_outputs(self, plotter, sample_data, monkeypatch):
+        """绘图失败或未生成文件时，不应登记为成功图表"""
+        monkeypatch.setattr("allenricher.visualization.barplot.plot_barplot", lambda *args, **kwargs: None)
+        monkeypatch.setattr("allenricher.visualization.bubble.plot_bubble", lambda *args, **kwargs: None)
+
+        assert plotter.plot_barplot(sample_data, "GO", "missing_barplot.png", top_n=5) == ""
+        assert plotter.plot_bubble(sample_data, "missing_bubble.png", top_n=5) == ""
+        assert plotter.plot_all(sample_data, "GO", top_n=5) == {}
+
     def test_top_n_filtering(self, plotter, sample_data):
         """测试 top_n 参数过滤"""
         # 使用 top_n=3

@@ -1,8 +1,8 @@
 """
-Core enrichment analysis engine for AllEnricher v2.0
+Core enrichment analysis engine for AllEnricher v2.3.0
 
 中文模块说明：
-    本模块是 AllEnricher v2.0 的核心富集分析引擎，提供了多种富集分析方法，
+    本模块是 AllEnricher v2.3.0 的核心富集分析引擎，提供了多种富集分析方法，
     包括 Fisher 精确检验、超几何检验和 GSEA（基因集富集分析）。
 
     主要组件：
@@ -654,10 +654,12 @@ class GSEA(EnrichmentMethodBase):
 
         running_sum = 0.0
         max_es = 0.0
+        min_es = 0.0
         rank_at_max = 0
-        leading_edge_indices = []
+        rank_at_min = 0
 
-        nr = sum(abs(gene_weights.get(g, 1.0)) for g in gene_set if g in gene_weights) if gene_weights else nh
+        hits = gene_set & set(ranked_genes)
+        nr = sum(abs(gene_weights.get(g, 1.0)) for g in hits) if gene_weights else nh
         hit_inc = 1.0 / nr if nr > 0 else 0
         miss_inc = 1.0 / (n - nh) if (n - nh) > 0 else 0
 
@@ -668,12 +670,28 @@ class GSEA(EnrichmentMethodBase):
                 if running_sum > max_es:
                     max_es = running_sum
                     rank_at_max = i + 1  # 1-based rank
-                    leading_edge_indices = list(range(i + 1))
             else:
                 running_sum -= miss_inc
+                if running_sum < min_es:
+                    min_es = running_sum
+                    rank_at_min = i + 1  # 1-based rank
 
-        leading_edge = [ranked_genes[idx] for idx in leading_edge_indices if ranked_genes[idx] in gene_set]
-        return max_es, leading_edge, rank_at_max
+        if abs(min_es) > abs(max_es):
+            es = min_es
+            rank_at_es = rank_at_min
+            leading_edge = [
+                gene for gene in ranked_genes[max(rank_at_es - 1, 0):]
+                if gene in gene_set
+            ]
+        else:
+            es = max_es
+            rank_at_es = rank_at_max
+            leading_edge = [
+                gene for gene in ranked_genes[:rank_at_es]
+                if gene in gene_set
+            ]
+
+        return es, leading_edge, rank_at_es
 
     def _run_permutation_test(
         self,
@@ -719,11 +737,11 @@ class GSEA(EnrichmentMethodBase):
             permuted_es, _, _ = self.calculate_enrichment_score(
                 permuted_genes, gene_set, gene_weights
             )
-            # 统计打乱后 ES 大于等于观察 ES 的次数
-            if permuted_es >= observed_es:
+            # 使用绝对值比较，兼容正向和负向富集。
+            if abs(permuted_es) >= abs(observed_es):
                 count_ge += 1
 
-        # 经验 p 值公式：(null_ES >= observed_ES 的次数 + 1) / (n_permutations + 1)
+        # 经验 p 值公式：(abs(null_ES) >= abs(observed_ES) 的次数 + 1) / (n_permutations + 1)
         pvalue = (count_ge + 1) / (n_permutations + 1)
         return pvalue
 
@@ -909,7 +927,7 @@ class GSEA(EnrichmentMethodBase):
                     weights = gene_weights_matrix[sample].to_dict()
 
                 # 计算归一化 ES
-                _, nes, _, _ = self.calculate_normalized_es(
+                _, nes, _, _, _ = self.calculate_normalized_es(
                     ranked_genes, pathway_genes, weights
                 )
                 nes_values.append(nes)

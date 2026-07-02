@@ -118,6 +118,17 @@ def gene_sets():
     }
 
 
+def _write_minimal_png(path):
+    """写入一个最小 PNG 文件，用于报告嵌入测试。"""
+    path.write_bytes(
+        b"\x89PNG\r\n\x1a\n"
+        b"\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+        b"\x08\x06\x00\x00\x00\x1f\x15\xc4\x89"
+        b"\x00\x00\x00\nIDATx\x9cc`\x00\x00\x00\x02\x00\x01"
+        b"\xe2!\xbc3\x00\x00\x00\x00IEND\xaeB`\x82"
+    )
+
+
 # ===========================================================================
 # 1. 向后兼容测试
 # ===========================================================================
@@ -484,7 +495,66 @@ class TestNoGseaGsvaResults:
 
 
 # ===========================================================================
-# 5. plot_types 过滤测试
+# 5. 已生成 GSEA R 图嵌入测试
+# ===========================================================================
+
+class TestGeneratedGseaPlotEmbedding:
+    """测试已生成的 GSEA R 图会进入主报告 Visualization 区域"""
+
+    def test_generated_r_gsea_plots_are_embedded(self, output_dir):
+        gen = ReportGenerator(output_dir)
+        gsea_plot_dir = Path(output_dir) / "gsea_plots"
+        gsea_plot_dir.mkdir(parents=True, exist_ok=True)
+
+        plot_names = [
+            "KEGG_nes_barplot.png",
+            "KEGG_dotplot.png",
+            "KEGG_barplot.png",
+            "KEGG_ridgeplot.png",
+            "KEGG_emapplot.png",
+            "KEGG_cnetplot.png",
+            "KEGG_circos.png",
+            "KEGG_enrichment2.png",
+            "KEGG_heatmap.png",
+            "hsa04110_enrichment.png",
+        ]
+        for plot_name in plot_names:
+            _write_minimal_png(gsea_plot_dir / plot_name)
+
+        results = {
+            "KEGG": pd.DataFrame({
+                "Term_ID": ["hsa04110"],
+                "Term_Name": ["Cell cycle"],
+                "NES": [2.1],
+                "ES": [0.7],
+                "P_Value": [0.001],
+                "Adjusted_P_Value": [0.01],
+                "Set_Size": [32],
+                "Lead_genes": ["CDK1;CCNB1"],
+                "matched_genes": ["CDK1;CCNB1;CDC20"],
+            })
+        }
+
+        html = gen._generate_plot_section(results)
+
+        assert html.count("data:image/png;base64,") == len(plot_names)
+        for caption in [
+            "GSEA signed NES ranking",
+            "GSEA pathway summary",
+            "GSEA top pathway bar plot",
+            "Running enrichment score distribution",
+            "Pathway overlap map",
+            "Pathway-gene network",
+            "Pathway-gene circos overview",
+            "Multi-pathway enrichment trajectories",
+            "Expression heatmap for selected genes",
+            "Single-pathway enrichment trajectory",
+        ]:
+            assert caption in html
+
+
+# ===========================================================================
+# 6. plot_types 过滤测试
 # ===========================================================================
 
 class TestPlotTypesFilter:
@@ -570,7 +640,7 @@ class TestPlotTypesFilter:
 
 
 # ===========================================================================
-# 6. GSEA + GSVA 同时存在测试
+# 7. GSEA + GSVA 同时存在测试
 # ===========================================================================
 
 class TestCombinedGseaGsva:

@@ -1,10 +1,10 @@
 """
-Configuration management for AllEnricher v2.0
+Configuration management for AllEnricher v2.3.0
 
-AllEnricher v2.0 配置管理模块
+AllEnricher v2.3.0 配置管理模块
 ==============================
 
-本模块是 AllEnricher v2.0 的核心配置管理模块，负责定义和管理整个富集分析流程中
+本模块是 AllEnricher v2.3.0 的核心配置管理模块，负责定义和管理整个富集分析流程中
 所需的所有配置参数。主要功能包括：
 
 1. 定义支持的富集分析方法（Fisher精确检验、超几何检验、GSEA、ssGSEA、GSVA）
@@ -176,7 +176,7 @@ class Config:
 
     AllEnricher 主配置类。
 
-    本类是 AllEnricher v2.0 的核心配置类，使用 dataclass 实现，
+    本类是 AllEnricher v2.3.0 的核心配置类，使用 dataclass 实现，
     包含了富集分析流程中所有可配置的参数。支持从YAML/JSON文件加载配置，
     也可以直接通过构造函数或属性赋值来设置参数。
 
@@ -489,6 +489,32 @@ class Config:
         """
         errors = []  # 初始化错误列表
 
+        def has_local_species(species: str) -> bool:
+            db_root = Path(self.database_dir)
+            organism_dir = db_root / "organism"
+            if organism_dir.exists():
+                for version_dir in organism_dir.iterdir():
+                    if (version_dir / species).is_dir():
+                        return True
+            return any(db_root.glob(f"{species}.*2gene.tab.gz"))
+
+        def has_local_database(species: str, db_name: str) -> bool:
+            db_root = Path(self.database_dir)
+            search_dirs = [db_root]
+            organism_dir = db_root / "organism"
+            if organism_dir.exists():
+                search_dirs.extend(
+                    version_dir / species
+                    for version_dir in organism_dir.iterdir()
+                    if (version_dir / species).is_dir()
+                )
+            patterns = (
+                f"{species}.{db_name}2gene.tab.gz",
+                f"{species}.{db_name.lower()}2gene.tab.gz",
+                f"{species}.{db_name.upper()}2gene.tab.gz",
+            )
+            return any((directory / pattern).exists() for directory in search_dirs for pattern in patterns)
+
         # Validate input file
         # 验证输入文件是否存在（如果已指定）
         if self.input_file and not Path(self.input_file).exists():
@@ -525,6 +551,9 @@ class Config:
             except Exception:
                 pass  # 注册表查询失败，静默回退到原有逻辑
         
+        if not species_valid and has_local_species(self.species):
+            species_valid = True
+
         if not species_valid:
             errors.append(f"Unknown species: {self.species}")
 
@@ -544,7 +573,7 @@ class Config:
         # 验证数据库列表中的每个数据库是否有效
         valid_databases = [d.value for d in DatabaseType]  # 获取所有有效的数据库值
         for db in self.databases:
-            if db not in valid_databases:
+            if db not in valid_databases and not has_local_database(self.species, db):
                 errors.append(f"Invalid database: {db}. Valid: {valid_databases}")
 
         # Validate cutoffs
@@ -560,9 +589,9 @@ class Config:
 # Default configuration file content
 # 默认配置文件内容模板（YAML格式）
 # 用户可以基于此模板创建自定义配置文件，修改需要的参数值
-DEFAULT_CONFIG_YAML = """# AllEnricher v2.0 Configuration File
+DEFAULT_CONFIG_YAML = """# AllEnricher v2.3.0 Configuration File
 # =================================
-# AllEnricher v2.0 配置文件模板
+# AllEnricher v2.3.0 配置文件模板
 
 # Input/Output settings
 # 输入/输出设置

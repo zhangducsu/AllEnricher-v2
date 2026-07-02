@@ -1,5 +1,4 @@
 #!/usr/bin/env Rscript
-# gsea_dotplot.R — GSEA 气泡图 (Y=通路, X=NES, 大小=基因数, 颜色=-log10(FDR))
 suppressPackageStartupMessages({
   library(ggplot2)
   library(dplyr)
@@ -12,19 +11,35 @@ tsv_path <- args$tsv
 output <- args$output
 top_n <- as.integer(args$top_n %||% 20)
 
-df <- read_enrichment(tsv_path)
-df <- df %>%
-  mutate(nlogFDR = -log10(pmax(Adjusted_P_Value, 1e-10))) %>%
-  arrange(desc(abs(NES))) %>%
-  head(top_n)
+df <- read_enrichment(tsv_path) %>%
+  prepare_gsea_terms(top_n = top_n, sort_by = "q", label_width = 36, max_label_chars = 88) %>%
+  arrange(NES, Adjusted_P_Value)
 
-p <- ggplot(df, aes(x = NES, y = reorder(Term_Name, NES))) +
-  geom_point(aes(size = Gene_Count, color = nlogFDR)) +
-  scale_color_gradient2(low = "blue", mid = "yellow", high = "red", midpoint = 1.3) +
-  scale_size_continuous(range = c(3, 10)) +
-  labs(x = "Normalized Enrichment Score (NES)", y = "",
-       size = "Gene Count", color = expression(-log[10](FDR))) +
-  set_nature_theme() +
-  theme(axis.text.y = element_text(size = 9))
+df$Term_Label <- factor(df$Term_Label, levels = df$Term_Label)
 
-save_plot(p, output, width = 10, height = max(6, top_n * 0.3))
+p <- ggplot(df, aes(x = NES, y = Term_Label))
+if (min(df$NES, na.rm = TRUE) < 0 && max(df$NES, na.rm = TRUE) > 0) {
+  p <- p + geom_vline(xintercept = 0, linetype = "dashed", color = "#A0A4A8", linewidth = 0.35)
+}
+p <- p +
+  geom_point(aes(size = Gene_Count, color = nlogFDR), alpha = 0.92) +
+  scale_color_nlogfdr(name = expression(-log[10](FDR))) +
+  scale_size_area(max_size = 6.4, name = "Gene count") +
+  guides(
+    color = guide_colorbar(order = 1, barheight = grid::unit(30, "pt")),
+    size = guide_legend(order = 2)
+  ) +
+  scale_x_continuous(expand = expansion(mult = c(0.08, 0.12))) +
+  labs(
+    x = "Normalized enrichment score (NES)",
+    y = NULL,
+    subtitle = "Top pathways ranked by FDR, with point size showing gene count"
+  ) +
+  set_nature_theme(base_size = 9) +
+  theme(
+    axis.text.y = element_text(size = 8.4, lineheight = 0.94),
+    panel.grid.major.x = element_line(color = AE_COL_GRID, linewidth = 0.25),
+    legend.box = "vertical"
+  )
+
+save_plot(p, output, width = 8.6, height = max(4.8, nrow(df) * 0.32 + 1.8))

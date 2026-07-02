@@ -1,5 +1,5 @@
 """
-Interactive HTML Report Generator for AllEnricher v2.0
+Interactive HTML Report Generator for AllEnricher v2.3.0
 
 生成交互式HTML报告模块 - 学术风格设计
 
@@ -12,6 +12,8 @@ import json
 import logging
 import tempfile
 import shutil
+import html
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Any
@@ -32,6 +34,49 @@ class ReportGenerator:
     - 充足留白：类似学术论文的排版密度
     - 清晰层级：通过字体大小和字重区分信息重要性
     """
+
+    @staticmethod
+    def _clean_html_value(value: Any) -> str:
+        if value is None:
+            return ""
+        try:
+            if pd.isna(value):
+                return ""
+        except (TypeError, ValueError):
+            pass
+        return str(value)
+
+    @classmethod
+    def _escape_text(cls, value: Any) -> str:
+        return html.escape(cls._clean_html_value(value), quote=False)
+
+    @classmethod
+    def _escape_attr(cls, value: Any) -> str:
+        return html.escape(cls._clean_html_value(value), quote=True)
+
+    @classmethod
+    def _safe_href(cls, value: Any) -> str:
+        href = cls._clean_html_value(value).strip()
+        if not href:
+            return ""
+        if href.startswith(("http://", "https://")):
+            return cls._escape_attr(href)
+        if re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*:", href):
+            return ""
+        return cls._escape_attr(href)
+
+    @classmethod
+    def _link_cell(cls, href: Any, label: Any) -> str:
+        safe_label = cls._escape_text(label)
+        safe_href = cls._safe_href(href)
+        if safe_href:
+            return f'<a href="{safe_href}" target="_blank" rel="noopener noreferrer">{safe_label}</a>'
+        return safe_label
+
+    @staticmethod
+    def _safe_plot_stem(name: Any) -> str:
+        stem = re.sub(r"[^\w.-]+", "_", str(name)).strip("._")
+        return stem or "term"
 
     _TABLE_JS = '''
     <script>
@@ -770,13 +815,16 @@ class ReportGenerator:
             # ssGSEA 专属 8 列表格
             if is_ssgsea:
                 html_parts = []
-                html_parts.append(f'<div class="section" id="{db_name}-table">')
-                html_parts.append(f'<h2>{db_name} ssGSEA Results <span class="result-count">({len(df)} pathways)</span></h2>')
+                safe_db_attr = self._escape_attr(db_name)
+                safe_db_text = self._escape_text(db_name)
+                safe_db_js = self._escape_attr(json.dumps(str(db_name)))
+                html_parts.append(f'<div class="section" id="{safe_db_attr}-table">')
+                html_parts.append(f'<h2>{safe_db_text} ssGSEA Results <span class="result-count">({len(df)} pathways)</span></h2>')
                 headers = ['Term ID', 'Term Name', 'NES', 'ES', 'Gene Count', 'Gene Ratio', 'Genes', 'Leading Edge']
-                html_parts.append('<div class="table-wrapper"><table class="data-table" id="table-{0}">'.format(db_name))
+                html_parts.append('<div class="table-wrapper"><table class="data-table" id="table-{0}">'.format(safe_db_attr))
                 html_parts.append('<thead><tr>')
                 for h in headers:
-                    html_parts.append(f'<th>{h}</th>')
+                    html_parts.append(f'<th>{self._escape_text(h)}</th>')
                 html_parts.append('</tr></thead><tbody>')
                 for _, row in df.iterrows():
                     term_id = row.get('Term_ID', '')
@@ -790,24 +838,23 @@ class ReportGenerator:
                     leading_edge = row.get('Leading_Edge', '')
 
                     html_parts.append('<tr>')
-                    if term_url:
-                        html_parts.append(f'<td><a href="{term_url}" target="_blank">{term_id}</a></td>')
-                    else:
-                        html_parts.append(f'<td>{term_id}</td>')
-                    html_parts.append(f'<td>{term_name}</td>')
-                    html_parts.append(f'<td>{nes}</td>')
-                    html_parts.append(f'<td>{es}</td>')
-                    html_parts.append(f'<td>{gene_count}</td>')
-                    html_parts.append(f'<td>{gene_ratio}</td>')
-                    genes_display = self._truncate_genes(str(genes)) if genes else ''
-                    html_parts.append(f'<td class="genes" data-full="{genes}">{genes_display}</td>')
-                    le_display = self._truncate_genes(str(leading_edge)) if leading_edge else ''
-                    html_parts.append(f'<td class="genes" data-full="{leading_edge}">{le_display}</td>')
+                    html_parts.append(f'<td>{self._link_cell(term_url, term_id)}</td>')
+                    html_parts.append(f'<td>{self._escape_text(term_name)}</td>')
+                    html_parts.append(f'<td>{self._escape_text(nes)}</td>')
+                    html_parts.append(f'<td>{self._escape_text(es)}</td>')
+                    html_parts.append(f'<td>{self._escape_text(gene_count)}</td>')
+                    html_parts.append(f'<td>{self._escape_text(gene_ratio)}</td>')
+                    genes_raw = str(genes) if genes else ''
+                    genes_display = self._escape_text(self._truncate_genes(genes_raw)) if genes_raw else ''
+                    html_parts.append(f'<td class="genes" data-full="{self._escape_attr(genes_raw)}">{genes_display}</td>')
+                    leading_edge_raw = str(leading_edge) if leading_edge else ''
+                    le_display = self._escape_text(self._truncate_genes(leading_edge_raw)) if leading_edge_raw else ''
+                    html_parts.append(f'<td class="genes" data-full="{self._escape_attr(leading_edge_raw)}">{le_display}</td>')
                     html_parts.append('</tr>')
                 html_parts.append('</tbody></table></div>')
                 html_parts.append('<div class="table-actions">')
-                html_parts.append(f'<button onclick="downloadTable(\'{db_name}\')">Download TSV</button>')
-                html_parts.append(f'<button onclick="copyTable(\'{db_name}\')">Copy</button>')
+                html_parts.append(f'<button onclick="downloadTable({safe_db_js})">Download TSV</button>')
+                html_parts.append(f'<button onclick="copyTable({safe_db_js})">Copy</button>')
                 html_parts.append('</div></div>')
                 tables_html.append('\n'.join(html_parts))
                 continue
@@ -815,18 +862,21 @@ class ReportGenerator:
             # GSVA 专属动态样本列表格
             if is_gsva:
                 html_parts = []
-                html_parts.append(f'<div class="section" id="{db_name}-table">')
-                html_parts.append(f'<h2>{db_name} GSVA Results <span class="result-count">({len(df)} pathways)</span></h2>')
+                safe_db_attr = self._escape_attr(db_name)
+                safe_db_text = self._escape_text(db_name)
+                safe_db_js = self._escape_attr(json.dumps(str(db_name)))
+                html_parts.append(f'<div class="section" id="{safe_db_attr}-table">')
+                html_parts.append(f'<h2>{safe_db_text} GSVA Results <span class="result-count">({len(df)} pathways)</span></h2>')
                 sample_cols = [c for c in df.columns if c not in [
                     'Term_ID', 'Term_Name', 'Gene_Count', 'Background_Count',
                     'Term_URL', 'NES', 'ES', 'P_Value', 'Adjusted_P_Value',
                     'FDR', 'Genes', 'Leading_Edge'
                 ]]
                 headers = ['Term ID', 'Term Name', 'Gene Count'] + sample_cols
-                html_parts.append('<div class="table-wrapper"><table class="data-table" id="table-{0}">'.format(db_name))
+                html_parts.append('<div class="table-wrapper"><table class="data-table" id="table-{0}">'.format(safe_db_attr))
                 html_parts.append('<thead><tr>')
                 for h in headers:
-                    html_parts.append(f'<th>{h}</th>')
+                    html_parts.append(f'<th>{self._escape_text(h)}</th>')
                 html_parts.append('</tr></thead><tbody>')
                 for _, row in df.iterrows():
                     term_id = row.get('Term_ID', '')
@@ -835,20 +885,17 @@ class ReportGenerator:
                     gene_count = row.get('Gene_Count', '')
 
                     html_parts.append('<tr>')
-                    if term_url:
-                        html_parts.append(f'<td><a href="{term_url}" target="_blank">{term_id}</a></td>')
-                    else:
-                        html_parts.append(f'<td>{term_id}</td>')
-                    html_parts.append(f'<td>{term_name}</td>')
-                    html_parts.append(f'<td>{gene_count}</td>')
+                    html_parts.append(f'<td>{self._link_cell(term_url, term_id)}</td>')
+                    html_parts.append(f'<td>{self._escape_text(term_name)}</td>')
+                    html_parts.append(f'<td>{self._escape_text(gene_count)}</td>')
                     for col in sample_cols:
                         val = row.get(col, '')
-                        html_parts.append(f'<td>{val}</td>')
+                        html_parts.append(f'<td>{self._escape_text(val)}</td>')
                     html_parts.append('</tr>')
                 html_parts.append('</tbody></table></div>')
                 html_parts.append('<div class="table-actions">')
-                html_parts.append(f'<button onclick="downloadTable(\'{db_name}\')">Download TSV</button>')
-                html_parts.append(f'<button onclick="copyTable(\'{db_name}\')">Copy</button>')
+                html_parts.append(f'<button onclick="downloadTable({safe_db_js})">Download TSV</button>')
+                html_parts.append(f'<button onclick="copyTable({safe_db_js})">Copy</button>')
                 html_parts.append('</div></div>')
                 tables_html.append('\n'.join(html_parts))
                 continue
@@ -871,31 +918,31 @@ class ReportGenerator:
                     lead_genes = str(row.get('lead_genes', row.get('Lead_genes', '')))
                     matched_genes = str(row.get('matched_genes', row.get('core_enrichment', row.get('Genes', ''))))
 
-                    tid_cell = f'<a href="{term_url}" target="_blank">{tid}</a>' if term_url else tid
+                    tid_cell = self._link_cell(term_url, tid)
 
                     es_str = f"{es:.4f}" if isinstance(es, (int, float)) else str(es)
                     nes_str = f"{nes:.4f}" if isinstance(nes, (int, float)) else str(nes)
                     pv_str = f"{pv:.2e}" if isinstance(pv, (int, float)) else str(pv)
                     fdr_str = f"{fdr:.2e}" if isinstance(fdr, (int, float)) else str(fdr)
 
-                    gene_preview = self._truncate_genes(matched_genes)
-                    lead_preview = self._truncate_genes(lead_genes)
+                    gene_preview = self._escape_text(self._truncate_genes(matched_genes))
+                    lead_preview = self._escape_text(self._truncate_genes(lead_genes))
 
                     rows.append(
                         f'<tr>'
                         f'<td>{tid_cell}</td>'
-                        f'<td>{tname}</td>'
-                        f'<td>{db}</td>'
-                        f'<td>{set_size}</td>'
-                        f'<td>{es_str}</td>'
-                        f'<td>{nes_str}</td>'
-                        f'<td>{pv_str}</td>'
-                        f'<td>{fdr_str}</td>'
-                        f'<td>{rank}</td>'
-                        f'<td>{tag_pct}</td>'
-                        f'<td>{gene_pct}</td>'
-                        f'<td class="genes" data-full="{lead_genes}">{lead_preview}</td>'
-                        f'<td class="genes" data-full="{matched_genes}">{gene_preview}</td>'
+                        f'<td>{self._escape_text(tname)}</td>'
+                        f'<td>{self._escape_text(db)}</td>'
+                        f'<td>{self._escape_text(set_size)}</td>'
+                        f'<td>{self._escape_text(es_str)}</td>'
+                        f'<td>{self._escape_text(nes_str)}</td>'
+                        f'<td>{self._escape_text(pv_str)}</td>'
+                        f'<td>{self._escape_text(fdr_str)}</td>'
+                        f'<td>{self._escape_text(rank)}</td>'
+                        f'<td>{self._escape_text(tag_pct)}</td>'
+                        f'<td>{self._escape_text(gene_pct)}</td>'
+                        f'<td class="genes" data-full="{self._escape_attr(lead_genes)}">{lead_preview}</td>'
+                        f'<td class="genes" data-full="{self._escape_attr(matched_genes)}">{gene_preview}</td>'
                         f'</tr>'
                     )
                 else:
@@ -908,18 +955,18 @@ class ReportGenerator:
                     adjpv = f"{row.get('Adjusted_P_Value', 1):.2e}"
                     genes_str = str(row.get('Genes', ''))
 
-                    tid_cell = f'<a href="{term_url}" target="_blank">{tid}</a>' if term_url else tid
-                    gene_preview = self._truncate_genes(genes_str)
+                    tid_cell = self._link_cell(term_url, tid)
+                    gene_preview = self._escape_text(self._truncate_genes(genes_str))
 
                     rows.append(
                         f'<tr>'
                         f'<td>{tid_cell}</td>'
-                        f'<td>{tname}</td>'
-                        f'<td>{gcount}</td>'
-                        f'<td>{rf}</td>'
-                        f'<td>{pv}</td>'
-                        f'<td>{adjpv}</td>'
-                        f'<td class="genes" data-full="{genes_str}">{gene_preview}</td>'
+                        f'<td>{self._escape_text(tname)}</td>'
+                        f'<td>{self._escape_text(gcount)}</td>'
+                        f'<td>{self._escape_text(rf)}</td>'
+                        f'<td>{self._escape_text(pv)}</td>'
+                        f'<td>{self._escape_text(adjpv)}</td>'
+                        f'<td class="genes" data-full="{self._escape_attr(genes_str)}">{gene_preview}</td>'
                         f'</tr>'
                     )
 
@@ -933,13 +980,16 @@ class ReportGenerator:
             else:
                 headers = ['Term ID', 'Term Name', 'Gene Count', 'Rich Factor', 'P-value', 'Adj. P-value', 'Gene List']
 
-            header_html = "".join(f'<th>{h}</th>' for h in headers)
+            header_html = "".join(f'<th>{self._escape_text(h)}</th>' for h in headers)
+            safe_db_text = self._escape_text(db_name)
+            safe_db_attr = self._escape_attr(db_name)
+            safe_db_js = self._escape_attr(json.dumps(str(db_name)))
 
             table_html = f'''
-            <div class="section" id="{db_name}-table">
-                <h2>{db_name} Enrichment Results <span class="result-count">({len(df)} significant terms)</span></h2>
+            <div class="section" id="{safe_db_attr}-table">
+                <h2>{safe_db_text} Enrichment Results <span class="result-count">({len(df)} significant terms)</span></h2>
                 <div class="table-wrapper">
-                    <table class="data-table" id="table-{db_name}">
+                    <table class="data-table" id="table-{safe_db_attr}">
                         <thead>
                             <tr>{header_html}</tr>
                         </thead>
@@ -947,8 +997,8 @@ class ReportGenerator:
                     </table>
                 </div>
                 <div class="table-actions">
-                    <button onclick="downloadTable('{db_name}')">Download TSV</button>
-                    <button onclick="copyTable('{db_name}')">Copy</button>
+                    <button onclick="downloadTable({safe_db_js})">Download TSV</button>
+                    <button onclick="copyTable({safe_db_js})">Copy</button>
                 </div>
             </div>'''
             tables_html.append(table_html)
@@ -964,12 +1014,72 @@ class ReportGenerator:
             return genes_str[:max_len] + '...'
         return genes_str
 
+    def _collect_gsea_plot_files(self, db_name: str, df: pd.DataFrame, gsea_plot_dir: Path) -> List[Path]:
+        """收集当前数据库已生成的 GSEA 图，按报告展示顺序返回。"""
+        if not gsea_plot_dir.exists():
+            return []
+
+        ordered_names = [
+            f"{db_name}_nes_barplot.png",
+            f"{db_name}_dotplot.png",
+            f"{db_name}_barplot.png",
+            f"{db_name}_ridgeplot.png",
+            f"{db_name}_emapplot.png",
+            f"{db_name}_cnetplot.png",
+            f"{db_name}_circos.png",
+            f"{db_name}_enrichment2.png",
+            f"{db_name}_heatmap.png",
+        ]
+        files: List[Path] = []
+        seen = set()
+
+        for name in ordered_names:
+            path = gsea_plot_dir / name
+            if path.exists():
+                files.append(path)
+                seen.add(path.resolve())
+
+        term_col = next((c for c in ["Term_ID", "term_id", "ID", "id"] if c in df.columns), None)
+        if term_col:
+            for term_id in df[term_col].head(20):
+                path = gsea_plot_dir / f"{self._safe_plot_stem(term_id)}_enrichment.png"
+                if path.exists() and path.resolve() not in seen:
+                    files.append(path)
+                    seen.add(path.resolve())
+
+        for path in sorted(gsea_plot_dir.glob("*_enrichment.png")):
+            if path.resolve() not in seen:
+                files.append(path)
+                seen.add(path.resolve())
+
+        return files
+
+    @staticmethod
+    def _caption_for_plot(path: Path) -> str:
+        stem = path.stem.lower()
+        captions = [
+            ("nes_barplot", "GSEA signed NES ranking"),
+            ("dotplot", "GSEA pathway summary"),
+            ("barplot", "GSEA top pathway bar plot"),
+            ("ridgeplot", "Running enrichment score distribution"),
+            ("emapplot", "Pathway overlap map"),
+            ("cnetplot", "Pathway-gene network"),
+            ("circos", "Pathway-gene circos overview"),
+            ("enrichment2", "Multi-pathway enrichment trajectories"),
+            ("heatmap", "Expression heatmap for selected genes"),
+            ("enrichment", "Single-pathway enrichment trajectory"),
+        ]
+        for key, caption in captions:
+            if key in stem:
+                return caption
+        return "Generated enrichment plot"
+
     def _generate_plot_section(self, results: Dict[str, pd.DataFrame]) -> str:
         """生成图表展示区域 - 使用PNG图片直接嵌入HTML"""
         plots_html = ['<div class="section" id="plots"><h2>Visualization</h2>']
 
         has_any_plot = False
-        for db_name in results.keys():
+        for db_name, df in results.items():
             plot_dir = self.output_dir / "plots"
             gsea_plot_dir = self.output_dir / "gsea_plots"
 
@@ -979,57 +1089,47 @@ class ReportGenerator:
             bubble_png = plot_dir / f"{db_name}_bubble.png"
             bubble_pdf = plot_dir / f"{db_name}_bubble.pdf"
 
-            # GSEA plots
-            gsea_nes_barplot_png = gsea_plot_dir / f"{db_name}_nes_barplot.png"
-            gsea_dotplot_png = gsea_plot_dir / f"{db_name}_dotplot.png"
+            gsea_plot_files = self._collect_gsea_plot_files(db_name, df, gsea_plot_dir)
 
             has_bar = barplot_png.exists() or barplot_pdf.exists()
             has_bubble = bubble_png.exists() or bubble_pdf.exists()
-            has_gsea_nes_bar = gsea_nes_barplot_png.exists()
-            has_gsea_dot = gsea_dotplot_png.exists()
 
-            if has_bar or has_bubble or has_gsea_nes_bar or has_gsea_dot:
+            if has_bar or has_bubble or gsea_plot_files:
                 has_any_plot = True
-                plots_html.append(f'<div class="plot-group"><h3>{db_name}</h3>')
+                plots_html.append(f'<div class="plot-group"><h3>{self._escape_text(db_name)}</h3>')
 
                 # ORA barplot
                 if barplot_png.exists():
                     img_data = self._encode_image_to_base64(barplot_png)
                     plots_html.append(f'''
                         <div class="plot-container">
-                            <img src="data:image/png;base64,{img_data}" alt="{db_name} Bar Plot" class="plot-img">
+                            <img src="data:image/png;base64,{img_data}" alt="{self._escape_attr(db_name)} Bar Plot" class="plot-img">
                             <p class="plot-caption">Bar Plot (Top enriched terms by Q-value)</p>
                         </div>''')
                 elif barplot_pdf.exists():
-                    plots_html.append(f'<a href="plots/{barplot_pdf.name}" target="_blank" class="plot-link">Bar Plot (PDF)</a>')
+                    plots_html.append(f'<a href="plots/{self._escape_attr(barplot_pdf.name)}" target="_blank" class="plot-link">Bar Plot (PDF)</a>')
 
                 # ORA bubble plot
                 if bubble_png.exists():
                     img_data = self._encode_image_to_base64(bubble_png)
                     plots_html.append(f'''
                         <div class="plot-container">
-                            <img src="data:image/png;base64,{img_data}" alt="{db_name} Bubble Plot" class="plot-img">
+                            <img src="data:image/png;base64,{img_data}" alt="{self._escape_attr(db_name)} Bubble Plot" class="plot-img">
                             <p class="plot-caption">Bubble Plot (Gene count vs Rich factor)</p>
                         </div>''')
                 elif bubble_pdf.exists():
-                    plots_html.append(f'<a href="plots/{bubble_pdf.name}" target="_blank" class="plot-link">Bubble Plot (PDF)</a>')
+                    plots_html.append(f'<a href="plots/{self._escape_attr(bubble_pdf.name)}" target="_blank" class="plot-link">Bubble Plot (PDF)</a>')
 
-                # GSEA NES barplot
-                if gsea_nes_barplot_png.exists():
-                    img_data = self._encode_image_to_base64(gsea_nes_barplot_png)
+                for plot_file in gsea_plot_files:
+                    img_data = self._encode_image_to_base64(plot_file)
+                    if not img_data:
+                        continue
+                    title = plot_file.stem.replace("_", " ")
+                    caption = self._escape_text(self._caption_for_plot(plot_file))
                     plots_html.append(f'''
                         <div class="plot-container">
-                            <img src="data:image/png;base64,{img_data}" alt="{db_name} NES Barplot" class="plot-img">
-                            <p class="plot-caption">GSEA NES Bar Plot (Normalized Enrichment Score)</p>
-                        </div>''')
-
-                # GSEA dotplot
-                if gsea_dotplot_png.exists():
-                    img_data = self._encode_image_to_base64(gsea_dotplot_png)
-                    plots_html.append(f'''
-                        <div class="plot-container">
-                            <img src="data:image/png;base64,{img_data}" alt="{db_name} GSEA Dotplot" class="plot-img">
-                            <p class="plot-caption">GSEA Dot Plot (NES vs gene count)</p>
+                            <img src="data:image/png;base64,{img_data}" alt="{self._escape_attr(title)}" class="plot-img">
+                            <p class="plot-caption">{caption}</p>
                         </div>''')
 
                 plots_html.append('</div>')

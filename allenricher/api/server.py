@@ -1,7 +1,7 @@
 """
-REST API module for AllEnricher v2.0 using FastAPI
+REST API module for AllEnricher v2.3.0 using FastAPI
 
-AllEnricher v2.0 REST API 服务模块
+AllEnricher v2.3.0 REST API 服务模块
 ====================================
 
 本模块基于 FastAPI 框架实现了基因集富集分析（Gene Set Enrichment Analysis）的 REST API 服务。
@@ -46,6 +46,7 @@ from allenricher.core.enrichment import EnrichmentAnalyzer
 from allenricher.database.manager import DatabaseManager
 from allenricher.visualization.plotter import Plotter
 from allenricher.report.generator import ReportGenerator
+from allenricher import __version__
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +56,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI(
     title="AllEnricher API",
     description="REST API for gene set enrichment analysis",
-    version="2.0.0",
+    version=__version__,
     docs_url="/docs",
     redoc_url="/redoc"
 )
@@ -216,7 +217,7 @@ async def root():
     # 如果没有静态文件，返回 API 信息
     return {
         "name": "AllEnricher API",
-        "version": "2.0.0",
+        "version": __version__,
         "docs": "/docs",
         "webui": "/static/index.html (if available)",
         "endpoints": {
@@ -761,4 +762,3 @@ def start_api(host: str = "0.0.0.0", port: int = 8000):
 
 if __name__ == "__main__":
     start_api()
-

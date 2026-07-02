@@ -19,12 +19,15 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import matplotlib
+matplotlib.use("Agg", force=True)
 import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 from typing import Optional, Union, Tuple, Any
 
 from allenricher.visualization.plot_theme import PlotTheme
 from allenricher.visualization.color_config import ColorConfig
+from allenricher.visualization.plot_utils import clean_pathway_label, term_figure_size
 
 
 def plot_bubble(
@@ -112,8 +115,7 @@ def plot_bubble(
         if ax_was_none:
             if figsize is None:
                 # 根据条目数量自动计算高度
-                height = max(6, len(df) * 0.4)
-                figsize = (10, height)
+                figsize = term_figure_size(len(df), width=8.0, min_height=2.8, row_height=0.44)
             fig, ax = plt.subplots(figsize=figsize)
         else:
             fig = ax.figure
@@ -150,7 +152,7 @@ def plot_bubble(
         
         # 设置Y轴标签
         ax.set_yticks(range(len(df)))
-        ax.set_yticklabels(df['Term_Name'], fontsize=9)
+        ax.set_yticklabels([clean_pathway_label(term) for term in df['Term_Name']], fontsize=9)
         
         # 反转Y轴，使最显著的显示在顶部
         ax.set_ylim(len(df) - 0.5, -0.5)
@@ -168,32 +170,44 @@ def plot_bubble(
         ax.set_axisbelow(True)
         
         # 添加色条
-        norm = plt.Normalize(df['neg_log10_qvalue'].min(), df['neg_log10_qvalue'].max())
-        sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
-        sm.set_array([])
-        cbar = plt.colorbar(sm, ax=ax, pad=0.02, shrink=0.33)
-        cbar.set_label(colorbar_label, fontsize=9)
-        cbar.ax.tick_params(labelsize=8)
+        color_has_range = df['neg_log10_qvalue'].nunique(dropna=True) > 1
+        if color_has_range:
+            norm = plt.Normalize(df['neg_log10_qvalue'].min(), df['neg_log10_qvalue'].max())
+            sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+            sm.set_array([])
+            cbar = plt.colorbar(sm, ax=ax, pad=0.02, shrink=0.45)
+            cbar.set_label(colorbar_label, fontsize=9)
+            cbar.ax.tick_params(labelsize=8)
         
         # 创建气泡大小数值的图例
         min_gc = df['GeneCount'].min()
         max_gc = df['GeneCount'].max()
-        if max_gc > min_gc:
+        if max_gc > min_gc and len(df) > 1:
             legend_gc = np.linspace(min_gc, max_gc, 4).astype(int)
             legend_sizes = 50 + (legend_gc - min_gc) / (max_gc - min_gc) * 250
-        else:
-            legend_gc = [min_gc]
-            legend_sizes = [100]
-        
-        for gc, sz in zip(legend_gc, legend_sizes):
-            ax.scatter([], [], s=sz, c='#888888',
-                       edgecolors='#888888', linewidth=0.5, label=str(gc))
-        
-        handles, labels = ax.get_legend_handles_labels()
-        by_label = dict(zip(labels, handles))
-        ax.legend(by_label.values(), by_label.keys(), scatterpoints=1,
-                  frameon=False, labelspacing=1,
-                  title='Gene Count', title_fontsize=8, fontsize=8)
+            for gc, sz in zip(legend_gc, legend_sizes):
+                ax.scatter([], [], s=sz, c='#888888',
+                           edgecolors='#888888', linewidth=0.5, label=str(gc))
+
+            handles, labels = ax.get_legend_handles_labels()
+            by_label = dict(zip(labels, handles))
+            ax.legend(by_label.values(), by_label.keys(), scatterpoints=1,
+                      frameon=False, labelspacing=1,
+                      title='Gene Count', title_fontsize=8, fontsize=8)
+        elif len(df) == 1:
+            row = df.iloc[0]
+            rich_factor = float(row['RichFactor'])
+            x_range = max(abs(rich_factor), 1e-6)
+            ax.set_xlim(0, rich_factor + x_range * 0.45)
+            ax.text(
+                rich_factor + x_range * 0.08,
+                0,
+                f"Gene count: {int(row['GeneCount'])}  FDR: {row['Qvalue']:.2g}  Rich factor: {rich_factor:.2f}",
+                va='center',
+                ha='left',
+                fontsize=8.5,
+                color='#333333',
+            )
         
         # 调整布局
         plt.tight_layout()

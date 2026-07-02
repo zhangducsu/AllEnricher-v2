@@ -1,4 +1,4 @@
-# AllEnricher v2.0
+# AllEnricher v2.3.0
 
 **基因集功能富集分析工具 - Python 重构版**
 
@@ -30,7 +30,7 @@
 
 ## 简介
 
-AllEnricher v2.0 是 AllEnricher v1.0 的 Python 重构版本，保留了 v1 的核心功能并增加了多项改进：
+AllEnricher v2.3.0 是 AllEnricher v1.0 的 Python 重构版本，保留了 v1 的核心功能并增加了多项改进：
 
 - **兼容 v1 数据库**：可直接使用 v1 构建的 GO、KEGG、Reactome、DO、DisGeNET 数据库
 - **用户自定义数据库构建**：支持用户提供注释文件（TSV格式），自动构建自定义数据库并生成GMT文件，适用于非模式生物或私有数据库
@@ -155,7 +155,15 @@ with PlotTheme.context('presentation'):
 可视化模块使用 Python 原生实现，自动安装以下依赖（随 `pip install -e .` 一起安装）：
 - matplotlib>=3.4.0 — 基础绘图引擎
 - seaborn>=0.11.0 — 统计图形美化
-- cutecharts>=0.2.0 — 轻量图表补充
+- plotly>=5.0.0 — TF 富集 HTML 图表
+- jinja2>=3.0.0 — TF HTML 报告模板渲染
+
+### 可选 R 绘图依赖
+
+`--use-r-plots` 仅用于 GSEA 发表级 R 图表，需要系统已安装 `Rscript` 和以下 R 包：
+- ggplot2、dplyr、tidyr、gridExtra、ggridges、circlize、ComplexHeatmap
+
+已验证 R 图表入口：dotplot、barplot、nes_barplot、ridgeplot、emapplot、cnetplot、circos、enrichment、enrichment2、heatmap。缺少 ranked genes/GMT/表达矩阵等必要输入时，CLI 会明确跳过对应图表，不生成模拟图。
 
 ---
 
@@ -978,7 +986,7 @@ ls /path/to/v1/database/organism/v20190612/hsa/
 确保已安装 Python 可视化依赖：
 
 ```bash
-pip install matplotlib seaborn cutecharts
+pip install matplotlib seaborn plotly jinja2
 ```
 
 ### Q4: 如何构建自己的数据库？
@@ -1051,6 +1059,16 @@ MIT License
 
 ## 最近更新 (v2.3.0)
 
+### 2026-07-03: 发布收尾与全场景 E2E 验证
+
+- **版本统一**: `pyproject.toml` 与 `allenricher.__version__` 统一为 2.3.0
+- **打包修复**: wheel/sdist 纳入 API 静态页、HTML 报告模板和 R 绘图脚本
+- **R GSEA 绘图验证**: `--use-r-plots` 全链路通过 WSL2 R 冒烟和 CLI E2E，视觉审计 0 issue
+- **配置覆盖修复**: `--config` 与 CLI 参数混用时，CLI 的 species/database/database-dir 明确优先生效
+- **自定义数据库修复**: build 生成的 custom fixture 可被 analyze 正确识别并输出非空结果
+- **E2E 归档**: local `68 PASS / 5 EXPECTED_FAIL / 2 SKIP / 0 FAIL`；live `2 PASS / 1 SKIP / 1 SKIPPED_MISSING_SECRET / 0 FAIL`
+- **download 验证状态**: download 用例按当前验收策略保留为 SKIP；恢复发布前联网下载验收时再开启
+
 ### 2026-05-31: 多物种 TF 富集分析（AnimalTFDB + hTFtarget）
 
 - **🧬 AnimalTFDB 4.0 集成**: 支持 183 个动物物种的转录因子注释和直系同源映射，覆盖家畜（牛/猪/羊/鸡/狗/马等）、模式生物（斑马鱼/果蝇/线虫等）、灵长类（猕猴/黑猩猩/大猩猩等）
@@ -1093,7 +1111,7 @@ allenricher tf-enrich -i genes.txt -s bta -d animaltfdb --report
 
 ### 2026-05-28: 风格颜色系统重构
 
-- **R→Python 可视化迁移**: 彻底移除 R/ggplot2/pheatmap/UpSetR 依赖，改用 Python 原生 matplotlib + seaborn 实现全部图表
+- **R→Python 可视化迁移**: 默认图表改用 Python 原生 matplotlib + seaborn；GSEA 发表级 R 图表作为 `--use-r-plots` 可选能力保留
 - **模块化重构**: 将单一 `plotter.py` 拆分为 9 个模块（barplot, bubble, common_plots, color_config, gsea_plots, gsva_plots, plot_config, plot_theme, plotter），职责清晰、易于扩展
 - **6 种学术风格主题**: nature（Helvetica, 8pt, 刻度朝内, 仅左下边框）、science（Times New Roman, 9pt, 刻度朝外, 四边边框）、cell（Arial, 9pt, 刻度朝内）、colorblind（sans-serif, 10pt）、presentation（14pt, 网格线, 适合投影）、omicshare（微软雅黑, 中文友好），每种风格独立控制字体、字号、粗细、边框、内外刻度、网格线等 40 项参数
 - **19 种专业配色方案**: Paul Tol 系列 8 种（bright/vibrant/muted/light/sunset 等）、色盲友好 okabe_ito 1 种、科研期刊风格 6 种（nature/science/cell/lancet/nejm/jama）、生物信息学 2 种（gsea/omicshare）、中国风格 1 种（china_style）、默认 1 种
@@ -1149,4 +1167,4 @@ allenricher tf-enrich -i genes.txt -s bta -d animaltfdb --report
 
 ---
 
-*最后更新：2026-05-28（v2.2.0）*
+*最后更新：2026-07-03（v2.3.0）*

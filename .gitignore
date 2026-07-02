@@ -29,8 +29,8 @@ htmlcov/
 
 # Project specific
 .cache/
-database/
-results/
+/database/
+/results/
 
 # OS
 .DS_Store
@@ -51,6 +51,8 @@ test_results.xml
 test_output.log
 serve_test_*.txt
 temp_*.txt
+Rplots.pdf
+**/Rplots.pdf
 
 # Temporary input data
 00_input_data/

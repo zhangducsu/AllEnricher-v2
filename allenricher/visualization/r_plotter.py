@@ -3,7 +3,7 @@ import logging
 import subprocess
 import shutil
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 logger = logging.getLogger(__name__)
 
@@ -37,8 +37,8 @@ def run_r_script(
         return False
 
     cmd = ["Rscript", str(script_path)]
-    # 需要解析为绝对路径的参数名（文件路径类参数）
-    _PATH_ARGS = {"tsv", "expr", "gene_set_ids"}
+    # 只解析真实文件路径参数；gene_set_ids 是逗号分隔的 ID 字符串，不能当路径处理。
+    _PATH_ARGS = {"tsv", "expr", "running_es"}
     for key, value in args.items():
         if key in _PATH_ARGS:
             cmd.extend([f"--{key}", str(Path(value).resolve())])
@@ -53,8 +53,17 @@ def run_r_script(
             cwd=str(R_SCRIPTS_DIR.parent)
         )
         if result.returncode != 0:
-            logger.error(f"R script failed:\n{result.stderr}")
+            logger.error(
+                "R script failed: %s\nstdout:\n%s\nstderr:\n%s",
+                script_name,
+                result.stdout,
+                result.stderr,
+            )
             return False
+        if result.stdout:
+            logger.debug("R script stdout (%s):\n%s", script_name, result.stdout)
+        if result.stderr:
+            logger.debug("R script stderr (%s):\n%s", script_name, result.stderr)
         logger.info(f"R plot saved: {output_file}")
         return True
     except subprocess.TimeoutExpired:
@@ -72,14 +81,30 @@ def plot_gsea_dotplot_r(tsv_path: str, output_file: str, top_n: int = 20) -> boo
 def plot_gsea_barplot_r(tsv_path: str, output_file: str, top_n: int = 20) -> bool:
     return run_r_script("gsea_barplot.R", {"tsv": tsv_path, "top_n": str(top_n)}, output_file)
 
-def plot_gsea_nes_plot_r(tsv_path: str, output_file: str) -> bool:
-    return run_r_script("gsea_nes_plot.R", {"tsv": tsv_path}, output_file)
+def plot_gsea_nes_plot_r(tsv_path: str, output_file: str, top_n: int = 30) -> bool:
+    return run_r_script("gsea_nes_plot.R", {"tsv": tsv_path, "top_n": str(top_n)}, output_file)
 
-def plot_gsea_ridgeplot_r(tsv_path: str, output_file: str, top_n: int = 15) -> bool:
-    return run_r_script("gsea_ridgeplot.R", {"tsv": tsv_path, "top_n": str(top_n)}, output_file)
+def plot_gsea_ridgeplot_r(
+    tsv_path: str,
+    output_file: str,
+    top_n: int = 15,
+    running_es_path: str = "",
+) -> bool:
+    args = {"tsv": tsv_path, "top_n": str(top_n)}
+    if running_es_path:
+        args["running_es"] = running_es_path
+    return run_r_script("gsea_ridgeplot.R", args, output_file)
 
-def plot_gsea_heatmap_r(expr_path: str, output_file: str) -> bool:
-    return run_r_script("gsea_heatmap.R", {"expr": expr_path}, output_file)
+def plot_gsea_heatmap_r(
+    expr_path: str,
+    output_file: str,
+    tsv_path: str = "",
+    top_n: int = 12,
+) -> bool:
+    args = {"expr": expr_path, "top_n": str(top_n)}
+    if tsv_path:
+        args["tsv"] = tsv_path
+    return run_r_script("gsea_heatmap.R", args, output_file)
 
 def plot_gsea_emapplot_r(tsv_path: str, output_file: str, top_n: int = 30) -> bool:
     return run_r_script("gsea_emapplot.R", {"tsv": tsv_path, "top_n": str(top_n)}, output_file)
@@ -90,11 +115,17 @@ def plot_gsea_cnetplot_r(tsv_path: str, output_file: str, top_n: int = 10) -> bo
 def plot_gsea_circos_r(tsv_path: str, output_file: str, top_n: int = 30) -> bool:
     return run_r_script("gsea_circos.R", {"tsv": tsv_path, "top_n": str(top_n)}, output_file)
 
-def plot_gsea_enrichment_r(tsv_path: str, gene_set_id: str, output_file: str) -> bool:
-    return run_r_script("gsea_enrichment_plot.R", {"tsv": tsv_path, "gene_set_id": gene_set_id}, output_file)
+def plot_gsea_enrichment_r(tsv_path: str, gene_set_id: str, output_file: str, running_es_path: str = "") -> bool:
+    args = {"tsv": tsv_path, "gene_set_id": gene_set_id}
+    if running_es_path:
+        args["running_es"] = running_es_path
+    return run_r_script("gsea_enrichment_plot.R", args, output_file)
 
-def plot_gsea_enrichment2_r(tsv_path: str, gene_set_ids: List[str], output_file: str) -> bool:
-    return run_r_script("gsea_enrichment_plot2.R", {"tsv": tsv_path, "gene_set_ids": ",".join(gene_set_ids)}, output_file)
+def plot_gsea_enrichment2_r(tsv_path: str, gene_set_ids: List[str], output_file: str, running_es_path: str = "") -> bool:
+    args = {"tsv": tsv_path, "gene_set_ids": ",".join(gene_set_ids)}
+    if running_es_path:
+        args["running_es"] = running_es_path
+    return run_r_script("gsea_enrichment_plot2.R", args, output_file)
 
 # 全部 R 图表类型
 R_PLOT_TYPES = [

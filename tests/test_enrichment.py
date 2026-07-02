@@ -33,7 +33,7 @@ class TestConfig:
         config = Config()
         
         assert config.species == "hsa"          # 默认物种：人类
-        assert config.method == "fisher"        # 默认方法：Fisher精确检验
+        assert config.method == "hypergeometric"  # 默认方法：超几何检验
         assert config.correction == "BH"        # 默认校正：Benjamini-Hochberg
         assert config.pvalue_cutoff == 0.05     # 默认p值阈值
         assert config.qvalue_cutoff == 0.05     # 默认q值阈值
@@ -179,7 +179,7 @@ class TestEnrichmentAnalyzer:
         return Config(
             species="hsa",
             databases=["GO"],
-            method="fisher",
+            method="hypergeometric",
             qvalue_cutoff=0.05
         )
     
@@ -338,7 +338,6 @@ class TestEnrichmentMethodEnum:
         """测试所有预期的富集分析方法都已定义"""
         methods = [m.value for m in EnrichmentMethod]
         
-        assert "fisher" in methods           # Fisher精确检验
         assert "hypergeometric" in methods   # 超几何检验
         assert "gsea" in methods             # GSEA基因集富集分析
         assert "ssgsea" in methods           # ssGSEA单样本GSEA

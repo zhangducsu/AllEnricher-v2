@@ -16,6 +16,7 @@ from itertools import combinations
 from typing import Dict, Optional, Set
 
 import matplotlib
+matplotlib.use("Agg", force=True)
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd

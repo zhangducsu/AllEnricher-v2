@@ -49,7 +49,7 @@ class TestGSEAE2E:
         results = []
         
         for pathway_name, pathway_genes in gene_sets.items():
-            es, nes, pvalue, leading_edge = gsea.calculate_normalized_es(
+            es, nes, pvalue, leading_edge, _ = gsea.calculate_normalized_es(
                 ranked_genes, pathway_genes, gene_weights
             )
             results.append({

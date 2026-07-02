@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AllEnricher v2.0 命令行接口模块 (Command Line Interface)
+AllEnricher v2.3.0 命令行接口模块 (Command Line Interface)
 
 本模块是 AllEnricher 工具的命令行入口，提供以下核心功能：
   - analyze:  运行基因集功能富集分析（主工作流）
@@ -18,10 +18,12 @@ AllEnricher v2.0 命令行接口模块 (Command Line Interface)
 
 import argparse
 import logging
+import os
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 
 import pandas as pd
 from jinja2 import Template
@@ -31,6 +33,7 @@ from allenricher.core.config import Config
 from allenricher.core.enrichment import EnrichmentAnalyzer
 from allenricher.database.manager import DatabaseManager
 from allenricher.visualization.plotter import Plotter
+from allenricher.visualization.plot_utils import safe_plot_stem
 from allenricher.report.generator import ReportGenerator
 from allenricher.ai.interpreter import create_interpreter, create_interpreter_from_config
 
@@ -48,7 +51,7 @@ logger = logging.getLogger(__name__)
 
 # 各方法支持的图表类型白名单
 _METHOD_PLOT_TYPES = {
-    'gsea': {'enrichment', 'nes_barplot', 'dotplot', 'barplot', 'ridgeplot', 'emapplot', 'cnetplot', 'circos'},
+    'gsea': {'enrichment', 'enrichment2', 'nes_barplot', 'dotplot', 'barplot', 'ridgeplot', 'emapplot', 'cnetplot', 'circos', 'heatmap'},
     'ssgsea': {'heatmap', 'group_comparison', 'dotplot', 'correlation'},
     'gsva': {'heatmap', 'group_comparison', 'dotplot', 'correlation'},
 }
@@ -148,6 +151,110 @@ def _parse_groups(groups_str: str) -> Dict[str, List[str]]:
     return groups
 
 
+def _safe_plot_stem(name: str) -> str:
+    """将 term ID 转成可跨平台保存的文件名片段。"""
+    return safe_plot_stem(name, fallback="term")
+
+
+def _normalize_ranked_genes(
+    ranked_genes: Optional[list],
+    gene_weights: Optional[dict],
+) -> Tuple[List[str], Dict[str, float]]:
+    """统一 GSEA 绘图所需的排序基因和权重结构。"""
+    if not ranked_genes:
+        return [], gene_weights or {}
+
+    normalized_genes: List[str] = []
+    normalized_weights: Dict[str, float] = dict(gene_weights or {})
+    for item in ranked_genes:
+        if isinstance(item, (tuple, list)) and len(item) >= 2:
+            gene = str(item[0])
+            normalized_genes.append(gene)
+            normalized_weights[gene] = float(item[1])
+        else:
+            gene = str(item)
+            normalized_genes.append(gene)
+            normalized_weights.setdefault(gene, 1.0)
+    return normalized_genes, normalized_weights
+
+
+def _calculate_running_es_rows(
+    term_id: str,
+    term_name: str,
+    ranked_genes: List[str],
+    gene_weights: Dict[str, float],
+    gene_set: Set[str],
+) -> List[dict]:
+    """为 R 绘图生成真实 running ES 轨迹。"""
+    n = len(ranked_genes)
+    hits = gene_set & set(ranked_genes)
+    nh = len(hits)
+    if n == 0 or nh == 0:
+        return []
+
+    nr = sum(abs(gene_weights.get(gene, 1.0)) for gene in hits)
+    hit_inc = 1.0 / nr if nr > 0 else 0.0
+    miss_inc = 1.0 / (n - nh) if (n - nh) > 0 else 0.0
+    running_sum = 0.0
+    rows = []
+
+    for idx, gene in enumerate(ranked_genes, start=1):
+        weight = float(gene_weights.get(gene, 1.0))
+        is_hit = gene in gene_set
+        if is_hit:
+            running_sum += hit_inc * abs(weight)
+        else:
+            running_sum -= miss_inc
+        rows.append({
+            "Term_ID": term_id,
+            "Term_Name": term_name,
+            "Rank": idx,
+            "Gene": gene,
+            "Weight": weight,
+            "Hit": is_hit,
+            "Running_ES": running_sum,
+        })
+    return rows
+
+
+def _write_running_es_file(
+    output_file: Path,
+    pathways: pd.DataFrame,
+    ranked_genes: Optional[list],
+    gene_weights: Optional[dict],
+    gene_sets: Optional[Dict[str, Set[str]]],
+) -> Optional[str]:
+    """写出 R enrichment 图使用的真实 running ES 中间表。"""
+    normalized_genes, normalized_weights = _normalize_ranked_genes(ranked_genes, gene_weights)
+    if not normalized_genes or not gene_sets:
+        logger.warning("缺少 ranked genes 或 gene sets，跳过 R enrichment 曲线图")
+        return None
+
+    term_id_col = next((c for c in ["Term_ID", "term_id", "ID", "id"] if c in pathways.columns), None)
+    term_name_col = next((c for c in ["Term_Name", "Description", "pathway", "term_name"] if c in pathways.columns), None)
+    if not term_id_col:
+        logger.warning("GSEA 结果缺少 Term_ID 列，跳过 R enrichment 曲线图")
+        return None
+
+    rows = []
+    for _, row in pathways.iterrows():
+        term_id = str(row[term_id_col])
+        gene_set = gene_sets.get(term_id)
+        if not gene_set:
+            continue
+        term_name = str(row[term_name_col]) if term_name_col else term_id
+        rows.extend(_calculate_running_es_rows(
+            term_id, term_name, normalized_genes, normalized_weights, gene_set
+        ))
+
+    if not rows:
+        logger.warning("top 通路未在 gene sets 中找到匹配项，跳过 R enrichment 曲线图")
+        return None
+
+    pd.DataFrame(rows).to_csv(output_file, sep="\t", index=False)
+    return str(output_file)
+
+
 def _generate_plots(
     method: str,
     results: dict,
@@ -215,6 +322,7 @@ def _generate_plots(
                 plot_gsea_dotplot_r, plot_gsea_barplot_r, plot_gsea_nes_plot_r,
                 plot_gsea_ridgeplot_r, plot_gsea_emapplot_r, plot_gsea_cnetplot_r,
                 plot_gsea_circos_r, plot_gsea_enrichment_r, plot_gsea_enrichment2_r,
+                plot_gsea_heatmap_r,
             )
 
             if not check_r_environment():
@@ -228,6 +336,30 @@ def _generate_plots(
                     tsv_path = str(plot_dir / f"{db_name}_enrichment.tsv")
                     df.to_csv(tsv_path, sep='\t', index=False)
 
+                    running_es_path: Optional[str] = None
+                    top_pathways_for_enrichment: Optional[pd.DataFrame] = None
+                    nes_col = next((c for c in ['NES', 'nes'] if c in df.columns), None)
+                    needs_running_es = any(
+                        pt in valid_types for pt in ['ridgeplot', 'enrichment', 'enrichment2']
+                    )
+                    if needs_running_es and nes_col:
+                        _abs_col = f'_{nes_col}_abs'
+                        df_for_top = df.copy()
+                        df_for_top[_abs_col] = df_for_top[nes_col].abs()
+                        running_es_limit = 15 if 'ridgeplot' in valid_types else 5
+                        top_pathways_for_es = (
+                            df_for_top.nlargest(running_es_limit, _abs_col)
+                            .drop(columns=[_abs_col])
+                        )
+                        top_pathways_for_enrichment = top_pathways_for_es.head(5)
+                        running_es_path = _write_running_es_file(
+                            plot_dir / f"{db_name}_running_es.tsv",
+                            top_pathways_for_es,
+                            ranked_genes,
+                            gene_weights,
+                            gene_sets,
+                        )
+
                     # dotplot
                     if 'dotplot' in valid_types:
                         out_file = str(plot_dir / f"{db_name}_dotplot.{plot_format}")
@@ -237,7 +369,7 @@ def _generate_plots(
                     # nes_barplot -> nes_plot (R)
                     if 'nes_barplot' in valid_types:
                         out_file = str(plot_dir / f"{db_name}_nes_barplot.{plot_format}")
-                        if plot_gsea_nes_plot_r(tsv_path, out_file):
+                        if plot_gsea_nes_plot_r(tsv_path, out_file, top_n=30):
                             generated_files.append(out_file)
 
                     # barplot
@@ -249,7 +381,12 @@ def _generate_plots(
                     # ridgeplot
                     if 'ridgeplot' in valid_types:
                         out_file = str(plot_dir / f"{db_name}_ridgeplot.{plot_format}")
-                        if plot_gsea_ridgeplot_r(tsv_path, out_file, top_n=15):
+                        if plot_gsea_ridgeplot_r(
+                            tsv_path,
+                            out_file,
+                            top_n=15,
+                            running_es_path=running_es_path or "",
+                        ):
                             generated_files.append(out_file)
 
                     # emapplot
@@ -270,21 +407,53 @@ def _generate_plots(
                         if plot_gsea_circos_r(tsv_path, out_file, top_n=30):
                             generated_files.append(out_file)
 
+                    # heatmap
+                    if 'heatmap' in valid_types:
+                        if expr_matrix is None:
+                            logger.warning("请求 R heatmap，但未提供表达矩阵，已跳过")
+                        else:
+                            expr_path = str(plot_dir / f"{db_name}_expression_matrix.tsv")
+                            expr_matrix.to_csv(expr_path, sep='\t')
+                            out_file = str(plot_dir / f"{db_name}_heatmap.{plot_format}")
+                            if plot_gsea_heatmap_r(expr_path, out_file, tsv_path=tsv_path, top_n=12):
+                                generated_files.append(out_file)
+
                     # enrichment (单个通路)
-                    if 'enrichment' in valid_types:
+                    if 'enrichment' in valid_types or 'enrichment2' in valid_types:
                         nes_col = next((c for c in ['NES', 'nes'] if c in df.columns), None)
                         if nes_col:
-                            _abs_col = f'_{nes_col}_abs'
-                            df[_abs_col] = df[nes_col].abs()
-                            top_pathways = df.nlargest(5, _abs_col).drop(columns=[_abs_col])
-                            for _, row in top_pathways.iterrows():
-                                term_id = row.get('Term_ID', row.get('term_id', ''))
-                                if not term_id:
-                                    continue
-                                safe_name = str(term_id).replace('/', '_').replace(' ', '_')
-                                out_file = str(plot_dir / f"{safe_name}_enrichment.{plot_format}")
-                                if plot_gsea_enrichment_r(tsv_path, str(term_id), out_file):
-                                    generated_files.append(out_file)
+                            if top_pathways_for_enrichment is None:
+                                _abs_col = f'_{nes_col}_abs'
+                                df_for_top = df.copy()
+                                df_for_top[_abs_col] = df_for_top[nes_col].abs()
+                                top_pathways_for_enrichment = (
+                                    df_for_top.nlargest(5, _abs_col)
+                                    .drop(columns=[_abs_col])
+                                )
+                                running_es_path = _write_running_es_file(
+                                    plot_dir / f"{db_name}_running_es.tsv",
+                                    top_pathways_for_enrichment,
+                                    ranked_genes,
+                                    gene_weights,
+                                    gene_sets,
+                                )
+                            if running_es_path:
+                                top_term_ids: List[str] = []
+                                for _, row in top_pathways_for_enrichment.iterrows():
+                                    term_id = row.get('Term_ID', row.get('term_id', ''))
+                                    if not term_id:
+                                        continue
+                                    term_id = str(term_id)
+                                    top_term_ids.append(term_id)
+                                    if 'enrichment' in valid_types:
+                                        safe_name = _safe_plot_stem(term_id)
+                                        out_file = str(plot_dir / f"{safe_name}_enrichment.{plot_format}")
+                                        if plot_gsea_enrichment_r(tsv_path, term_id, out_file, running_es_path):
+                                            generated_files.append(out_file)
+                                if 'enrichment2' in valid_types and top_term_ids:
+                                    out_file = str(plot_dir / f"{db_name}_enrichment2.{plot_format}")
+                                    if plot_gsea_enrichment2_r(tsv_path, top_term_ids, out_file, running_es_path):
+                                        generated_files.append(out_file)
 
         if not use_r_plots:
             # Python matplotlib 绘图模式（原有代码）
@@ -380,7 +549,8 @@ def _generate_plots(
                             nes_val = match.get('NES', match.get('nes', 0.0))
                             pval = match.get('p_value', match.get('NOM p-val', match.get('pvalue', match.get('P_Value', 1.0))))
 
-                            out_file = str(plot_dir / f"{set_name}_enrichment.{plot_format}")
+                            safe_name = _safe_plot_stem(set_name)
+                            out_file = str(plot_dir / f"{safe_name}_enrichment.{plot_format}")
                             try:
                                 plot_gsea_enrichment(
                                     ranked_genes=ranked_genes,
@@ -535,7 +705,7 @@ def _generate_plots(
         if 'heatmap' in valid_types:
             out_file = str(plot_dir / f"activity_heatmap.{plot_format}")
             try:
-                plot_pathway_heatmap(
+                fig = plot_pathway_heatmap(
                     scores_df,
                     annotation_col=annotation_df,
                     output_file=out_file,
@@ -543,8 +713,9 @@ def _generate_plots(
                     style=plot_style,
                     palette=plot_palette,
                 )
-                generated_files.append(out_file)
-                logger.info(f"活性热图已生成: {out_file}")
+                if fig is not None:
+                    generated_files.append(out_file)
+                    logger.info(f"活性热图已生成: {out_file}")
             except Exception as e:
                 logger.error(f"活性热图生成失败: {e}")
 
@@ -569,7 +740,7 @@ def _generate_plots(
         if 'dotplot' in valid_types:
             out_file = str(plot_dir / f"activity_dotplot.{plot_format}")
             try:
-                plot_pathway_dotplot(
+                fig = plot_pathway_dotplot(
                     scores_df,
                     groups=groups,
                     output_file=out_file,
@@ -577,8 +748,9 @@ def _generate_plots(
                     style=plot_style,
                     palette=plot_palette,
                 )
-                generated_files.append(out_file)
-                logger.info(f"活性气泡图已生成: {out_file}")
+                if fig is not None:
+                    generated_files.append(out_file)
+                    logger.info(f"活性气泡图已生成: {out_file}")
             except Exception as e:
                 logger.error(f"活性气泡图生成失败: {e}")
 
@@ -586,7 +758,7 @@ def _generate_plots(
         if 'correlation' in valid_types:
             out_file = str(plot_dir / f"sample_correlation.{plot_format}")
             try:
-                plot_sample_correlation(
+                fig = plot_sample_correlation(
                     scores_df,
                     annotation_col=annotation_df,
                     output_file=out_file,
@@ -594,8 +766,9 @@ def _generate_plots(
                     style=plot_style,
                     palette=plot_palette,
                 )
-                generated_files.append(out_file)
-                logger.info(f"样本相关性热图已生成: {out_file}")
+                if fig is not None:
+                    generated_files.append(out_file)
+                    logger.info(f"样本相关性热图已生成: {out_file}")
             except Exception as e:
                 logger.error(f"样本相关性热图生成失败: {e}")
 
@@ -619,7 +792,7 @@ def create_parser() -> argparse.ArgumentParser:
     # 创建顶层解析器
     parser = argparse.ArgumentParser(
         prog='allenricher',
-        description='AllEnricher v2.0 - Gene Set Enrichment Analysis Tool',
+        description=f'AllEnricher v{__version__} - Gene Set Enrichment Analysis Tool',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='''
 Examples:
@@ -675,7 +848,7 @@ Examples:
     analyze_parser.add_argument('-e', '--expression-matrix', default=None, help='Expression matrix file (TSV/CSV, rows=genes, cols=samples) for GSEA/ssGSEA/GSVA')  # 表达矩阵文件路径（行=基因，列=样本），用于GSEA/ssGSEA/GSVA
     analyze_parser.add_argument('-r', '--ranked-genes', default=None, help='Ranked gene list file (two columns: gene_name weight) for GSEA')  # 排序基因列表文件路径（两列: 基因名 权重），用于GSEA
     analyze_parser.add_argument('-g', '--gmt', default=None, help='GMT format gene set file path (supports .gmt and .gmt.gz)')  # GMT格式基因集文件路径，用于GSEA/ssGSEA/GSVA的基因集定义
-    analyze_parser.add_argument('-pt', '--plot-types', default=None, help='Comma-separated plot types to generate. GSEA: enrichment,nes_barplot,dotplot; GSVA/ssGSEA: heatmap,group_comparison,dotplot,correlation')  # 要生成的图表类型，逗号分隔
+    analyze_parser.add_argument('-pt', '--plot-types', default=None, help='Comma-separated plot types to generate. GSEA: enrichment,enrichment2,nes_barplot,dotplot,barplot,ridgeplot,emapplot,cnetplot,circos,heatmap; GSVA/ssGSEA: heatmap,group_comparison,dotplot,correlation')  # 要生成的图表类型，逗号分隔
     analyze_parser.add_argument('--groups', default=None, help='Sample group definition, format: Group1:sample1,sample2;Group2:sample3,sample4')  # 样本分组定义，用于组间比较图
     analyze_parser.add_argument('--plot-format', default='png', choices=['png', 'pdf', 'svg'], help='Plot output format (default: png)')  # 图表输出格式
     analyze_parser.add_argument('--plot-dpi', type=int, default=300, help='Plot resolution/DPI (default: 300)')  # 图表分辨率(DPI)
@@ -846,8 +1019,7 @@ def cmd_analyze(args) -> int:
             # 命令行参数优先级高于配置文件（如果命令行显式指定了参数则覆盖配置文件中的值）
             if args.input:
                 config.input_file = args.input
-            if args.species != 'hsa':
-                config.species = args.species
+            config.species = args.species
             if args.databases != 'GO,KEGG':
                 config.databases = args.databases.split(',')
             if args.method != 'hypergeometric':
@@ -866,6 +1038,8 @@ def cmd_analyze(args) -> int:
                 config.output_dir = args.output
             if args.background:
                 config.background_file = args.background
+            if args.database_dir:
+                config.database_dir = args.database_dir
             # CLI 标志覆盖 output_all（默认 True，--only-significant 时设为 False）
             if args.only_significant:
                 config.output_all = False
@@ -887,6 +1061,7 @@ def cmd_analyze(args) -> int:
                 min_genes=args.min_genes,
                 n_jobs=args.jobs,
                 background_file=args.background,
+                database_dir=args.database_dir or "./database",
                 output_all=not args.only_significant,  # 默认输出全部条目（与v1一致）
                 plot_style=getattr(args, 'style', 'nature'),
                 plot_palette=getattr(args, 'palette', None),
@@ -954,6 +1129,8 @@ def cmd_analyze(args) -> int:
         # 获取图表输出格式和DPI
         plot_format = getattr(args, 'plot_format', 'png')
         plot_dpi = getattr(args, 'plot_dpi', 300)
+        config.figure_format = plot_format
+        config.figure_dpi = plot_dpi
         
         # ---- 第5步：加载富集分析数据库 ----
         # 根据配置中指定的数据库名称加载对应的数据库数据
@@ -2027,7 +2204,8 @@ def _print_species_detail(registry, entry, match_kind: str = "") -> None:
                 print(f"  Code: {detail['kegg_code']} (source: {detail.get('kegg_code_source', '-')})")
 
     # 本地数据库构建状态
-    _print_local_build_status(detail['taxid'], detail.get('kegg_code'))
+    if not os.environ.get("ALLENRICHER_SKIP_LOCAL_BUILD_STATUS"):
+        _print_local_build_status(detail['taxid'], detail.get('kegg_code'))
 
     print(f"\nBuild Command:")
     print(f"  allenricher build --taxonomy {detail['taxid']}")
@@ -2403,15 +2581,33 @@ def _cmd_tf_enrich(args) -> int:
 
         # 生成条形图
         fig_bar = viz.plot_tf_enrichment_bar(results_df, top_n=args.top_n)
-        fig_bar.write_html(str(output_dir / "tf_enrichment_bar.html"))
-        fig_bar.write_image(str(output_dir / "tf_enrichment_bar.png"))
-        logger.info(f"条形图已保存: {output_dir / 'tf_enrichment_bar.html'}")
+        bar_html = output_dir / "tf_enrichment_bar.html"
+        fig_bar.write_html(str(bar_html))
+        logger.info(f"条形图已保存: {bar_html}")
+        try:
+            bar_png = output_dir / "tf_enrichment_bar.png"
+            fig_bar.write_image(str(bar_png))
+            logger.info(f"条形图 PNG 已保存: {bar_png}")
+        except Exception as e:
+            if "kaleido" in str(e).lower():
+                logger.info("跳过条形图 PNG 导出：未安装 kaleido；HTML 图表已生成")
+            else:
+                logger.warning(f"条形图 PNG 导出失败（HTML 图表已生成）: {e}")
 
         # 生成饼图
         fig_pie = viz.plot_tf_mode_pie(results_df)
-        fig_pie.write_html(str(output_dir / "tf_mode_distribution.html"))
-        fig_pie.write_image(str(output_dir / "tf_mode_distribution.png"))
-        logger.info(f"饼图已保存: {output_dir / 'tf_mode_distribution.html'}")
+        pie_html = output_dir / "tf_mode_distribution.html"
+        fig_pie.write_html(str(pie_html))
+        logger.info(f"饼图已保存: {pie_html}")
+        try:
+            pie_png = output_dir / "tf_mode_distribution.png"
+            fig_pie.write_image(str(pie_png))
+            logger.info(f"饼图 PNG 已保存: {pie_png}")
+        except Exception as e:
+            if "kaleido" in str(e).lower():
+                logger.info("跳过饼图 PNG 导出：未安装 kaleido；HTML 图表已生成")
+            else:
+                logger.warning(f"饼图 PNG 导出失败（HTML 图表已生成）: {e}")
     except Exception as e:
         logger.warning(f"图表生成失败（不影响分析结果）: {e}")
 

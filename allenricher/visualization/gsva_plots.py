@@ -16,6 +16,7 @@ import math
 from typing import Dict, List, Optional
 
 import matplotlib
+matplotlib.use("Agg", force=True)
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -23,6 +24,7 @@ import seaborn as sns
 from scipy import stats
 
 from allenricher.visualization.plot_theme import PlotTheme, save_figure_dual
+from allenricher.visualization.plot_utils import clean_pathway_label
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +42,7 @@ def plot_pathway_heatmap(
     dpi: int = 300,
     style: str = "nature",
     palette: str = None,
-) -> matplotlib.figure.Figure:
+) -> Optional[matplotlib.figure.Figure]:
     """
     样本-通路活性聚类热图
 
@@ -63,10 +65,34 @@ def plot_pathway_heatmap(
     返回值:
         matplotlib.figure.Figure: 生成的图表对象
     """
+    if scores_df is None or scores_df.empty:
+        logger.warning("活性热图跳过：得分矩阵为空")
+        return None
+
+    plot_df = scores_df.copy()
+    plot_df.index = [clean_pathway_label(idx) for idx in plot_df.index]
+    plot_df = plot_df.apply(pd.to_numeric, errors="coerce").replace([np.inf, -np.inf], np.nan)
+    plot_df = plot_df.dropna(axis=0, how="all").dropna(axis=1, how="all")
+    if plot_df.empty:
+        logger.warning("活性热图跳过：得分矩阵没有可绘制的有限数值")
+        return None
+    if plot_df.isna().any().any():
+        fill_value = plot_df.stack().median()
+        if pd.isna(fill_value):
+            fill_value = 0.0
+        plot_df = plot_df.fillna(fill_value)
+    n_pathways, n_samples = plot_df.shape
+    effective_cluster_rows = bool(cluster_rows and n_pathways >= 2)
+    effective_cluster_cols = bool(cluster_cols and n_samples >= 2)
+    if cluster_rows and not effective_cluster_rows:
+        logger.warning("活性热图行数不足 2，已关闭行聚类")
+    if cluster_cols and not effective_cluster_cols:
+        logger.warning("活性热图样本数不足 2，已关闭列聚类")
+
     with PlotTheme.context(style or 'nature'):
         # 自动计算 figsize
         if figsize is None:
-            n_pathways, n_samples = scores_df.shape
+            n_pathways, n_samples = plot_df.shape
             # 基础尺寸：每个通路 0.3 行高，每个样本 0.8 列宽
             height = max(6, n_pathways * 0.3 + 2)
             width = max(8, n_samples * 0.8 + 2)
@@ -83,14 +109,14 @@ def plot_pathway_heatmap(
 
         # 绘制聚类热图
         g = sns.clustermap(
-            scores_df,
+            plot_df,
             method="average",
             metric="euclidean",
             cmap=diverging_cmap,
             center=center,
             figsize=figsize,
-            row_cluster=cluster_rows,
-            col_cluster=cluster_cols,
+            row_cluster=effective_cluster_rows,
+            col_cluster=effective_cluster_cols,
             linewidths=0.5,
             linecolor="white",
             cbar_kws={"label": "Activity Score", "shrink": 0.8},
@@ -115,11 +141,11 @@ def plot_pathway_heatmap(
         # 添加分组注释颜色条
         if annotation_col is not None and not annotation_col.empty:
             # 确保注释 DataFrame 的行与 scores_df 的列对齐
-            common_samples = scores_df.columns.intersection(annotation_col.index)
+            common_samples = plot_df.columns.intersection(annotation_col.index)
             if len(common_samples) > 0:
                 annot_df = annotation_col.loc[common_samples]
                 # 获取列聚类后的样本顺序
-                if cluster_cols and g.dendrogram_col is not None:
+                if effective_cluster_cols and g.dendrogram_col is not None:
                     col_order = g.ax_heatmap.get_xticklabels()
                     ordered_samples = [t.get_text() for t in col_order]
                     annot_df = annot_df.reindex(ordered_samples).dropna(how="all")
@@ -325,7 +351,7 @@ def plot_pathway_dotplot(
     dpi: int = 300,
     style: str = "nature",
     palette: str = None,
-) -> matplotlib.figure.Figure:
+) -> Optional[matplotlib.figure.Figure]:
     """
     通路活性气泡图
 
@@ -345,11 +371,26 @@ def plot_pathway_dotplot(
     返回值:
         matplotlib.figure.Figure: 生成的图表对象
     """
+    if scores_df is None or scores_df.empty:
+        logger.warning("活性气泡图跳过：得分矩阵为空")
+        return None
+    plot_df = scores_df.apply(pd.to_numeric, errors="coerce").replace([np.inf, -np.inf], np.nan)
+    plot_df = plot_df.dropna(axis=0, how="all").dropna(axis=1, how="all")
+    if plot_df.empty:
+        logger.warning("活性气泡图跳过：得分矩阵没有可绘制的有限数值")
+        return None
+    if plot_df.isna().any().any():
+        fill_value = plot_df.stack().median()
+        if pd.isna(fill_value):
+            fill_value = 0.0
+        plot_df = plot_df.fillna(fill_value)
+    plot_df.index = [clean_pathway_label(idx) for idx in plot_df.index]
+
     with PlotTheme.context(style or 'nature'):
         # 计算每个通路的均值和方差
         pathway_stats = pd.DataFrame({
-            "mean": scores_df.mean(axis=1),
-            "var": scores_df.var(axis=1),
+            "mean": plot_df.mean(axis=1),
+            "var": plot_df.var(axis=1).fillna(0.0),
         })
 
         # 按均值绝对值排序，取前 top_n
@@ -367,9 +408,9 @@ def plot_pathway_dotplot(
             group_colors = PlotTheme.get_palette(palette, n=len(groups))
             plot_data = []
             for group_name, samples in groups.items():
-                valid_samples = [s for s in samples if s in scores_df.columns]
+                valid_samples = [s for s in samples if s in plot_df.columns]
                 if valid_samples:
-                    group_mean = scores_df.loc[top_pathways, valid_samples].mean(axis=1)
+                    group_mean = plot_df.loc[top_pathways, valid_samples].mean(axis=1)
                     for pw in top_pathways:
                         plot_data.append({
                             "Pathway": pw,
@@ -378,6 +419,9 @@ def plot_pathway_dotplot(
                             "Variance": pathway_stats.loc[pw, "var"],
                         })
             df_plot = pd.DataFrame(plot_data)
+            if df_plot.empty:
+                logger.warning("活性气泡图跳过：分组样本与得分矩阵列名没有交集")
+                return None
 
             # 归一化方差用于点大小
             var_min = df_plot["Variance"].min()
@@ -403,7 +447,7 @@ def plot_pathway_dotplot(
             ax.legend(title="Group", fontsize=9, title_fontsize=10, loc="lower right")
         else:
             # 无分组：展示所有样本均值
-            means = scores_df.loc[top_pathways].mean(axis=1)
+            means = plot_df.loc[top_pathways].mean(axis=1)
             variances = pathway_stats.loc[top_pathways, "var"]
 
             # 归一化方差用于点大小
@@ -450,7 +494,7 @@ def plot_sample_correlation(
     dpi: int = 300,
     style: str = "nature",
     palette: str = None,
-) -> matplotlib.figure.Figure:
+) -> Optional[matplotlib.figure.Figure]:
     """
     样本相关性热图
 
@@ -473,9 +517,22 @@ def plot_sample_correlation(
     if method not in ("pearson", "spearman"):
         raise ValueError(f"不支持的 method: '{method}'，有效值为 'pearson', 'spearman'")
 
+    if scores_df is None or scores_df.empty:
+        logger.warning("样本相关性图跳过：得分矩阵为空")
+        return None
+    if scores_df.shape[1] < 2:
+        logger.warning("样本相关性图跳过：样本数不足 2")
+        return None
+    if scores_df.shape[0] < 2:
+        logger.warning("样本相关性图跳过：pathway 数不足 2，无法计算可靠样本相关性")
+        return None
+
     with PlotTheme.context(style or 'nature'):
         # 计算相关性矩阵（样本间）
-        corr_matrix = scores_df.T.corr(method=method)
+        corr_matrix = scores_df.corr(method=method)
+        if corr_matrix.isna().all().all():
+            logger.warning("样本相关性图跳过：相关性矩阵全为 NA")
+            return None
 
         # 自动调整 figsize
         n_samples = len(corr_matrix)

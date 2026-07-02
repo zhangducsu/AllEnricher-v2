@@ -482,7 +482,7 @@ class TestCustomSpeciesFullWorkflow:
                 # 取第一个样本的排序基因做可视化
                 sample_expr = data['expr_matrix']['Sample_1']
                 ranked_genes = sample_expr.sort_values(ascending=False).index.tolist()
-                _, nes, pval, _ = gsea_inst.calculate_normalized_es(
+                _, nes, pval, _, _ = gsea_inst.calculate_normalized_es(
                     ranked_genes, pathway_genes
                 )
                 gsea_viz_data.append({

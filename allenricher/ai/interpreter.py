@@ -1,5 +1,5 @@
 """
-AI-powered result interpretation module for AllEnricher v2.0
+AI-powered result interpretation module for AllEnricher v2.3.0
 
 Supports multiple AI backends:
 - OpenAI (GPT-4, GPT-3.5)
@@ -10,7 +10,7 @@ Supports multiple AI backends:
 - Local models (via Ollama)
 
 中文模块说明：
-    AI驱动的结果解读模块（AllEnricher v2.0）
+    AI驱动的结果解读模块（AllEnricher v2.3.0）
 
     本模块提供基于人工智能的基因集富集分析结果解读功能，支持多种AI后端：
     - OpenAI（GPT-4、GPT-3.5）：云端大语言模型，提供高质量的生物学解读

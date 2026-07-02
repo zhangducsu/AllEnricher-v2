@@ -22,12 +22,17 @@ Usage:
 from __future__ import annotations
 
 import contextlib
+import logging
 import os
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+import matplotlib
+matplotlib.use("Agg", force=True)
 import matplotlib.pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap, ListedColormap
+
+logging.getLogger("matplotlib.font_manager").setLevel(logging.ERROR)
 
 
 # =============================================================================
@@ -657,8 +662,13 @@ def save_figure_dual(
             base_path = base_path[:-len(ext)]
             break
     
+    output_ext = os.path.splitext(output_path)[1].lower().lstrip(".") or "png"
+    if output_ext == "jpeg":
+        output_ext = "jpg"
+
     png_path = base_path + '.png'
     pdf_path = base_path + '.pdf'
+    requested_path = base_path + f'.{output_ext}'
     
     # 获取背景色
     if facecolor is None:
@@ -682,7 +692,25 @@ def save_figure_dual(
         facecolor=facecolor,
         **kwargs
     )
-    
+    if requested_path not in {png_path, pdf_path}:
+        if output_ext in {"png", "jpg"}:
+            fig.savefig(
+                requested_path,
+                format=output_ext,
+                dpi=dpi,
+                bbox_inches=bbox_inches,
+                facecolor=facecolor,
+                **kwargs
+            )
+        else:
+            fig.savefig(
+                requested_path,
+                format=output_ext,
+                bbox_inches=bbox_inches,
+                facecolor=facecolor,
+                **kwargs
+            )
+
     return png_path, pdf_path
 
 
@@ -740,6 +768,8 @@ class PlotTheme:
         Raises:
             ValueError: 如果风格名称不存在
         """
+        if style == "default":
+            style = "nature"
         if style not in PRESETS:
             available = ", ".join(cls.available_styles())
             raise ValueError(f"Unknown style '{style}'. Available: {available}")
@@ -755,9 +785,11 @@ class PlotTheme:
         # 构建 rcParams - 完整映射所有25+参数
         rc_params = {
             # === 字体配置 ===
-            "font.family": preset.font_family,
-            "font.sans-serif": ["Helvetica", "Arial", "DejaVu Sans", "Liberation Sans",
-                                 "Tahoma", "Verdana", "sans-serif"],
+            "font.family": "sans-serif",
+            "font.sans-serif": [
+                "DejaVu Sans", "Liberation Sans", "Arial", "Noto Sans CJK SC",
+                "Microsoft YaHei", "Tahoma", "Verdana", "sans-serif",
+            ],
             "font.weight": preset.font_weight,
             "font.size": preset.font_size,
             "axes.titlesize": preset.title_size,

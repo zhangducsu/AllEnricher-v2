@@ -1,5 +1,5 @@
 # ============================================================
-# AllEnricher v2.0 项目构建与工具配置文件
+# AllEnricher v2.3.0 项目构建与工具配置文件
 # ============================================================
 # 本文件是 Python 项目的标准配置文件（PEP 518），用于：
 #   1. 定义项目元信息（名称、版本、作者等）
@@ -21,10 +21,10 @@ build-backend = "setuptools.build_meta"
 # --------------------------------------------------
 [project]
 name = "allenricher"                                              # 包名（pip install allenricher）
-version = "2.1.0"                                                 # 版本号
+version = "2.3.0"                                                 # 版本号
 description = "A comprehensive gene set function enrichment tool for multiple species"  # 项目简介
 readme = "README.md"                                              # README 文件
-license = {text = "MIT"}                                          # 开源许可证
+license = "MIT"                                                   # 开源许可证
 authors = [
     {name = "AllEnricher Team", email = "allenricher@example.com"}
 ]
@@ -45,7 +45,6 @@ classifiers = [                                                    # PyPI 分类
     "Environment :: Console",                                      # 运行环境：命令行
     "Intended Audience :: Science/Research",                       # 目标用户：科研人员
     "Intended Audience :: Developers",                             # 目标用户：开发者
-    "License :: OSI Approved :: MIT License",                      # MIT 许可证
     "Operating System :: OS Independent",                           # 跨平台
     "Programming Language :: Python :: 3",                         # Python 3
     "Programming Language :: Python :: 3.8",
@@ -70,6 +69,10 @@ dependencies = [
     "requests>=2.25.0",    # HTTP 请求（AI接口调用、数据库下载）
     "tqdm>=4.60.0",        # 进度条显示
     "openpyxl>=3.0.0",     # Excel 文件读写（支持 .xlsx 格式的基因列表加载）
+    "matplotlib>=3.4.0",   # 基础绘图引擎（CLI 默认会生成图表）
+    "seaborn>=0.11.0",     # 统计可视化
+    "plotly>=5.0.0",       # TF 富集 HTML 图表
+    "jinja2>=3.0.0",       # TF HTML 报告模板渲染
 ]
 
 # --------------------------------------------------
@@ -88,10 +91,11 @@ ai = [
     "openai>=1.0.0",               # OpenAI API 客户端
     "anthropic>=0.18.0",           # Anthropic Claude API 客户端
 ]
-# 可视化相关依赖（Python 原生绑图，非 R 绑图）
+# 可视化相关依赖（核心包已包含 Python 绘图依赖，保留该 extra 兼容旧安装命令）
 visualization = [
     "matplotlib>=3.4.0",           # 基础绑图库
     "seaborn>=0.11.0",             # 统计可视化
+    "plotly>=5.0.0",               # TF 富集 HTML 图表
 ]
 # 开发工具依赖（仅开发者需要）
 dev = [
@@ -101,6 +105,7 @@ dev = [
     "flake8>=3.9.0",               # 代码风格检查
     "mypy>=0.900",                 # 静态类型检查
     "isort>=5.0.0",                # import 排序
+    "httpx>=0.23.0",               # FastAPI TestClient 测试依赖
 ]
 # 安装所有可选依赖：pip install allenricher[all]
 all = [
@@ -136,7 +141,14 @@ include = ["allenricher*"]       # 包含所有 allenricher 开头的包
 # 指定非 .py 文件也一并打包
 # --------------------------------------------------
 [tool.setuptools.package-data]
-allenricher = ["py.typed", "*.yaml", "*.json"]   # 类型存根、YAML/JSON 配置文件
+allenricher = [
+    "py.typed",
+    "*.yaml",
+    "*.json",
+    "api/static/*.html",
+    "report/templates/*.html",
+    "visualization/r_scripts/*.R",
+]
 
 # --------------------------------------------------
 # Black 代码格式化工具配置

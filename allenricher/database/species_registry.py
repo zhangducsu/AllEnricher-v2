@@ -10,6 +10,7 @@ from __future__ import annotations
 import csv
 import difflib
 import logging
+import os
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Optional, Dict, List, Any, Tuple
@@ -577,7 +578,8 @@ class SpeciesRegistry:
         Returns:
             已加载数据的 SpeciesRegistry 实例
         """
-        registry = cls(registry_path=Path(root_dir) / "supported_species.tsv")
+        registry_path = Path(os.environ.get("ALLENRICHER_SPECIES_REGISTRY", "")) if os.environ.get("ALLENRICHER_SPECIES_REGISTRY") else Path(root_dir) / "supported_species.tsv"
+        registry = cls(registry_path=registry_path)
         registry.load()
         return registry
 

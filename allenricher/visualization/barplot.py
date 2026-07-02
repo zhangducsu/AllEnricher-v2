@@ -11,11 +11,13 @@ import logging
 from typing import Dict, List, Optional, Tuple, Union
 
 import matplotlib
+matplotlib.use("Agg", force=True)
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
 from .plot_theme import PlotTheme, save_figure_dual
+from .plot_utils import clean_pathway_label, term_figure_size
 
 logger = logging.getLogger(__name__)
 
@@ -112,8 +114,7 @@ def _auto_figsize(n_terms: int, base_width: float = 10.0) -> Tuple[float, float]
         (width, height) 元组
     """
     # 每个 term 约 0.35 英寸高度，最小 6 英寸，最大 16 英寸
-    height = max(6.0, min(16.0, n_terms * 0.35))
-    return (base_width, height)
+    return term_figure_size(n_terms, width=base_width, min_height=2.8, row_height=0.42, max_height=16.0)
 
 
 def _save_figure(fig: plt.Figure, output_file: Optional[str], dpi: int = 300):
@@ -271,6 +272,7 @@ def plot_barplot(
             else:
                 clean_terms.append(term_str)
 
+        clean_terms = [clean_pathway_label(term) for term in terms]
         ax.set_yticks(y_positions)
         ax.set_yticklabels(clean_terms, fontsize=9)
 
@@ -290,7 +292,8 @@ def plot_barplot(
 
         # 设置 x 轴
         ax.set_xlabel("-log10(Q-value)", fontsize=10)
-        ax.set_xlim(0, max(values) * 1.25)  # 留出空间给基因数标注
+        max_value = max(float(np.nanmax(values)), 1e-6)
+        ax.set_xlim(0, max_value * (1.35 if len(df) == 1 else 1.25))
 
         # 设置标题
         if title is None:
@@ -302,7 +305,7 @@ def plot_barplot(
         ax.set_title(title, fontsize=12, fontweight="bold")
 
         # 添加图例（仅 GO 和 KEGG 有多类别）
-        if database.upper() in ["GO", "KEGG"] and len(category_colors) > 1:
+        if len(df) > 1 and database.upper() in ["GO", "KEGG"] and len(category_colors) > 1:
             legend_elements = [
                 plt.Rectangle((0, 0), 1, 1, facecolor=color, edgecolor="none", label=cat.replace("_", " ").title())
                 for cat, color in category_colors.items()
