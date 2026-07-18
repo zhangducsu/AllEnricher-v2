@@ -1,5 +1,5 @@
-"""报告模块 - 生成交互式HTML富集分析报告，包含统计摘要、数据表格和图表"""
-from allenricher.report.generator import ReportGenerator  # HTML报告生成器
-from allenricher.report.visualizer import Visualizer  # TF富集分析可视化器
+"""Reporting module - Generate interactive HTML-enrichment analysis, including statistical summaries, data tables and graphs"""
+from allenricher.report.generator import ReportGenerator  # HTML Report Generator
+from allenricher.report.visualizer import Visualizer  # TF Fusion Analytic Visualizer
 
 __all__ = ["ReportGenerator", "Visualizer"]

@@ -1,12 +1,12 @@
 """
-CLI 集成测试 - GSEA/ssGSEA/GSVA 相关功能
+CLI Integrated Test - GSEA/ssGSEA/GSVA Related Functions
 
-测试内容：
-1. CLI 支持 fisher/hypergeometric/gsea/ssgsea/gsva 方法
-2. --expression-matrix 参数
-3. --ranked-genes 参数
-4. Config 类包含 GSVA 相关字段
-5. EnrichmentMethod 枚举包含 GSVA
+Test content: 
+1. CLI Support hypergeometric/gsea/ssgsea/gsva Methodology
+2. --expression-matrix Parameters
+3. --ranked-genes Parameters
+4. Config Organisation GSVA Relevant Fields
+5. EnrichmentMethod Organisation GSVA
 """
 
 import pytest
@@ -24,35 +24,35 @@ from allenricher.core.config import Config, EnrichmentMethod
 
 
 class TestCLIMethodChoices:
-    """测试 CLI 方法选项支持所有富集分析方法"""
+    """Test CLI method options to support all enrichment analysis methods"""
 
     def test_cli_method_choices_include_gsva(self):
-        """验证 CLI --method 选项支持 gsva"""
+        """Validation CLI--methodOptions for gsva"""
         parser = create_parser()
-        # gsva 应该被接受为合法的 method 值
+        # gsva should be accepted as a valid method value
         args = parser.parse_args(['analyze', '-i', 'genes.txt', '-m', 'gsva'])
         assert args.method == 'gsva'
 
     def test_cli_method_choices_all_methods(self):
-        """验证 CLI --method 选项支持所有五种方法"""
+        """Validation CLI--methodOptions support all formal methods"""
         parser = create_parser()
-        valid_methods = ['fisher', 'hypergeometric', 'gsea', 'ssgsea', 'gsva']
+        valid_methods = ['hypergeometric', 'gsea', 'ssgsea', 'gsva']
         for method in valid_methods:
             args = parser.parse_args(['analyze', '-i', 'genes.txt', '-m', method])
-            assert args.method == method, f"方法 '{method}' 应该被支持"
+            assert args.method == method, f"Method '{method}\"should be supported"
 
     def test_cli_method_invalid_rejected(self):
-        """验证 CLI --method 选项拒绝无效的方法名"""
+        """Validation CLI--methodOption rejects invalid name"""
         parser = create_parser()
         with pytest.raises(SystemExit):
             parser.parse_args(['analyze', '-i', 'genes.txt', '-m', 'invalid_method'])
 
 
 class TestCLIExpressionMatrixOption:
-    """测试 --expression-matrix 参数"""
+    """Test--expression-matrixParameters"""
 
     def test_cli_expression_matrix_option(self):
-        """验证 --expression-matrix 参数可以被正确解析"""
+        """Validate expression-matrixParameters can be correctly parsed"""
         parser = create_parser()
         args = parser.parse_args([
             'analyze', '-i', 'genes.txt',
@@ -61,7 +61,7 @@ class TestCLIExpressionMatrixOption:
         assert args.expression_matrix == 'expression_matrix.tsv'
 
     def test_cli_expression_matrix_long_option(self):
-        """验证 --expression-matrix 长选项形式"""
+        """Validate expression-matrixLong Options Format"""
         parser = create_parser()
         args = parser.parse_args([
             'analyze', '-i', 'genes.txt',
@@ -70,17 +70,17 @@ class TestCLIExpressionMatrixOption:
         assert args.expression_matrix == 'expr.csv'
 
     def test_cli_expression_matrix_default_none(self):
-        """验证 --expression-matrix 默认值为 None"""
+        """Validate expression-matrixDefault value is None"""
         parser = create_parser()
         args = parser.parse_args(['analyze', '-i', 'genes.txt'])
         assert args.expression_matrix is None
 
 
 class TestCLIRankedGenesOption:
-    """测试 --ranked-genes 参数"""
+    """Test--ranked-genesParameters"""
 
     def test_cli_ranked_genes_option(self):
-        """验证 --ranked-genes 参数可以被正确解析"""
+        """Validate ranked-genesParameters can be correctly parsed"""
         parser = create_parser()
         args = parser.parse_args([
             'analyze', '-i', 'genes.txt',
@@ -89,7 +89,7 @@ class TestCLIRankedGenesOption:
         assert args.ranked_genes == 'ranked_genes.tsv'
 
     def test_cli_ranked_genes_long_option(self):
-        """验证 --ranked-genes 长选项形式"""
+        """Validate ranked-genesLong Options Format"""
         parser = create_parser()
         args = parser.parse_args([
             'analyze', '-i', 'genes.txt',
@@ -98,13 +98,13 @@ class TestCLIRankedGenesOption:
         assert args.ranked_genes == 'ranked.txt'
 
     def test_cli_ranked_genes_default_none(self):
-        """验证 --ranked-genes 默认值为 None"""
+        """Validate --ranked-genes default value of None"""
         parser = create_parser()
         args = parser.parse_args(['analyze', '-i', 'genes.txt'])
         assert args.ranked_genes is None
 
     def test_cli_all_new_options_together(self):
-        """验证所有新增参数可以同时使用"""
+        """Verify that all new parameters can be used simultaneously"""
         parser = create_parser()
         args = parser.parse_args([
             'analyze', '-i', 'genes.txt',
@@ -122,28 +122,28 @@ class TestCLIRankedGenesOption:
 
 
 class TestConfigGSVAFields:
-    """验证 Config 类包含 GSVA 相关字段"""
+    """Verify Config Class contains GSVA-related fields"""
 
     def test_config_gsva_method_field(self):
-        """验证 Config 包含 gsva_method 字段且默认值为 'gsva'"""
+        """Validation Config with gsva_method field with default value 'gsva'"""
         config = Config()
         assert hasattr(config, 'gsva_method')
         assert config.gsva_method == 'gsva'
 
     def test_config_gsva_kcdf_field(self):
-        """验证 Config 包含 gsva_kcdf 字段且默认值为 'Gaussian'"""
+        """Validation Config contains gsva_kcdf field with default value 'Gaussian'"""
         config = Config()
         assert hasattr(config, 'gsva_kcdf')
         assert config.gsva_kcdf == 'Gaussian'
 
     def test_config_gsva_tau_field(self):
-        """验证 Config 包含 gsva_tau 字段且默认值为 1.0"""
+        """Verify that Config contains gsva_tau field with default value of 1.0"""
         config = Config()
         assert hasattr(config, 'gsva_tau')
         assert config.gsva_tau == 1.0
 
     def test_config_gsva_fields_custom_values(self):
-        """验证 GSVA 字段可以被自定义赋值"""
+        """Verify that GSVA fields can be customised for a value"""
         config = Config(
             gsva_method="plage",
             gsva_kcdf="Poisson",
@@ -154,34 +154,33 @@ class TestConfigGSVAFields:
         assert config.gsva_tau == 0.5
 
     def test_config_gsva_fields_do_not_break_existing_defaults(self):
-        """验证新增 GSVA 字段不影响现有配置的默认值"""
+        """Validation of new GSVA field does not affect default values for existing configurations"""
         config = Config()
-        # 检查原有字段默认值未被改变
-        assert config.method == 'fisher'
+        # Check that the default values for the existing field have not been changed
+        assert config.method == 'hypergeometric'
         assert config.species == 'hsa'
         assert config.correction == 'BH'
         assert config.pvalue_cutoff == 0.05
         assert config.qvalue_cutoff == 0.05
         assert config.gsea_permutations == 1000
-        assert config.gsea_min_size == 10
-        assert config.gsea_max_size == 500
+        assert config.gsea_min_size is None
+        assert config.gsea_max_size is None
 
 
 class TestConfigMethodEnum:
-    """验证 EnrichmentMethod 枚举包含 GSVA"""
+    """Verify that Enrichment Method contains GSVA"""
 
     def test_enrichment_method_enum_has_gsva(self):
-        """验证 EnrichmentMethod 枚举包含 GSVA"""
+        """Verify that Enrichment Method contains GSVA"""
         assert hasattr(EnrichmentMethod, 'GSVA')
 
     def test_enrichment_method_gsva_value(self):
-        """验证 GSVA 枚举值为 'gsva'"""
+        """Verify GSVA emulation value 'gsva'"""
         assert EnrichmentMethod.GSVA.value == 'gsva'
 
     def test_enrichment_method_all_values(self):
-        """验证所有枚举值的正确性"""
+        """Verify the correctness of all the enumerations"""
         expected = {
-            EnrichmentMethod.FISHER: 'fisher',
             EnrichmentMethod.HYPERGEOMETRIC: 'hypergeometric',
             EnrichmentMethod.GSEA: 'gsea',
             EnrichmentMethod.SSGSEA: 'ssgsea',
@@ -191,24 +190,24 @@ class TestConfigMethodEnum:
             assert enum_member.value == expected_value
 
     def test_config_validate_accepts_gsva(self):
-        """验证 Config.validate() 接受 gsva 方法"""
+        """Validation Config. validate() Accept gsva method"""
         config = Config(method='gsva')
         errors = config.validate()
-        # gsva 应该是合法方法，不应产生方法相关的错误
+        # gsva should be a legitimate method and should not cause errors in the method.
         method_errors = [e for e in errors if 'method' in e.lower()]
-        assert len(method_errors) == 0, f"不应有方法相关错误，但得到: {method_errors}"
+        assert len(method_errors) == 0, f"There should be no methodological error but get: {method_errors}"
 
 
 class TestGSVAImport:
-    """验证 GSVA 模块可以被正确导入"""
+    """Validation GSVA module can be correctly imported"""
 
     def test_gsva_module_import(self):
-        """验证 allenricher.core.gsva 模块可以导入"""
+        """Verify allenricher.core.gsva modules to import"""
         from allenricher.core.gsva import GSVA
         assert GSVA is not None
 
     def test_gsva_class_instantiation(self):
-        """验证 GSVA 类可以正常实例化"""
+        """Validate GSVA class can be properly executable"""
         from allenricher.core.gsva import GSVA
         gsva = GSVA()
         assert gsva.method == 'gsva'
@@ -216,7 +215,7 @@ class TestGSVAImport:
         assert gsva.tau == 1.0
 
     def test_gsva_class_custom_params(self):
-        """验证 GSVA 类可以使用自定义参数实例化"""
+        """Instantiate GSVA with explicit custom parameters."""
         from allenricher.core.gsva import GSVA
         gsva = GSVA(method='plage', kcdf='Poisson', tau=0.5, min_size=5, max_size=1000)
         assert gsva.method == 'plage'
@@ -226,7 +225,7 @@ class TestGSVAImport:
         assert gsva.max_size == 1000
 
     def test_gsva_in_enrichment_method_mapping(self):
-        """验证 GSVA 在 EnrichmentAnalyzer._get_method 方法映射中"""
+        """Validate GSVA in Enrichment Analyzer._get_method"""
         from allenricher.core.enrichment import EnrichmentAnalyzer
         config = Config(method='gsva')
         analyzer = EnrichmentAnalyzer(config)

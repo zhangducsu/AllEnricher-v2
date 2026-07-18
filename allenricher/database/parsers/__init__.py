@@ -1,8 +1,4 @@
-"""
-数据库解析器模块
-
-包含各种数据库的解析器，用于将原始数据文件转换为 AllEnricher 标准格式。
-"""
+"""Parsers for supported enrichment database source formats."""
 
 from .go import GOParser
 from .kegg import KEGGParser

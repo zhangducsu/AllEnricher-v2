@@ -1,1 +1,1 @@
-"""API模块 - 基于FastAPI的REST API服务，提供HTTP接口进行富集分析"""
+"""API module - AREST API service based on FastAPI, providing HTTP interface for enrichment analysis"""

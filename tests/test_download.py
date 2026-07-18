@@ -1,6 +1,7 @@
-"""下载工具函数和下载管理器单元测试"""
+"""Download Tool Function and Download Manager Module Test"""
 import gzip
 import pytest
+import urllib.error
 from pathlib import Path
 
 from allenricher.database.download_utils import (
@@ -19,15 +20,16 @@ from allenricher.database.mirrors import (
     REACTOME_MIRRORS,
     JENSEN_SOURCES,
 )
+from allenricher.database.download_manager import DownloadManager
 
 
 # ================================================================
-# download_utils 测试
+# Download_utils test
 # ================================================================
 
 class TestVerifyGzipIntegrity:
     def test_valid_gzip(self, tmp_path):
-        """正常 gzip 文件应通过验证"""
+        """Normal gzip file should be authenticated"""
         f = tmp_path / "valid.gz"
         with gzip.open(f, 'wt') as gf:
             gf.write("col1\tcol2\tcol3\n")
@@ -38,7 +40,7 @@ class TestVerifyGzipIntegrity:
         assert msg == "OK"
 
     def test_invalid_gzip_not_gz(self, tmp_path):
-        """非 gzip 文件应失败"""
+        """Non gzip file should fail"""
         f = tmp_path / "fake.gz"
         f.write_bytes(b"this is not a gzip file at all")
         valid, msg = verify_gzip_integrity(f)
@@ -46,20 +48,20 @@ class TestVerifyGzipIntegrity:
         assert "Bad gzip" in msg
 
     def test_truncated_gzip(self, tmp_path):
-        """截断的 gzip 文件应失败（使用全量验证）"""
+        """Disclosed gzip file should fail (Verification with full amount)"""
         f = tmp_path / "trunc.gz"
         with gzip.open(f, 'wt') as gf:
             for i in range(10000):
                 gf.write(f"line{i}\tcol2\tcol3\n")
-        # 截断文件
+        # Cut File
         size = f.stat().st_size
         f.write_bytes(f.read_bytes()[:size // 2])
-        # 采样验证可能漏检截断，使用全量验证
+        # Sample verification may miss detection, full-scale verification
         valid, msg = verify_gzip_integrity(f, sample_lines=0)
         assert valid is False
 
     def test_gzip_with_header_only(self, tmp_path):
-        """只有注释头的 gzip 文件应通过"""
+        """Gzip files only for comment headers should be adopted"""
         f = tmp_path / "header.gz"
         with gzip.open(f, 'wt') as gf:
             gf.write("#tax_id\tGeneID\tSymbol\n")
@@ -143,8 +145,53 @@ class TestSimpleProgressBar:
         assert '\n' in captured.out
 
 
+class TestMultiThreadDownload:
+    def test_chunk_retry_completes_without_deleting_other_parts(self, tmp_path, monkeypatch):
+        source = b"abcdefghijkl"
+        attempts = {}
+
+        class Response:
+            status = 206
+
+            def __init__(self, payload):
+                self.payload = payload
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self, _size):
+                payload, self.payload = self.payload, b""
+                return payload
+
+        def fake_urlopen(request, timeout):
+            byte_range = request.get_header("Range")
+            start, end = map(int, byte_range.removeprefix("bytes=").split("-"))
+            attempts[start] = attempts.get(start, 0) + 1
+            if start == 0 and attempts[start] == 1:
+                raise urllib.error.URLError("temporary")
+            return Response(source[start:end + 1])
+
+        monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+        manager = DownloadManager(
+            overwrite=True,
+            max_workers=2,
+            verify_integrity=False,
+            show_progress=False,
+        )
+        manager.CHUNK_SIZE = 4
+        output = tmp_path / "data.bin"
+
+        manager._download_multi_thread("https://example.test/data", output, len(source), "data")
+
+        assert output.read_bytes() == source
+        assert attempts[0] == 2
+
+
 # ================================================================
-# mirrors 测试
+# mmirors test
 # ================================================================
 
 class TestMirrors:

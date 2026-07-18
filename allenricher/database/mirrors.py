@@ -1,23 +1,11 @@
-"""镜像源配置模块
-
-定义各数据库的镜像源列表，支持按优先级排序和自动切换。
-主源失败时自动切换到备用源，提高下载可靠性。
-"""
+"""Define ordered mirrors for supported upstream data sources."""
 from dataclasses import dataclass, field
 from typing import List
 
 
 @dataclass
 class MirrorSource:
-    """镜像源定义
-
-    Attributes:
-        name: 镜像名称，如 "ncbi-official"
-        base_url: 基础 URL（末尾带 /）
-        priority: 优先级，数字越小优先级越高
-        region: 地区标识，如 "US", "EU", "CN"
-        enabled: 是否启用
-    """
+    """Describe one downloadable mirror and its priority."""
     name: str
     base_url: str
     priority: int
@@ -26,7 +14,7 @@ class MirrorSource:
 
 
 # ============================
-# NCBI gene_info / gene2go 镜像源
+# NCBI gene_info / gene2go mirror source
 # ============================
 NCBI_MIRRORS: List[MirrorSource] = [
     MirrorSource(
@@ -34,16 +22,11 @@ NCBI_MIRRORS: List[MirrorSource] = [
         "https://ftp.ncbi.nlm.nih.gov/gene/DATA/",
         1, "US"
     ),
-    MirrorSource(
-        "ebi-ftp",
-        "https://ftp.ebi.ac.uk/pub/databases/ncbi/gene/DATA/",
-        2, "EU"
-    ),
-    # 国内镜像待验证可用性后添加
+    # Add domestic mirror to verify usability
 ]
 
 # ============================
-# GO OBO 文件镜像源
+# GO OBO File Mirror Source
 # ============================
 GO_MIRRORS: List[MirrorSource] = [
     MirrorSource(
@@ -59,7 +42,7 @@ GO_MIRRORS: List[MirrorSource] = [
 ]
 
 # ============================
-# Reactome 镜像源
+# Reactome Mirror Source
 # ============================
 REACTOME_MIRRORS: List[MirrorSource] = [
     MirrorSource(
@@ -80,7 +63,7 @@ REACTOME_MIRRORS: List[MirrorSource] = [
 ]
 
 # ============================
-# Jensen Lab DO 数据源（无公共镜像）
+# Jensen Lab DO data source (no public mirror)
 # ============================
 JENSEN_SOURCES: List[str] = [
     "http://download.jensenlab.org/human_disease_textmining_filtered.tsv",
@@ -89,7 +72,7 @@ JENSEN_SOURCES: List[str] = [
 ]
 
 # ============================
-# WikiPathways 镜像源
+# WikiPathways Mirror Source
 # ============================
 WIKIPATHWAYS_MIRRORS: List[MirrorSource] = [
     MirrorSource(
@@ -102,14 +85,7 @@ WIKIPATHWAYS_MIRRORS: List[MirrorSource] = [
 
 
 def get_mirrors(db_type: str) -> List[MirrorSource]:
-    """获取指定数据库类型的镜像源列表（按优先级排序）
-
-    Args:
-        db_type: 数据库类型标识，如 'ncbi', 'go', 'reactome'
-
-    Returns:
-        按优先级排序的已启用镜像源列表
-    """
+    """Return mirrors for a data source in priority order."""
     mirrors_map = {
         'ncbi': NCBI_MIRRORS,
         'go': GO_MIRRORS,

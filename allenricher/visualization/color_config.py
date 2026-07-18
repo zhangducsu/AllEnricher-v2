@@ -1,15 +1,22 @@
-"""
-AllEnricher 颜色配置系统
+"""Define semantic categorical, sequential, and diverging color palettes."""
 
-提供统一的颜色管理，支持多种预设配色方案。
-所有图表颜色必须从此模块获取，禁止硬编码。
-"""
+import logging
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Union
 
-from typing import Dict, List, Optional
+from matplotlib.colors import to_rgb
+
+
+logger = logging.getLogger(__name__)
+
+
+MIN_GRADIENT_DISTANCE_FROM_WHITE = 0.18
+VISIBLE_GRADIENT_NEUTRAL = "#D9D9D9"
+DIVERGING_WHITE_MIDPOINT = "#FFFFFF"
 
 
 # =============================================================================
-# Paul Tol 色板 - 色盲友好、高对比度
+# Paul Tol palettes: color-vision-deficiency friendly and high contrast.
 # =============================================================================
 
 TOL_BRIGHT = [
@@ -47,19 +54,44 @@ TOL_SUNSET = [
     "#A50026"
 ]
 
-TOL_BURGA = [
+COLORBREWER_PURD = [
     "#F7F4F9", "#E7E1EF", "#D4B9DA", "#C994C7", "#DF65B0",
     "#E7298A", "#CE1256", "#980043", "#67001F"
 ]
 
-TOL_PRGn = [
+COLORBREWER_BLUES = [
+    "#F7FBFF", "#DEEBF7", "#C6DBEF", "#9ECAE1", "#6BAED6",
+    "#4292C6", "#2171B5", "#08519C", "#08306B"
+]
+
+VIRIDIS = [
+    "#440154", "#46327E", "#365C8D", "#277F8E", "#1FA187",
+    "#4AC16D", "#A0DA39", "#FDE725"
+]
+
+CIVIDIS = [
+    "#00204C", "#2E3F6D", "#575D6D", "#7C7B78", "#A59C74",
+    "#D2C060", "#FFEA46"
+]
+
+COLORBREWER_RDBU = [
+    "#053061", "#2166AC", "#4393C3", "#92C5DE", "#D1E5F0",
+    "#F7F7F7", "#FDDBC7", "#F4A582", "#D6604D", "#B2182B", "#67001F"
+]
+
+COLORBREWER_PRGN = [
     "#762A83", "#9970AB", "#C2A5CF", "#E7D4E8", "#F7F7F7",
     "#D9F0D3", "#ACD39E", "#5AAE61", "#1B7837"
 ]
 
+COLORBREWER_BRBG = [
+    "#543005", "#8C510A", "#BF812D", "#DFC27D", "#F6E8C3",
+    "#F5F5F5", "#C7EAE5", "#80CDC1", "#35978F", "#01665E", "#003C30"
+]
+
 
 # =============================================================================
-# Okabe-Ito 色板 - 色盲友好标准
+# Okabe-Ito palette: established color-vision-deficiency-friendly categories.
 # =============================================================================
 
 OKABE_ITO = [
@@ -69,43 +101,7 @@ OKABE_ITO = [
 
 
 # =============================================================================
-# GO/KEGG 类别色 - 生物信息学专用
-# =============================================================================
-
-GO_BP_COLORS = [
-    "#E41A1C", "#377EB8", "#4DAF4A", "#984EA3", "#FF7F00",
-    "#FFFF33", "#A65628", "#F781BF", "#999999"
-]
-
-GO_CC_COLORS = [
-    "#66C2A5", "#FC8D62", "#8DA0CB", "#E78AC3", "#A6D854",
-    "#FFD92F", "#E5C494", "#B3B3B3"
-]
-
-GO_MF_COLORS = [
-    "#8DD3C7", "#FFFFB3", "#BEBADA", "#FB8072", "#80B1D3",
-    "#FDB462", "#B3DE69", "#FCCDE5", "#D9D9D9"
-]
-
-KEGG_PATHWAY_COLORS = [
-    "#1F77B4", "#FF7F0E", "#2CA02C", "#D62728", "#9467BD",
-    "#8C564B", "#E377C2", "#7F7F7F", "#BCBD22", "#17BECF"
-]
-
-
-# =============================================================================
-# 火山图专用色
-# =============================================================================
-
-VOLCANO_COLORS = {
-    "up": "#DC143C",      # 上调 - 深红
-    "down": "#4169E1",    # 下调 - 皇家蓝
-    "ns": "#808080",      # 不显著 - 灰色
-}
-
-
-# =============================================================================
-# 科研期刊风格色板
+# Categorical palettes inspired by common journal figure conventions.
 # =============================================================================
 
 NATURE_COLORS = [
@@ -140,13 +136,8 @@ JAMA_COLORS = [
 
 
 # =============================================================================
-# 生物信息学工具风格色板
+# Palettes retained for compatibility with common bioinformatics figures.
 # =============================================================================
-
-GSEA_COLORS = [
-    "#58ACFA", "#BC8F8F", "#FF6347", "#4682B4", "#9ACD32",
-    "#DDA0DD", "#F0E68C", "#FF69B4"
-]
 
 Cytoscape_COLORS = [
     "#FF9900", "#66CC00", "#0099FF", "#FF0066", "#9900CC",
@@ -170,167 +161,264 @@ OMICSHARE_COLORS = [
 
 
 # =============================================================================
-# 中国风格色板
+# ECharts 4 Default Palette
 # =============================================================================
 
-CHINA_STYLE_COLORS = [
+ECHARTS_V4_COLORS = [
     "#C23531", "#2F4554", "#61A0A8", "#D48265", "#91C7AE",
     "#749F83", "#CA8622", "#BDA29A", "#6E7074", "#546570"
 ]
 
 
+# Internal fallback used only when a categorical palette contains too few colors.
+HIGH_CARDINALITY_CATEGORICAL = [
+    "#1F77B4", "#FF7F0E", "#2CA02C", "#D62728", "#9467BD",
+    "#8C564B", "#E377C2", "#7F7F7F", "#BCBD22", "#17BECF",
+    "#393B79", "#637939", "#8C6D31", "#843C39", "#7B4173",
+    "#3182BD", "#31A354", "#756BB1", "#E6550D", "#969696",
+]
+
+
 # =============================================================================
-# PALETTES 注册表 - 19组配色方案
+# Palette registry organized by semantic data role.
 # =============================================================================
 
-PALETTES: Dict[str, List[str]] = {
-    # 默认 (1组)
-    "default": TOL_BRIGHT,
-    
-    # Paul Tol 系列 (8组)
+CATEGORICAL_PALETTES: Dict[str, List[str]] = {
     "tol_bright": TOL_BRIGHT,
     "tol_high_contrast": TOL_HIGH_CONTRAST,
     "tol_vibrant": TOL_VIBRANT,
     "tol_muted": TOL_MUTED,
     "tol_medium_contrast": TOL_MEDIUM_CONTRAST,
     "tol_light": TOL_LIGHT,
-    "tol_sunset": TOL_SUNSET,
-    "tol_burga": TOL_BURGA,
-    
-    # Okabe-Ito - 色盲友好标准 (1组)
     "okabe_ito": OKABE_ITO,
-    
-    # 科研期刊 (6组)
     "nature": NATURE_COLORS,
     "science": SCIENCE_COLORS,
     "cell": CELL_COLORS,
     "lancet": LANCET_COLORS,
     "nejm": NEJM_COLORS,
     "jama": JAMA_COLORS,
-    
-    # 生物信息学工具 (2组)
-    "gsea": GSEA_COLORS,
     "omicshare": OMICSHARE_COLORS,
-    
-    # 中国风格 (1组)
-    "china_style": CHINA_STYLE_COLORS,
+    "echarts_v4": ECHARTS_V4_COLORS,
+}
+
+SEQUENTIAL_PALETTES: Dict[str, List[str]] = {
+    "colorbrewer_blues": COLORBREWER_BLUES,
+    "colorbrewer_purd": COLORBREWER_PURD,
+    "viridis": VIRIDIS,
+    "cividis": CIVIDIS,
+}
+
+# Sequential scales use two related anchors selected from each registered palette.
+SEQUENTIAL_GRADIENT_ANCHORS: Dict[str, List[str]] = {
+    "colorbrewer_blues": ["#9ECAE1", "#08519C"],
+    "colorbrewer_purd": ["#DF65B0", "#980043"],
+    "viridis": ["#365C8D", "#1FA187"],
+    "cividis": ["#00204C", "#575D6D"],
+}
+
+DIVERGING_PALETTES: Dict[str, List[str]] = {
+    "colorbrewer_rdbu": COLORBREWER_RDBU,
+    "tol_sunset": TOL_SUNSET,
+    "colorbrewer_prgn": COLORBREWER_PRGN,
+    "colorbrewer_brbg": COLORBREWER_BRBG,
+}
+
+DEFAULT_CATEGORICAL_PALETTE = "tol_bright"
+DEFAULT_SEQUENTIAL_PALETTE = "colorbrewer_blues"
+DEFAULT_DIVERGING_PALETTE = "colorbrewer_rdbu"
+
+# PALETTES is a compatibility index; new code should request a semantic role.
+PALETTES: Dict[str, List[str]] = {
+    "default": CATEGORICAL_PALETTES[DEFAULT_CATEGORICAL_PALETTE],
+    **CATEGORICAL_PALETTES,
+    **SEQUENTIAL_PALETTES,
+    **DIVERGING_PALETTES,
+}
+PUBLIC_CATEGORICAL_PALETTES = tuple(CATEGORICAL_PALETTES)
+PUBLIC_SEQUENTIAL_PALETTES = tuple(SEQUENTIAL_PALETTES)
+PUBLIC_DIVERGING_PALETTES = tuple(DIVERGING_PALETTES)
+PUBLIC_PALETTES = (
+    PUBLIC_CATEGORICAL_PALETTES
+    + PUBLIC_SEQUENTIAL_PALETTES
+    + PUBLIC_DIVERGING_PALETTES
+)
+PALETTE_ROLES = {
+    **{name: "categorical" for name in CATEGORICAL_PALETTES},
+    **{name: "sequential" for name in SEQUENTIAL_PALETTES},
+    **{name: "diverging" for name in DIVERGING_PALETTES},
 }
 
 
+@dataclass(frozen=True)
+class PaletteSelection:
+    """Store independent categorical, sequential, and diverging palette selections."""
+
+    categorical: str = DEFAULT_CATEGORICAL_PALETTE
+    sequential: str = DEFAULT_SEQUENTIAL_PALETTE
+    diverging: str = DEFAULT_DIVERGING_PALETTE
+
+    def for_role(self, role: str) -> str:
+        if role not in {"categorical", "sequential", "diverging"}:
+            raise ValueError(f"Unknown palette role: {role}")
+        return getattr(self, role)
+
+
+PaletteLike = Optional[Union[str, PaletteSelection]]
+
+
+def get_palette_role(name: str) -> str:
+    """Return the semantic role assigned to a palette name."""
+    if name == "default":
+        return "categorical"
+    if name not in PALETTE_ROLES:
+        raise ValueError(f"Unknown palette '{name}'. Available: {', '.join(PUBLIC_PALETTES)}")
+    return PALETTE_ROLES[name]
+
+
+def resolve_palette_selection(
+    legacy_palette: Optional[str] = None,
+    categorical_palette: Optional[str] = None,
+    sequential_palette: Optional[str] = None,
+    diverging_palette: Optional[str] = None,
+) -> PaletteSelection:
+    """Resolve legacy and role-specific palette arguments into one selection."""
+    selected = {
+        "categorical": DEFAULT_CATEGORICAL_PALETTE,
+        "sequential": DEFAULT_SEQUENTIAL_PALETTE,
+        "diverging": DEFAULT_DIVERGING_PALETTE,
+    }
+
+    if legacy_palette and legacy_palette != "default":
+        selected[get_palette_role(legacy_palette)] = legacy_palette
+
+    explicit = {
+        "categorical": categorical_palette,
+        "sequential": sequential_palette,
+        "diverging": diverging_palette,
+    }
+    registries = {
+        "categorical": CATEGORICAL_PALETTES,
+        "sequential": SEQUENTIAL_PALETTES,
+        "diverging": DIVERGING_PALETTES,
+    }
+    for role, name in explicit.items():
+        if name is None:
+            continue
+        if name not in registries[role]:
+            available = ", ".join(registries[role])
+            raise ValueError(f"Palette '{name}' is not {role}. Available: {available}")
+        selected[role] = name
+
+    return PaletteSelection(**selected)
+
+
+def coerce_palette_selection(palette: PaletteLike) -> PaletteSelection:
+    if isinstance(palette, PaletteSelection):
+        return palette
+    return resolve_palette_selection(legacy_palette=palette)
+
+
+def palette_name_for_role(palette: PaletteLike, role: str) -> str:
+    return coerce_palette_selection(palette).for_role(role)
+
+
+def visible_gradient_colors(
+    colors: List[str], role: str, palette_name: Optional[str] = None
+) -> List[str]:
+    """Return perceptually distinguishable anchors for a sequential or diverging scale."""
+    if role not in {"sequential", "diverging"}:
+        raise ValueError(f"Gradient visibility requires a continuous role, got: {role}")
+
+    protected = list(colors)
+
+    def is_near_white(color: str) -> bool:
+        rgb = to_rgb(color)
+        distance = sum((1.0 - channel) ** 2 for channel in rgb) ** 0.5
+        return distance < MIN_GRADIENT_DISTANCE_FROM_WHITE
+
+    if role == "sequential":
+        if palette_name in SEQUENTIAL_GRADIENT_ANCHORS:
+            return list(SEQUENTIAL_GRADIENT_ANCHORS[palette_name])
+        visible = [color for color in protected if not is_near_white(color)]
+        if len(visible) >= 2:
+            return visible
+
+    if role == "diverging":
+        return [DIVERGING_WHITE_MIDPOINT if is_near_white(color) else color for color in protected]
+
+    return [VISIBLE_GRADIENT_NEUTRAL if is_near_white(color) else color for color in protected]
+
+
+def categorical_colors(palette: PaletteLike, n: int) -> List[str]:
+    """Return distinct categorical colors, extending with a fallback palette when necessary."""
+    if n < 0:
+        raise ValueError("n must be non-negative")
+    name = palette_name_for_role(palette, "categorical")
+    colors = CATEGORICAL_PALETTES[name]
+    if n <= len(colors):
+        return colors[:n]
+    if n > len(HIGH_CARDINALITY_CATEGORICAL):
+        raise ValueError(
+            f"Categorical plot requires {n} distinct colors; maximum supported is "
+            f"{len(HIGH_CARDINALITY_CATEGORICAL)}"
+        )
+    logger.warning(
+        "Categorical palette '%s' has %d colors; using the %d-color fallback instead",
+        name,
+        len(colors),
+        n,
+    )
+    return HIGH_CARDINALITY_CATEGORICAL[:n]
+
+
 class ColorConfig:
-    """
-    颜色配置类
-    
-    提供统一的颜色管理接口，所有图表颜色必须从此类获取。
-    
-    Usage:
-        >>> config = ColorConfig()
-        >>> colors = config.get_colors('nature', n=5)
-        >>> go_colors = config.get_categorical_colors('go')
-        >>> volcano_colors = config.get_volcano_colors()
-    """
+    """Resolve semantic palettes into colors and Matplotlib colormaps."""
     
     def __init__(self):
-        """初始化颜色配置"""
+        """Initialize semantic palettes from defaults or a configuration mapping."""
         self._palettes = PALETTES.copy()
     
     def get_available_palettes(self) -> List[str]:
-        """
-        获取所有可用的配色方案名称
-        
-        Returns:
-            配色方案名称列表
-        """
-        return list(self._palettes.keys())
+        """Return all registered semantic palette names."""
+        return list(PUBLIC_PALETTES)
     
     def get_colors(self, palette_name: str = 'default', n: int = 8) -> List[str]:
-        """
-        获取指定配色方案的颜色列表
-        
-        Args:
-            palette_name: 配色方案名称，默认为'default'
-            n: 需要的颜色数量
-            
-        Returns:
-            颜色列表（十六进制格式）
-            
-        Raises:
-            ValueError: 如果配色方案不存在
-        """
+        """Return a requested number of colors from the active palette."""
         if palette_name not in self._palettes:
-            raise ValueError(f"未知的配色方案: {palette_name}。可用的配色方案: {list(self._palettes.keys())}")
+            raise ValueError(f"Unknown palette: {palette_name}. Available palettes: {list(PUBLIC_PALETTES)}")
         
+        if palette_name == "default" or get_palette_role(palette_name) == "categorical":
+            return categorical_colors(palette_name, n)
+
         palette = self._palettes[palette_name]
-        
-        # 如果需要的颜色数量超过色板大小，循环使用
-        colors = []
-        for i in range(n):
-            colors.append(palette[i % len(palette)])
-        
-        return colors
+        if n > len(palette):
+            raise ValueError(
+                f"Continuous palette '{palette_name}' provides color anchors, not "
+                "repeatable categories; use a sequential/diverging colormap"
+            )
+        return palette[:n]
     
-    def get_categorical_colors(self, category_type: str, palette: Optional[str] = None) -> Dict[str, str]:
-        """
-        获取分类颜色映射
-        
-        Args:
-            category_type: 分类类型，支持 'go', 'kegg'
-            palette: 色板名称，None则使用默认色板
-            
-        Returns:
-            分类到颜色的映射字典
-            
-        Raises:
-            ValueError: 如果分类类型不支持
-        """
+    def get_categorical_colors(self, category_type: str, palette: PaletteLike = None) -> Dict[str, str]:
+        """Return distinct colors for unordered categories."""
         if category_type.lower() == 'go':
             return self.get_go_category_colors(palette)
         elif category_type.lower() == 'kegg':
             return self.get_kegg_category_colors(palette)
         else:
-            raise ValueError(f"不支持的分类类型: {category_type}。支持: 'go', 'kegg'")
+            raise ValueError(f"Unsupported category type: {category_type}. Expected 'go' or 'kegg'.")
     
-    def get_go_category_colors(self, palette: Optional[str] = None) -> Dict[str, str]:
-        """
-        获取GO分类颜色映射 - 从指定配色方案动态生成
-        
-        GO三大分类：
-        - biological_process: 生物过程
-        - cellular_component: 细胞组分
-        - molecular_function: 分子功能
-        
-        Args:
-            palette: 色板名称，None则使用默认色板
-            
-        Returns:
-            GO三大分类的颜色映射字典
-        """
-        colors = self.get_colors(palette or 'default', n=3)
+    def get_go_category_colors(self, palette: PaletteLike = None) -> Dict[str, str]:
+        """Return stable colors for displayed GO namespaces."""
+        colors = categorical_colors(palette, n=3)
         return {
             "biological_process": colors[0],
             "cellular_component": colors[1],
             "molecular_function": colors[2],
         }
     
-    def get_kegg_category_colors(self, palette: Optional[str] = None) -> Dict[str, str]:
-        """
-        获取KEGG分类颜色映射 - 从指定配色方案动态生成
-        
-        KEGG六大分类：
-        - Genetic Information Processing: 遗传信息处理
-        - Human Diseases: 人类疾病
-        - Metabolism: 代谢
-        - Cellular Processes: 细胞过程
-        - Organismal Systems: 生物体系统
-        - Environmental Information Processing: 环境信息处理
-        
-        Args:
-            palette: 色板名称，None则使用默认色板
-            
-        Returns:
-            KEGG六大分类的颜色映射字典
-        """
-        colors = self.get_colors(palette or 'default', n=6)
+    def get_kegg_category_colors(self, palette: PaletteLike = None) -> Dict[str, str]:
+        """Return stable colors for displayed KEGG categories."""
+        colors = categorical_colors(palette, n=6)
         return {
             "Genetic_Information_Processing": colors[0],
             "Human_Diseases": colors[1],
@@ -340,41 +428,19 @@ class ColorConfig:
             "Environmental_Information_Processing": colors[5],
         }
     
-    def get_volcano_colors(self) -> Dict[str, str]:
-        """
-        获取火山图颜色配置
-        
-        Returns:
-            火山图颜色映射字典，包含 'up', 'down', 'ns' 三个键
-        """
-        return VOLCANO_COLORS.copy()
-    
     def get_palette_colors(self, palette_name: str) -> List[str]:
-        """
-        获取指定配色方案的完整颜色列表
-        
-        Args:
-            palette_name: 配色方案名称
-            
-        Returns:
-            完整颜色列表
-        """
+        """Return the discrete color sequence registered for a palette."""
         if palette_name not in self._palettes:
-            raise ValueError(f"未知的配色方案: {palette_name}")
+            raise ValueError(f"Unknown palette: {palette_name}")
         return self._palettes[palette_name].copy()
 
 
-# 全局颜色配置实例（单例模式）
+# Process-wide color configuration.
 _color_config: Optional[ColorConfig] = None
 
 
 def get_color_config() -> ColorConfig:
-    """
-    获取全局颜色配置实例
-    
-    Returns:
-        ColorConfig 实例
-    """
+    """Return the process-wide color configuration."""
     global _color_config
     if _color_config is None:
         _color_config = ColorConfig()

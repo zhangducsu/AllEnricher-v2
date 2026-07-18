@@ -1,11 +1,7 @@
-"""
-GMT 基因集文件生成器单元测试
+"""Tests for generating standard GMT gene-set files.
 
-测试 GMTGenerator 的核心功能：
-- GMT 文件格式正确性（至少3列，第一列名称，第二列描述，后续为基因）
-- 压缩文件可正确读取
-- 空数据处理
-- 与 DatabaseBuilder 的集成
+Coverage includes GMT columns, compressed inputs, empty databases, and DatabaseBuilder
+integration.
 """
 
 import pytest
@@ -20,11 +16,11 @@ from allenricher.database.builder import DatabaseBuilder
 
 
 # ============================================================
-# 测试辅助函数
+# Test fixtures
 # ============================================================
 
 def _create_mock_go_db(org_dir: Path, species: str = "hsa"):
-    """创建模拟的 GO 数据库产物文件"""
+    """Create a synthetic GO database in the standard on-disk format."""
     org_dir.mkdir(parents=True, exist_ok=True)
 
     # {species}.GO2gene.tab.gz: Gene\tGO_ID1\tGO_ID2\t...
@@ -43,7 +39,7 @@ def _create_mock_go_db(org_dir: Path, species: str = "hsa"):
 
 
 def _create_mock_kegg_db(org_dir: Path, species: str = "hsa"):
-    """创建模拟的 KEGG 数据库产物文件"""
+    """Create simulated KEGG database product file"""
     org_dir.mkdir(parents=True, exist_ok=True)
 
     tab_path = org_dir / f"{species}.kegg2gene.tab.gz"
@@ -59,7 +55,7 @@ def _create_mock_kegg_db(org_dir: Path, species: str = "hsa"):
 
 
 def _create_mock_reactome_db(org_dir: Path, species: str = "hsa"):
-    """创建模拟的 Reactome 数据库产物文件"""
+    """Create a simulated Reactome database product file"""
     org_dir.mkdir(parents=True, exist_ok=True)
 
     tab_path = org_dir / f"{species}.Reactome2gene.tab.gz"
@@ -75,7 +71,7 @@ def _create_mock_reactome_db(org_dir: Path, species: str = "hsa"):
 
 
 def _create_mock_do_db(org_dir: Path):
-    """创建模拟的 DO 数据库产物文件"""
+    """Create a mock DO database product file"""
     org_dir.mkdir(parents=True, exist_ok=True)
 
     tab_path = org_dir / "hsa.DO2gene.tab.gz"
@@ -91,7 +87,7 @@ def _create_mock_do_db(org_dir: Path):
 
 
 def _create_mock_disgenet_db(org_dir: Path):
-    """创建模拟的 DisGeNET 数据库产物文件"""
+    """Create a mock DisGeNET database product file"""
     org_dir.mkdir(parents=True, exist_ok=True)
 
     tab_path = org_dir / "hsa.CUI2gene.tab.gz"
@@ -107,7 +103,7 @@ def _create_mock_disgenet_db(org_dir: Path):
 
 
 def _create_mock_full_db(org_dir: Path, species: str = "hsa"):
-    """创建模拟的完整物种数据库（所有类型）"""
+    """Create simulated complete species database (all types)"""
     _create_mock_go_db(org_dir, species)
     _create_mock_kegg_db(org_dir, species)
     _create_mock_reactome_db(org_dir, species)
@@ -116,18 +112,26 @@ def _create_mock_full_db(org_dir: Path, species: str = "hsa"):
         _create_mock_disgenet_db(org_dir)
 
 
+def _create_mock_wikipathways_db(org_dir: Path, species: str = "hsa"):
+    org_dir.mkdir(parents=True, exist_ok=True)
+    with gzip.open(org_dir / f"{species}.WikiPathways2gene.tab.gz", "wt", encoding="utf-8") as f:
+        f.write("Gene\tWP1\nGENE_A\t1\nGENE_B\t1\n")
+    with gzip.open(org_dir / f"{species}.WikiPathways2disc.gz", "wt", encoding="utf-8") as f:
+        f.write("WP1\tExample_pathway\n")
+
+
 # ============================================================
-# GMT 格式验证辅助
+# GMT Format Validation
 # ============================================================
 
 def _validate_gmt_format(filepath: str):
-    """验证 GMT 文件格式正确性
+    """Validation GMT File Format Correct
 
     Args:
-        filepath: .gmt.gz 文件路径
+filepath: .gmt.gz File Path
 
     Returns:
-        list: 解析后的所有行数据 [[name, desc, gene1, gene2, ...], ...]
+list: Resarse all row data [[name, desc, gene1, gene2, ...], ...]
     """
     rows = []
     with gzip.open(filepath, 'rt', encoding='utf-8') as f:
@@ -136,26 +140,26 @@ def _validate_gmt_format(filepath: str):
             if not line:
                 continue
             parts = line.split('\t')
-            # 至少3列：名称、描述、至少一个基因
-            assert len(parts) >= 3, f"GMT 行少于3列: {parts}"
-            # 第一列为名称（非空）
-            assert parts[0], "GMT 第一列（名称）为空"
-            # 第二列为描述（可以为空字符串）
-            # 后续列为基因（至少一个）
-            assert len(parts) >= 3, f"GMT 行无基因: {line}"
+            # At least three columns: name, description, at least one gene
+            assert len(parts) >= 3, f"GMT rows are less than three columns: {parts}"
+            # First named (non-empty)
+            assert parts[0], "GMT First Column (Name) is empty"
+            # Second one is a description (for empty string)
+            # Follow-up as gene (at least one)
+            assert len(parts) >= 3, f"GMT Gene Free: {line}"
             rows.append(parts)
     return rows
 
 
 # ============================================================
-# GMTGenerator 单元测试
+# GMTGenerator Unit Test
 # ============================================================
 
 class TestGMTGeneratorGO:
-    """测试 GO GMT 生成"""
+    """Test GO GMT generation"""
 
     def test_generate_go_gmt(self, tmp_path):
-        """测试从 GO 数据库产物生成 GMT"""
+        """Test to generate GMT from GO database product"""
         org_dir = tmp_path / "hsa"
         _create_mock_go_db(org_dir)
 
@@ -166,18 +170,21 @@ class TestGMTGeneratorGO:
         assert Path(output).exists()
 
         rows = _validate_gmt_format(output)
-        # 应有 2 个 GO term
+        # 2 GO term
         assert len(rows) == 2
-        # GO:0005576 应有 GENE_A, GENE_B
+        extracellular = [row for row in rows if row[0] == "GO:0005576"][0]
+        assert set(extracellular[2:]) == {"GENE_A", "GENE_B"}
+        assert "GO:0005615" not in extracellular[2:]
+        # GO: 0005576 with GENE_A, GENE_B
         go5576 = [r for r in rows if r[0] == "GO:0005576"][0]
         assert "GENE_A" in go5576[2:]
         assert "GENE_B" in go5576[2:]
         assert "GENE_C" not in go5576[2:]
-        # 描述列
+        # Description Row
         assert "extracellular_region" in go5576[1]
 
     def test_go_gmt_missing_files(self, tmp_path):
-        """测试 GO 数据文件缺失时抛出异常"""
+        """Test GO data file missing to throw an anomaly"""
         org_dir = tmp_path / "hsa"
         org_dir.mkdir(parents=True)
 
@@ -187,10 +194,10 @@ class TestGMTGeneratorGO:
 
 
 class TestGMTGeneratorKEGG:
-    """测试 KEGG GMT 生成"""
+    """Test KEG GMT generation"""
 
     def test_generate_kegg_gmt(self, tmp_path):
-        """测试从 KEGG 数据库产物生成 GMT"""
+        """Test to generate GMT from KEG database product"""
         org_dir = tmp_path / "hsa"
         _create_mock_kegg_db(org_dir)
 
@@ -202,19 +209,19 @@ class TestGMTGeneratorKEGG:
 
         rows = _validate_gmt_format(output)
         assert len(rows) == 2
-        # hsa04110 应有 GENE_A, GENE_B
+        # Hsa04110 should be GENE_A, GENE_B
         pathway = [r for r in rows if r[0] == "hsa04110"][0]
         assert "GENE_A" in pathway[2:]
         assert "GENE_B" in pathway[2:]
-        # 描述列包含分类信息
+        # Description column contains classified information
         assert "Cell_Cycle" in pathway[1]
 
 
 class TestGMTGeneratorReactome:
-    """测试 Reactome GMT 生成"""
+    """Test Reactome GMT Generation"""
 
     def test_generate_reactome_gmt(self, tmp_path):
-        """测试从 Reactome 数据库产物生成 GMT"""
+        """Test to generate GMT from Reactome database product"""
         org_dir = tmp_path / "hsa"
         _create_mock_reactome_db(org_dir)
 
@@ -232,10 +239,10 @@ class TestGMTGeneratorReactome:
 
 
 class TestGMTGeneratorDO:
-    """测试 DO GMT 生成"""
+    """Test Do GMT generation"""
 
     def test_generate_do_gmt(self, tmp_path):
-        """测试从 DO 数据库产物生成 GMT"""
+        """Test to generate GMT from DO database product"""
         org_dir = tmp_path / "hsa"
         _create_mock_do_db(org_dir)
 
@@ -253,10 +260,10 @@ class TestGMTGeneratorDO:
 
 
 class TestGMTGeneratorDisGeNET:
-    """测试 DisGeNET GMT 生成"""
+    """Test DisGeNET GMT generation"""
 
     def test_generate_disgenet_gmt(self, tmp_path):
-        """测试从 DisGeNET 数据库产物生成 GMT"""
+        """Test to generate GMT from DisGeNET database product"""
         org_dir = tmp_path / "hsa"
         _create_mock_disgenet_db(org_dir)
 
@@ -274,10 +281,10 @@ class TestGMTGeneratorDisGeNET:
 
 
 class TestGMTGeneratorAll:
-    """测试 generate_all_gmt 批量生成"""
+    """Test volume generation of generate_all_gmt"""
 
     def test_generate_all_gmt_full(self, tmp_path):
-        """测试完整数据库时生成所有 GMT"""
+        """Generate all GMTs when testing the complete database"""
         org_dir = tmp_path / "hsa"
         _create_mock_full_db(org_dir)
 
@@ -291,16 +298,16 @@ class TestGMTGeneratorAll:
         assert "DO" in results
         assert "DisGeNET" in results
 
-        # 验证所有文件存在
+        # Verify that all files exist
         for db_name, path in results.items():
-            assert Path(path).exists(), f"{db_name} GMT 文件不存在: {path}"
+            assert Path(path).exists(), f"{db_name}The GMT file does not exist: {path}"
 
     def test_generate_all_gmt_partial(self, tmp_path):
-        """测试仅有部分数据库时只生成可用的 GMT"""
+        """Only available GMT is generated when only some databases are tested"""
         org_dir = tmp_path / "hsa"
         _create_mock_go_db(org_dir)
         _create_mock_kegg_db(org_dir)
-        # 不创建 Reactome/DO/DisGeNET
+        # Do Not Create Reactome/DO/DisGeNET
 
         gen = GMTGenerator(organism_dir=str(org_dir))
         results = gen.generate_all_gmt("hsa")
@@ -313,7 +320,7 @@ class TestGMTGeneratorAll:
         assert "DisGeNET" not in results
 
     def test_generate_all_gmt_non_human(self, tmp_path):
-        """测试非人类物种不生成 DO/DisGeNET"""
+        """Test non-human species for NO/DisGeNET"""
         org_dir = tmp_path / "mmu"
         _create_mock_go_db(org_dir, "mmu")
         _create_mock_kegg_db(org_dir, "mmu")
@@ -329,12 +336,22 @@ class TestGMTGeneratorAll:
         assert "DO" not in results
         assert "DisGeNET" not in results
 
+    def test_generate_all_includes_wikipathways(self, tmp_path):
+        org_dir = tmp_path / "hsa"
+        _create_mock_wikipathways_db(org_dir)
+
+        results = GMTGenerator(str(org_dir)).generate_all_gmt("hsa")
+
+        assert set(results) == {"WikiPathways"}
+        rows = _validate_gmt_format(results["WikiPathways"])
+        assert rows == [["WP1", "Example_pathway", "GENE_A", "GENE_B"]]
+
 
 class TestGMTGeneratorEdgeCases:
-    """测试边界情况"""
+    """Test the boundary."""
 
     def test_empty_matrix(self, tmp_path):
-        """测试空矩阵数据（仅有表头无数据行）"""
+        """Test empty matrix data (no data lines for tophead only)"""
         org_dir = tmp_path / "hsa"
         org_dir.mkdir(parents=True)
 
@@ -349,14 +366,14 @@ class TestGMTGeneratorEdgeCases:
         gen = GMTGenerator(organism_dir=str(org_dir))
         output = gen.generate_go_gmt("hsa")
 
-        # 应生成文件，但内容为空（无基因的 term 被跳过）
+        # The file is created but remains empty because the invalid term is skipped.
         assert Path(output).exists()
         with gzip.open(output, 'rt', encoding='utf-8') as f:
             content = f.read()
             assert content == ""
 
     def test_no_description(self, tmp_path):
-        """测试描述文件中缺少某个 term 的描述"""
+        """A description of the term missing in the test description file"""
         org_dir = tmp_path / "hsa"
         org_dir.mkdir(parents=True)
 
@@ -367,7 +384,7 @@ class TestGMTGeneratorEdgeCases:
 
         disc_path = org_dir / "GO2disc.gz"
         with gzip.open(disc_path, 'wt', encoding='utf-8') as f:
-            # GO:9999999 没有描述
+            # GO: 99999999 Not described
             f.write("GO:0005576\tcellular_component:extracellular_region\n")
 
         gen = GMTGenerator(organism_dir=str(org_dir))
@@ -375,19 +392,19 @@ class TestGMTGeneratorEdgeCases:
 
         rows = _validate_gmt_format(output)
         assert len(rows) == 2
-        # GO:9999999 的描述应为空字符串
+        # GO: 99999999 shall be described as an empty string
         missing_desc = [r for r in rows if r[0] == "GO:9999999"][0]
         assert missing_desc[1] == ""
 
     def test_gmt_compression_readable(self, tmp_path):
-        """测试生成的 .gmt.gz 压缩文件可正确读取"""
+        """Test generated.gmt.gz compression file to read correctly"""
         org_dir = tmp_path / "hsa"
         _create_mock_go_db(org_dir)
 
         gen = GMTGenerator(organism_dir=str(org_dir))
         output = gen.generate_go_gmt("hsa")
 
-        # 使用 gzip 标准库读取
+        # Read using gzip standard library
         with gzip.open(output, 'rt', encoding='utf-8') as f:
             lines = f.readlines()
             assert len(lines) == 2
@@ -397,14 +414,14 @@ class TestGMTGeneratorEdgeCases:
 
 
 # ============================================================
-# DatabaseBuilder 集成测试
+# DatabaseBuilder Integration Test
 # ============================================================
 
 class TestDatabaseBuilderGMTIntegration:
-    """测试 DatabaseBuilder 与 GMTGenerator 的集成"""
+    """Test the integration of the DatabaseBuilder with GMTGenerator"""
 
     def test_generate_gmt_files_with_output_dir(self, tmp_path):
-        """测试指定 output_dir 时生成 GMT"""
+        """GMT generated when testing output_dir"""
         org_dir = tmp_path / "hsa"
         _create_mock_full_db(org_dir)
 
@@ -415,7 +432,7 @@ class TestDatabaseBuilderGMTIntegration:
         assert "GO" in results
 
     def test_generate_gmt_files_auto_detect(self, tmp_path):
-        """测试自动检测最新物种数据库目录"""
+        """Test the most recent species database catalogue for automatic testing"""
         root = tmp_path / "database"
         organism_dir = root / "organism" / "v20260101" / "hsa"
         _create_mock_full_db(organism_dir)
@@ -426,7 +443,7 @@ class TestDatabaseBuilderGMTIntegration:
         assert len(results) == 5
 
     def test_generate_gmt_files_no_data(self, tmp_path):
-        """测试无数据时返回空字典"""
+        """Returns empty dictionary when testing non-data"""
         root = tmp_path / "database"
         root.mkdir(parents=True)
         (root / "organism").mkdir()
@@ -437,10 +454,10 @@ class TestDatabaseBuilderGMTIntegration:
         assert results == {}
 
     def test_build_go_generates_gmt(self, tmp_path):
-        """测试 build_go 完成后自动生成 GMT"""
+        """Auto-generated GMT after testing build_go"""
         root = Path(tmp_path) / "database"
 
-        # 创建 GO 基础数据
+        # Create GO Basic Data
         go_dir = root / "basic" / "go" / "GO20250101"
         go_dir.mkdir(parents=True)
 
@@ -460,10 +477,10 @@ class TestDatabaseBuilderGMTIntegration:
         outdir = builder.build_go(species="hsa", taxid=9606)
 
         out_path = Path(outdir)
-        # 验证原始数据库产物
+        # Validate original database product
         assert (out_path / "hsa.GO2gene.tab.gz").exists()
         assert (out_path / "GO2disc.gz").exists()
-        # 验证 GMT 文件自动生成
+        # Validate GMT file automatically generated
         assert (out_path / "hsa.GO.gmt.gz").exists()
 
 

@@ -1,0 +1,67 @@
+version: 1
+source:
+  name: EMBL-EBI Expression Atlas
+  base_url: https://www.ebi.ac.uk/gxa/
+  license: CC BY 4.0
+methods: [hypergeometric, gsea, ssgsea, gsva]
+datasets:
+  human_airway_dex:
+    accession: E-GEOD-52778
+    category: human
+    species: hsa
+    taxid: 9606
+    latin_name: Homo sapiens
+    contrast: "'dexamethasone' vs 'untreated'"
+    factor_column: Factor Value[treatment]
+    reference_value: untreated
+    test_value: dexamethasone
+    databases:
+      - GO
+      - KEGG
+      - Reactome
+      - WikiPathways
+      - DO
+      - DisGeNET
+      - TRRUST
+      - ChEA3
+      - hTFtarget
+      - PUBLIC_GO_CUSTOM
+  drosophila_fas_p218:
+    accession: E-MTAB-5069
+    category: model_organism
+    species: dme
+    taxid: 7227
+    latin_name: Drosophila melanogaster
+    contrast: "'fas P218 mutation' vs 'wild type genotype'"
+    factor_column: Factor Value[genotype]
+    reference_value: wild type genotype
+    test_value: fas P218 mutation
+    databases: [GO, KEGG, Reactome, WikiPathways, AnimalTFDB, PUBLIC_GO_CUSTOM]
+  cattle_metabolic_risk_week1:
+    accession: E-MTAB-5838
+    category: non_model_organism
+    species: bta
+    taxid: 9913
+    latin_name: Bos taurus
+    contrast: "'high risk' vs 'low risk' at '1 week'"
+    factor_column: Factor Value[phenotype]
+    reference_value: low risk
+    test_value: high risk
+    sample_filters:
+      Factor Value[time]: 1 week
+    biological_unit_column: Sample Characteristic[individual]
+    databases: [GO, KEGG, Reactome, WikiPathways, AnimalTFDB, PUBLIC_GO_CUSTOM]
+  yeast_tsa1_deletion_stress:
+    accession: E-MTAB-9355
+    category: microorganism
+    species: sce
+    taxid: 4932
+    annotation_taxid: 559292
+    latin_name: Saccharomyces cerevisiae
+    contrast: "'Tsa1 deletion' vs 'wild type genotype' in 'azetidine-2-carboxylic acid; 5 millimolar'"
+    factor_column: Factor Value[genotype]
+    reference_value: wild type genotype
+    test_value: Tsa1 deletion
+    sample_filters:
+      Factor Value[compound]: azetidine-2-carboxylic acid 5 millimolar
+    databases: [GO, KEGG, Reactome, WikiPathways, PUBLIC_GO_CUSTOM]

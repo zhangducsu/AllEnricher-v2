@@ -1,12 +1,7 @@
-"""下载管理器模块
-
-提供高级下载功能：多线程分片下载、镜像源自动切换、
-gzip 完整性校验、断点续传、实时进度显示。
-
-对应 v1: update_GOdb / update_ReactomeDB 的下载部分。
-"""
+"""Provide verified single-stream and parallel file downloads with mirror fallback."""
 import shutil
 import threading
+import time
 import urllib.request
 import urllib.error
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -22,31 +17,17 @@ from .mirrors import MirrorSource
 
 
 class DownloadManager:
-    """高级下载管理器
+    """Download files with integrity checks, retries, and optional parallel ranges."""
 
-    特性：
-    - 多线程分片下载大文件（>100MB）
-    - 镜像源自动切换（主源失败 → 备用源）
-    - gzip 完整性校验（采样验证，不全量解压）
-    - 断点续传（单线程 Range + 多线程分片级）
-    - 实时进度条（速度 + 剩余时间）
-
-    Usage::
-
-        dm = DownloadManager(max_workers=4)
-        dm.download_file(url, dest_path)
-        dm.download_with_mirror_fallback(mirrors, filename, dest_path)
-    """
-
-    # 启用多线程的文件大小阈值 (100 MB)
+    # Enable multilined file size threshold (100 MB)
     MULTI_THREAD_THRESHOLD = 100 * 1024 * 1024
-    # 多线程分片大小 (10 MB)
+    # Multiline Split Size (10 MB)
     CHUNK_SIZE = 10 * 1024 * 1024
-    # 单线程读取块大小 (64 KB)
+    # Line Read Block Size (64 KB)
     READ_BLOCK = 64 * 1024
-    # 连接超时 (秒)
+    # Connection timed out (sec)
     CONNECT_TIMEOUT = 30
-    # 读取超时 (秒)
+    # Read Timeout (sec)
     READ_TIMEOUT = 600
     # User-Agent
     UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
@@ -62,12 +43,12 @@ class DownloadManager:
     ):
         """
         Args:
-            root_dir: 数据库根目录
-            overwrite: 是否覆盖已存在文件
-            max_workers: 多线程下载线程数
-            use_multi_thread: 是否对大文件启用多线程
-            verify_integrity: 下载后是否验证 gzip 完整性
-            show_progress: 是否显示进度条
+root_dir: database root
+overwrite: Whether to overwrite existing files
+Max_workers: number of threads downloaded over multiple threads
+use_multi_thread: Whether to enable multi-lined processes for large files
+vereify_integrity: Whether gzip integrity is verified after downloading
+Show_progress: Whether progress bar is displayed
         """
         self.root_dir = Path(root_dir)
         self.overwrite = overwrite
@@ -77,7 +58,7 @@ class DownloadManager:
         self.show_progress = show_progress
 
     # ================================================================
-    # 公共接口
+    # Public interface
     # ================================================================
     def download_file(
         self,
@@ -86,40 +67,27 @@ class DownloadManager:
         expected_size: Optional[int] = None,
         desc: Optional[str] = None,
     ) -> Path:
-        """下载单个文件（自动选择单线程/多线程）
-
-        Args:
-            url: 下载 URL
-            dest_path: 目标路径
-            expected_size: 预期文件大小（字节），用于进度条
-            desc: 进度条描述文字
-
-        Returns:
-            下载完成的文件路径
-
-        Raises:
-            RuntimeError: 下载或校验失败
-        """
+        """Download one file with integrity verification."""
         dest_path = Path(dest_path)
 
-        # ---- 已存在文件处理 ----
+        # ----File Processing Exists----
         if dest_path.exists() and not self.overwrite:
             if self.verify_integrity and dest_path.suffix == '.gz':
                 valid, msg = verify_gzip_integrity(dest_path)
                 if valid:
-                    print(f"|--- 已存在且有效，跳过: {dest_path.name}")
+                    print(f"|---Existence and validity; skipping: {dest_path.name}")
                     return dest_path
                 else:
-                    print(f"|--- 已存在但已损坏，将重新下载: {dest_path.name} ({msg})")
+                    print(f"|---Existing but damaged, will be re-downloaded: {dest_path.name} ({msg})")
             else:
-                print(f"|--- 已存在，跳过: {dest_path.name}")
+                print(f"|---Existence, Skipping: {dest_path.name}")
                 return dest_path
 
-        # ---- 获取远程文件大小 ----
+        # ----Retrieving remote file size----
         if expected_size is None:
             expected_size = self._head_content_length(url)
 
-        # ---- 选择策略 ----
+        # ----Select Policy----
         use_mt = (
             self.use_multi_thread
             and expected_size is not None
@@ -137,43 +105,30 @@ class DownloadManager:
         dest_path: Path,
         desc: Optional[str] = None,
     ) -> Path:
-        """从多个镜像源依次尝试下载，自动切换
-
-        Args:
-            mirrors: 镜像源列表（已按优先级排序）
-            filename: 相对于 base_url 的文件名
-            dest_path: 目标路径
-            desc: 进度条描述
-
-        Returns:
-            下载完成的文件路径
-
-        Raises:
-            RuntimeError: 所有镜像源均失败
-        """
+        """Try ordered mirrors until one verified download succeeds."""
         last_error: Optional[Exception] = None
 
         for mirror in mirrors:
             url = f"{mirror.base_url.rstrip('/')}/{filename}"
             try:
-                print(f"|--- 尝试镜像: {mirror.name} ({mirror.region})")
+                print(f"|---Try mirror image: {mirror.name} ({mirror.region})")
                 return self.download_file(url, dest_path, desc=desc or filename)
             except Exception as e:
                 last_error = e
-                print(f"    ✗ 失败: {e}")
-                # 失败后标记需要覆盖（避免残留文件被跳过）
+                print(f"    [FAILED] {e}")
+                # The markup needs to be overwritten (avoid the residue file is skipped)
                 self.overwrite = True
                 continue
 
         raise RuntimeError(
-            f"所有镜像源均失败。最后错误: {last_error}"
+            f"All mirror sources failed. Last error: {last_error}"
         )
 
     # ================================================================
-    # 内部方法
+    # Internal methodology
     # ================================================================
     def _head_content_length(self, url: str) -> Optional[int]:
-        """HEAD 请求获取 Content-Length"""
+        """Read Content-Length from an HTTP HEAD response when available."""
         try:
             req = urllib.request.Request(url, method='HEAD')
             req.add_header("User-Agent", self.UA)
@@ -183,7 +138,7 @@ class DownloadManager:
         except Exception:
             return None
 
-    # ---- 单线程下载（带断点续传 + 进度条） ----
+    # ----Single-line download (with breakpoints + progress bar)----
     def _download_single_thread(
         self,
         url: str,
@@ -194,12 +149,12 @@ class DownloadManager:
         dest_path = Path(dest_path)
         dest_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # 断点续传
+        # Pass it on.
         downloaded = 0
         if dest_path.exists():
             downloaded = dest_path.stat().st_size
             if downloaded > 0:
-                print(f"    断点续传: 已有 {format_size(downloaded)}")
+                print(f"Breakpoints: Already{format_size(downloaded)}")
 
         req = urllib.request.Request(url)
         req.add_header("User-Agent", self.UA)
@@ -219,9 +174,9 @@ class DownloadManager:
             with urllib.request.urlopen(
                 req, timeout=self.READ_TIMEOUT
             ) as resp:
-                # 服务器不支持断点续传 → 全量重下
+                # The server does not support stop-point transmissions.
                 if downloaded > 0 and resp.status != 206:
-                    print("    服务器不支持断点续传，从头下载")
+                    print("The server does not support intermittent transmissions, download from the header")
                     downloaded = 0
                     total = 0
                     mode = "wb"
@@ -244,16 +199,16 @@ class DownloadManager:
             if progress:
                 progress.close()
 
-            # 完整性校验
+            # Complete Validation
             self._post_verify(dest_path)
             return dest_path
 
         except Exception as e:
             if progress:
                 progress.close()
-            raise RuntimeError(f"下载失败 {url}: {e}") from e
+            raise RuntimeError(f"Download Failed{url}: {e}") from e
 
-    # ---- 多线程分片下载 ----
+    # ----Download multilined fractions----
     def _download_multi_thread(
         self,
         url: str,
@@ -267,87 +222,104 @@ class DownloadManager:
         num_chunks = (expected_size + self.CHUNK_SIZE - 1) // self.CHUNK_SIZE
         label = (desc or dest_path.name)[:30]
         print(
-            f"    多线程下载: {format_size(expected_size)}, "
-            f"{num_chunks} 分片, {self.max_workers} 线程"
+            f"Multiline download: {format_size(expected_size)},"
+            f"{num_chunks}The film is a piece of the paper.{self.max_workers}Thread"
         )
 
-        # 临时分片文件
+        # Temporary Dissect Files
         parts = [
             dest_path.parent / f"{dest_path.name}.part{i}"
             for i in range(num_chunks)
         ]
 
-        # 共享进度
+        # Share Progress
         chunk_bytes = [0] * num_chunks
         lock = threading.Lock()
 
         def _download_chunk(idx: int) -> bool:
-            """下载第 idx 个分片"""
+            """Download one byte range for a parallel transfer."""
             start = idx * self.CHUNK_SIZE
             end = min(start + self.CHUNK_SIZE - 1, expected_size - 1)
             part = parts[idx]
+            expected_chunk_size = end - start + 1
 
-            # 已完成？
-            if part.exists() and part.stat().st_size == end - start + 1:
+            # Done?
+            if part.exists() and part.stat().st_size == expected_chunk_size:
                 with lock:
                     chunk_bytes[idx] = part.stat().st_size
                 return True
 
-            # 断点
-            offset = part.stat().st_size if part.exists() else 0
-            actual_start = start + offset
+            if part.exists() and part.stat().st_size > expected_chunk_size:
+                part.unlink()
 
-            req = urllib.request.Request(url)
-            req.add_header("User-Agent", self.UA)
-            req.add_header("Range", f"bytes={actual_start}-{end}")
+            last_error: Optional[Exception] = None
+            for attempt in range(1, 4):
+                offset = part.stat().st_size if part.exists() else 0
+                actual_start = start + offset
+                with lock:
+                    chunk_bytes[idx] = offset
+                req = urllib.request.Request(url)
+                req.add_header("User-Agent", self.UA)
+                req.add_header("Range", f"bytes={actual_start}-{end}")
+                try:
+                    with urllib.request.urlopen(
+                        req, timeout=self.READ_TIMEOUT
+                    ) as resp:
+                        if getattr(resp, "status", 206) != 206:
+                            raise RuntimeError("The server did not press the Range returns the partition")
+                        with open(part, "ab" if offset else "wb") as f:
+                            while True:
+                                block = resp.read(self.READ_BLOCK)
+                                if not block:
+                                    break
+                                f.write(block)
+                                with lock:
+                                    chunk_bytes[idx] += len(block)
+                        if part.stat().st_size == expected_chunk_size:
+                            return True
+                        raise RuntimeError(
+                            f"Split size does not match: {part.stat().st_size}!= {expected_chunk_size}"
+                        )
+                except Exception as exc:
+                    last_error = exc
+                if attempt < 3:
+                    time.sleep(2 ** (attempt - 1))
+            print(f"\nSplit{idx}Failed after retrying 3 times: {last_error}")
+            return False
 
-            try:
-                with urllib.request.urlopen(
-                    req, timeout=self.READ_TIMEOUT
-                ) as resp:
-                    m = "ab" if part.exists() else "wb"
-                    with open(part, m) as f:
-                        while True:
-                            block = resp.read(self.READ_BLOCK)
-                            if not block:
-                                break
-                            f.write(block)
-                            with lock:
-                                chunk_bytes[idx] += len(block)
-                return True
-            except Exception as exc:
-                print(f"\n    分片 {idx} 失败: {exc}")
-                return False
-
-        # 线程池
+        # Thread Pool
         progress = (
             SimpleProgressBar(expected_size, desc=label)
             if self.show_progress
             else None
         )
 
+        failed_chunks = []
         with ThreadPoolExecutor(max_workers=self.max_workers) as pool:
             futures = {pool.submit(_download_chunk, i): i for i in range(num_chunks)}
             for future in as_completed(futures):
                 idx = futures[future]
                 if not future.result():
-                    # 清理已下载分片
-                    for p in parts:
-                        if p.exists():
-                            p.unlink()
-                    raise RuntimeError(f"分片 {idx} 下载失败，已清理临时文件")
+                    failed_chunks.append(idx)
 
-                # 更新进度
+                # Update Progress
                 if progress:
                     with lock:
                         progress.n = sum(chunk_bytes)
                     progress.update(0)
 
+        if failed_chunks:
+            if progress:
+                progress.close()
+            raise RuntimeError(
+                f"Split{sorted(failed_chunks)}Failed to download; finished fragments are reserved for renewal"
+            )
+
         if progress:
             progress.close()
 
-        # 合并分片
-        print("    合并分片...")
+        # Merge Sub-scopic
+        print("Merge Disperses...")
         with open(dest_path, 'wb') as out:
             for part in parts:
                 if part.exists():
@@ -355,25 +327,25 @@ class DownloadManager:
                         shutil.copyfileobj(inp, out)
                     part.unlink()
 
-        # 完整性校验
+        # Complete Validation
         self._post_verify(dest_path)
         return dest_path
 
-    # ---- 下载后校验 ----
+    # ----Check after download----
     def _post_verify(self, filepath: Path):
-        """下载后 gzip 完整性校验"""
+        """Verify downloaded size and optional gzip integrity."""
         if not self.verify_integrity:
             return
         if filepath.suffix != '.gz':
             return
 
-        print("    验证完整性...", end='', flush=True)
+        print("Validate Complete...", end='', flush=True)
         valid, msg = verify_gzip_integrity(filepath)
         if valid:
-            print(" ✓ 通过")
+            print("[OK] Pass")
         else:
-            # 删除损坏文件，让上层可以重试
+            # Remove corrupt file so the upper level can be retries
             filepath.unlink(missing_ok=True)
             raise RuntimeError(
-                f"文件完整性验证失败: {msg}，已删除损坏文件"
+                f"Could not close temporary folder: %s{msg}, Deleted corrupt file"
             )

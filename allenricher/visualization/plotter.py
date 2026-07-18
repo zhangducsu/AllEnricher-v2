@@ -1,18 +1,8 @@
-"""
-可视化模块 - AllEnricher v2.3.0
-=============================
-
-本模块负责富集分析结果的可视化展示。
-- barplot.py: Python matplotlib 绘图
-- bubble.py: Python matplotlib 绘图
-
-依赖：
-- matplotlib, pandas, numpy
-"""
+"""Coordinate the supported Python enrichment figures."""
 
 import logging
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 
@@ -20,38 +10,29 @@ logger = logging.getLogger(__name__)
 
 
 class Plotter:
-    """可视化绘图器类"""
+    """Generate the supported Python figures for enrichment result tables."""
 
     def __init__(self, output_dir: str, config=None):
-        """初始化绘图器"""
+        """Initialize the plotting facade with an optional analysis configuration."""
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.config = config
 
     def _prepare_barplot_data(self, data: pd.DataFrame) -> pd.DataFrame:
-        """准备 barplot.py 所需的数据格式
-
-        Args:
-            data: 原始富集结果 DataFrame
-
-        Returns:
-            格式化后的 DataFrame，包含以下列：
-            - term: Term 名称
-            - qvalue: 校正后 P 值
-            - gene_count: 基因数量
-            - rich_factor: 富集因子（可选，GSEA 时使用 NES 替代）
-        """
+        """Normalize an enrichment result table for the shared bar-plot function."""
         df = data.copy()
         result = pd.DataFrame()
 
-        # 检测是否为 GSEA 结果
+        # Detect the canonical fgsea result schema.
         is_gsea = 'NES' in df.columns or 'nes' in df.columns
 
-        # 映射常见列名到标准列名
+        # Normalize ORA and GSEA column names for the shared plotting functions.
         column_mappings = {
-            'term': ['Term_Name', 'term_name', 'Term', 'term', 'Description', 'description'],
-            'qvalue': ['Adjusted_P_Value', 'adjusted_p_value', 'adjP', 'qvalue', 'Qvalue', 'FDR', 'fdr'],
-            'gene_count': ['Gene_Count', 'gene_count', 'setSize', 'ObservedGeneNum', 'Count', 'count'],
+            'term_id': ['Term_ID', 'term_id', 'ID', 'id', 'pathway'],
+            'term': ['Term_Name', 'term_name', 'Term', 'term', 'Description', 'description', 'pathway'],
+            'qvalue': ['Adjusted_P_Value', 'adjusted_p_value', 'adjP', 'qvalue', 'Qvalue', 'FDR', 'fdr', 'padj'],
+            'gene_count': ['Gene_Count', 'gene_count', 'setSize', 'ObservedGeneNum', 'Count', 'count', 'size'],
+            'hierarchy': ['Hierarchy', 'hierarchy'],
         }
         if not is_gsea:
             column_mappings['rich_factor'] = ['Rich_Factor', 'rich_factor', 'RichFactor', 'richfactor']
@@ -63,13 +44,13 @@ class Plotter:
                     break
 
         if is_gsea:
-            # GSEA：用 NES 作为数值轴，替代 Rich_Factor
+            # GSEA uses signed NES rather than an ORA enrichment factor.
             for col in ['NES', 'nes', 'ES', 'es']:
                 if col in df.columns:
                     result['rich_factor'] = df[col]
                     break
         else:
-            # 如果没有找到 rich_factor，尝试计算
+            # Derive the ORA enrichment factor from recorded ratios when needed.
             if 'rich_factor' not in result.columns and 'gene_count' in result.columns:
                 bg_col = None
                 for col in ['Background_Count', 'background_count', 'TermGeneNum']:
@@ -81,58 +62,6 @@ class Plotter:
 
         return result
 
-    def _prepare_bubble_data(self, data: pd.DataFrame) -> pd.DataFrame:
-        """准备 bubble.py 所需的数据格式
-
-        Args:
-            data: 原始富集结果 DataFrame
-
-        Returns:
-            格式化后的 DataFrame，包含以下列：
-            - Term_Name: Term 名称
-            - RichFactor: 富集因子（GSEA 时使用 NES 替代）
-            - GeneCount: 基因数量
-            - Qvalue: 校正后 P 值
-        """
-        df = data.copy()
-        result = pd.DataFrame()
-
-        is_gsea = 'NES' in df.columns or 'nes' in df.columns
-
-        # 映射常见列名到标准列名
-        column_mappings = {
-            'Term_Name': ['Term_Name', 'term_name', 'Term', 'term', 'Description', 'description'],
-            'GeneCount': ['Gene_Count', 'gene_count', 'setSize', 'ObservedGeneNum', 'Count', 'count'],
-            'Qvalue': ['Adjusted_P_Value', 'adjusted_p_value', 'adjP', 'qvalue', 'Qvalue', 'FDR', 'fdr'],
-        }
-        if not is_gsea:
-            column_mappings['RichFactor'] = ['Rich_Factor', 'rich_factor', 'RichFactor', 'richfactor', 'Rich Factor']
-
-        for std_col, possible_cols in column_mappings.items():
-            for col in possible_cols:
-                if col in df.columns:
-                    result[std_col] = df[col]
-                    break
-
-        if is_gsea:
-            # GSEA：用 NES 作为气泡 X 轴，替代 RichFactor
-            for col in ['NES', 'nes', 'ES', 'es']:
-                if col in df.columns:
-                    result['RichFactor'] = df[col]
-                    break
-        else:
-            # 如果没有 RichFactor，尝试计算
-            if 'RichFactor' not in result.columns and 'GeneCount' in result.columns:
-                bg_col = None
-                for col in ['Background_Count', 'background_count', 'TermGeneNum']:
-                    if col in df.columns:
-                        bg_col = df[col]
-                        break
-                if bg_col is not None:
-                    result['RichFactor'] = result['GeneCount'] / bg_col
-
-        return result
-
     def plot_barplot(
         self,
         data: pd.DataFrame,
@@ -141,108 +70,92 @@ class Plotter:
         top_n: int = 20,
         style: Optional[str] = None,
         palette: Optional[str] = None,
+        figsize: Optional[Tuple[float, float]] = None,
+        hierarchy_map: Optional[Dict[str, str]] = None,
     ) -> str:
-        """生成富集分析柱状图
-
-        Args:
-            data: 富集结果 DataFrame
-            database: 数据库名称 (GO, KEGG, Reactome, DO, DisGeNET)
-            output_file: 输出文件名
-            top_n: 显示前 N 条数据
-            style: 图表风格 (nature, science, presentation, colorblind, omicshare)
-            palette: 色板名称
-
-        Returns:
-            输出文件路径
-        """
-        # 构建输出路径
+        """Plot significant terms as compact horizontal bars."""
+        # Resolve the requested output format from configuration.
         output_path = self.output_dir / output_file
 
         from .barplot import plot_barplot as _plot_barplot
 
-        # 准备数据
+        # Normalize the table without mutating analysis results.
         plot_data = self._prepare_barplot_data(data)
 
-        # 获取 DPI 设置
+        # Use the run-level DPI setting for raster output.
         dpi = 300
-        if self.config and hasattr(self.config, 'figure_dpi'):
-            dpi = self.config.figure_dpi
+        if self.config and hasattr(self.config, 'plot_dpi'):
+            dpi = self.config.plot_dpi
 
         try:
-            _plot_barplot(
-                data=plot_data,
-                database=database,
-                top_n=top_n,
-                style=style or 'default',
-                palette=palette or 'default',
-                output_file=str(output_path),
-                dpi=dpi,
-            )
-        except Exception as e:
-            logger.warning(f"柱状图生成失败: {e}")
-            return ""
+            if 'NES' in data.columns or 'nes' in data.columns:
+                from .gsea_plots import plot_gsea_barplot
 
-        if not output_path.exists():
-            logger.warning(f"Bar plot was not generated: {output_path}")
-            return ""
+                plot_gsea_barplot(
+                    results_df=data,
+                    database=database,
+                    top_n=top_n,
+                    style=style or 'nature',
+                    palette=palette,
+                    output_file=str(output_path),
+                    dpi=dpi,
+                    figsize=figsize,
+                )
+            else:
+                _plot_barplot(
+                    data=plot_data,
+                    database=database,
+                    top_n=top_n,
+                    style=style or 'nature',
+                    palette=palette,
+                    output_file=str(output_path),
+                    dpi=dpi,
+                    figsize=figsize,
+                    hierarchy_map=hierarchy_map,
+                )
+        except Exception as e:
+            logger.error("Failed to generate the enrichment bar plot: %s", e)
+            raise
+
         return str(output_path)
 
-    def plot_bubble(
+    def plot_lollipop(
         self,
         data: pd.DataFrame,
+        database: str,
         output_file: str,
-        database: str = 'GO',
         top_n: int = 20,
         style: Optional[str] = None,
         palette: Optional[str] = None,
+        figsize: Optional[Tuple[float, float]] = None,
     ) -> str:
-        """生成富集分析气泡图
-
-        Args:
-            data: 富集结果 DataFrame
-            output_file: 输出文件名
-            database: 数据库名称 (GO, KEGG, Reactome, DO, DisGeNET)
-            top_n: 显示前 N 条数据
-            style: 图表风格
-            palette: 色板名称
-
-        Returns:
-            输出文件路径
-        """
-        # 构建输出路径
+        """Plot ORA terms as enrichment-factor lollipops."""
         output_path = self.output_dir / output_file
 
-        from .bubble import plot_bubble as _plot_bubble
+        from .gsea_plots import plot_gsea_lollipop
 
-        # 准备数据
-        plot_data = self._prepare_bubble_data(data)
-
-        # 获取 DPI 设置
+        plot_data = self._prepare_barplot_data(data)
         dpi = 300
-        if self.config and hasattr(self.config, 'figure_dpi'):
-            dpi = self.config.figure_dpi
+        if self.config and hasattr(self.config, 'plot_dpi'):
+            dpi = self.config.plot_dpi
 
         try:
-            fig = _plot_bubble(
-                data=plot_data,
+            import matplotlib.pyplot as plt
+            fig = plot_gsea_lollipop(
+                plot_data,
                 top_n=top_n,
-                style=style,
+                title=f"{database} Over-Representation Analysis (ORA)",
+                output_file=str(output_path),
+                style=style or 'nature',
                 palette=palette,
-                title=f"{database} Enrichment",
+                dpi=dpi,
+                figsize=figsize,
             )
-            if fig:
-                # 使用 save_figure_dual 同时生成 PNG 和 PDF
-                from .plot_theme import save_figure_dual
-                save_figure_dual(fig, str(output_path), dpi=dpi)
-                import matplotlib.pyplot as plt
-                plt.close(fig)
+            plt.close(fig)
         except Exception as e:
-            logger.warning(f"气泡图生成失败: {e}")
-            return ""
+            logger.error("Failed to generate the enrichment lollipop plot: %s", e)
+            raise
 
-        if not output_path.exists():
-            logger.warning(f"Bubble plot was not generated: {output_path}")
-            return ""
         return str(output_path)
 
     def plot_all(
@@ -252,42 +165,35 @@ class Plotter:
         top_n: int = 20,
         style: Optional[str] = None,
         palette: Optional[str] = None,
+        hierarchy_map: Optional[Dict[str, str]] = None,
     ) -> Dict[str, str]:
-        """生成所有标准图表
-
-        Args:
-            data: 富集结果 DataFrame
-            database: 数据库名称
-            top_n: 显示前 N 条数据
-            style: 图表风格
-            palette: 色板名称
-
-        Returns:
-            包含图表路径的字典
-        """
+        """Generate every supported standard figure for one result table."""
         plots = {}
 
-        # 根据配置确定输出格式
-        fmt = 'png'
-        if self.config and hasattr(self.config, 'figure_format'):
-            fmt = self.config.figure_format
+        formats = ['png']
+        if self.config and getattr(self.config, 'plot_formats', None):
+            formats = list(dict.fromkeys(fmt.lower() for fmt in self.config.plot_formats))
+        invalid = [fmt for fmt in formats if fmt not in {'png', 'pdf', 'svg'}]
+        if invalid:
+            raise ValueError(f"Unsupported figure format: {invalid}")
 
-        # 生成柱状图
-        bar_file = f"{database}_barplot.{fmt}"
-        bar_path = self.plot_barplot(
-            data, database, bar_file, top_n,
-            style=style, palette=palette
-        )
-        if bar_path:
+        figsize = None
+        if (self.config and getattr(self.config, 'plot_width', None) is not None
+                and getattr(self.config, 'plot_height', None) is not None):
+            figsize = (float(self.config.plot_width), float(self.config.plot_height))
+
+        for fmt in formats:
+            bar_path = self.plot_barplot(
+                data, database, f"{database}_barplot.{fmt}", top_n,
+                style=style, palette=palette, figsize=figsize,
+                hierarchy_map=hierarchy_map,
+            )
             plots["barplot"] = bar_path
 
-        # 生成气泡图
-        bubble_file = f"{database}_bubble.{fmt}"
-        bubble_path = self.plot_bubble(
-            data, bubble_file, database, top_n,
-            style=style, palette=palette
-        )
-        if bubble_path:
-            plots["bubble"] = bubble_path
+            lollipop_path = self.plot_lollipop(
+                data, database, f"{database}_lollipop.{fmt}", top_n,
+                style=style, palette=palette, figsize=figsize,
+            )
+            plots["lollipop"] = lollipop_path
 
         return plots

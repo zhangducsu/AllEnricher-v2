@@ -1,6 +1,4 @@
-"""
-CLI build 子命令自定义注释文件参数 单元测试
-"""
+"""Tests for custom annotation options on the CLI build command."""
 
 import pytest
 import sys
@@ -13,10 +11,10 @@ from allenricher.cli import create_parser
 
 
 class TestBuildParserCustomAnnotArgs:
-    """测试 build 子命令自定义注释文件参数"""
+    """Parser tests for custom database build arguments."""
 
     def test_build_parser_accepts_go_annot(self):
-        """验证 --go-annot 参数被接受"""
+        """Accept a GO annotation file."""
         parser = create_parser()
         args = parser.parse_args([
             'build', '-s', 'hsa', '-t', '9606',
@@ -25,7 +23,7 @@ class TestBuildParserCustomAnnotArgs:
         assert args.go_annot == 'go_annotations.tsv'
 
     def test_build_parser_accepts_kegg_annot(self):
-        """验证 --kegg-annot 参数被接受"""
+        """Accept a KEGG annotation file."""
         parser = create_parser()
         args = parser.parse_args([
             'build', '-s', 'hsa', '-t', '9606',
@@ -34,7 +32,7 @@ class TestBuildParserCustomAnnotArgs:
         assert args.kegg_annot == 'kegg_annotations.tsv'
 
     def test_build_parser_accepts_custom_annot(self):
-        """验证 --custom-annot 参数被接受"""
+        """Accept a custom annotation file."""
         parser = create_parser()
         args = parser.parse_args([
             'build', '-s', 'hsa', '-t', '9606',
@@ -43,13 +41,13 @@ class TestBuildParserCustomAnnotArgs:
         assert args.custom_annot == 'custom_annotations.tsv'
 
     def test_build_parser_custom_db_name_default(self):
-        """验证 --custom-db-name 默认值为 CUSTOM"""
+        """Use CUSTOM as the default custom database name."""
         parser = create_parser()
         args = parser.parse_args(['build', '-s', 'hsa', '-t', '9606'])
         assert args.custom_db_name == 'CUSTOM'
 
     def test_build_parser_custom_db_name_explicit(self):
-        """验证 --custom-db-name 可显式指定"""
+        """Accept an explicit custom database name."""
         parser = create_parser()
         args = parser.parse_args([
             'build', '-s', 'hsa', '-t', '9606',
@@ -58,7 +56,7 @@ class TestBuildParserCustomAnnotArgs:
         assert args.custom_db_name == 'MYDB'
 
     def test_build_parser_annot_format_choices(self):
-        """验证 --annot-format 可选值"""
+        """Accept every documented annotation format."""
         parser = create_parser()
         for fmt in ['three_column', 'four_column', 'two_column', 'auto']:
             args = parser.parse_args([
@@ -68,7 +66,7 @@ class TestBuildParserCustomAnnotArgs:
             assert args.annot_format == fmt
 
     def test_build_parser_annot_format_invalid(self):
-        """验证 --annot-format 无效值被拒绝"""
+        """Reject an unknown annotation format."""
         parser = create_parser()
         with pytest.raises(SystemExit):
             parser.parse_args([
@@ -77,19 +75,19 @@ class TestBuildParserCustomAnnotArgs:
             ])
 
     def test_build_parser_annot_format_default(self):
-        """验证 --annot-format 默认值为 auto"""
+        """Use automatic format detection by default."""
         parser = create_parser()
         args = parser.parse_args(['build', '-s', 'hsa', '-t', '9606'])
         assert args.annot_format == 'auto'
 
     def test_build_parser_hierarchy_sep_default(self):
-        """验证 --hierarchy-sep 默认值为 |"""
+        """Use a vertical bar as the default hierarchy separator."""
         parser = create_parser()
         args = parser.parse_args(['build', '-s', 'hsa', '-t', '9606'])
         assert args.hierarchy_sep == '|'
 
     def test_build_parser_hierarchy_sep_explicit(self):
-        """验证 --hierarchy-sep 可显式指定"""
+        """Accept an explicit hierarchy separator."""
         parser = create_parser()
         args = parser.parse_args([
             'build', '-s', 'hsa', '-t', '9606',
@@ -98,7 +96,7 @@ class TestBuildParserCustomAnnotArgs:
         assert args.hierarchy_sep == '/'
 
     def test_existing_build_params_unchanged(self):
-        """验证现有参数不受影响"""
+        """Preserve existing build command arguments."""
         parser = create_parser()
         args = parser.parse_args([
             'build', '-s', 'hsa', '-t', '9606', '-d', 'GO,KEGG',
@@ -112,7 +110,7 @@ class TestBuildParserCustomAnnotArgs:
         assert args.gene_info == 'gene_info.gz'
 
     def test_all_custom_annot_params_together(self):
-        """验证所有自定义注释参数可同时使用"""
+        """Verify that all custom annotated parameters can be used simultaneously"""
         parser = create_parser()
         args = parser.parse_args([
             'build', '-s', 'mmu', '-t', '10090',

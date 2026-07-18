@@ -1,0 +1,28 @@
+version: 1
+purpose: manual biological plausibility review; not a substitute for numerical oracles
+rules:
+  - do not change datasets or thresholds after observing enrichment results
+  - protocol amendments made during source qualification must preserve the failed-source evidence
+  - absence of an expected theme requires discussion, not automatic software failure
+  - unexpected pathways must be checked against mapped genes and source annotations
+datasets:
+  human_airway_dex:
+    expected_themes:
+      - glucocorticoid and steroid response
+      - inflammatory or immune signaling
+      - epithelial and extracellular-matrix processes
+  drosophila_fas_p218:
+    expected_themes:
+      - developmental signaling
+      - epithelial morphogenesis
+      - cytoskeleton or cell adhesion
+  cattle_metabolic_risk_week1:
+    expected_themes:
+      - neutrophil activation or innate immune signaling
+      - metabolic stress and energy homeostasis
+      - oxidative stress or redox regulation
+  yeast_tsa1_deletion_stress:
+    expected_themes:
+      - protein folding or proteostasis
+      - redox homeostasis
+      - cAMP or PKA-associated stress regulation

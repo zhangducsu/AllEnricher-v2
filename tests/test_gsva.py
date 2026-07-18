@@ -1,14 +1,7 @@
-"""
-GSVA（基因集变异分析）模块单元测试
+"""Tests for Gene Set Variation Analysis (GSVA).
 
-测试覆盖范围：
-- GSVA 基本功能：模拟表达矩阵 + 基因集，验证输出形状
-- 空输入处理：空表达矩阵应返回空 DataFrame
-- 基因集大小过滤：min_size / max_size 边界测试
-- 三种方法变体：gsva / plage / zscore
-- 无交集场景：基因集与表达矩阵无重叠时应返回 0
-- 单样本场景：仅包含一个样本的表达矩阵
-- 结果值合理性：非 NaN、非 Inf
+Coverage includes output shape, empty input, gene-set size filters, supported methods,
+non-overlapping identifiers, single-sample input, and finite activity scores.
 """
 
 import pytest
@@ -20,16 +13,11 @@ from allenricher.core.gsva import GSVA
 
 
 class TestGSVA:
-    """GSVA 基因集变异分析测试"""
+    """Tests for the GSVA activity-matrix interface."""
 
     @pytest.fixture
     def expression_matrix(self):
-        """
-        创建测试用模拟表达矩阵
-
-        100 个基因 x 3 个样本，基因名为 GENE_0001 到 GENE_0100，
-        表达值从标准正态分布中随机生成。
-        """
+        """Create a reproducible 100-gene by 3-sample expression matrix."""
         np.random.seed(42)
         n_genes = 100
         n_samples = 3
@@ -40,97 +28,92 @@ class TestGSVA:
 
     @pytest.fixture
     def gene_sets(self):
-        """
-        创建测试用基因集
-
-        两个基因集，每个包含 15 个基因（满足默认 min_size=10）。
-        """
+        """Create two 15-gene pathway fixtures."""
         return {
             "Pathway_1": {f"GENE_{i:04d}" for i in range(1, 16)},      # GENE_0001 ~ GENE_0015
             "Pathway_2": {f"GENE_{i:04d}" for i in range(16, 31)},     # GENE_0016 ~ GENE_0030
         }
 
     def test_gsva_basic(self, expression_matrix, gene_sets):
-        """基本功能测试：100 基因 x 3 样本，2 个基因集，输出形状应为 (2, 3)"""
+        """Return a two-pathway by three-sample activity matrix."""
         gsva = GSVA(method="gsva", min_size=10, max_size=500)
         result = gsva.analyze_matrix(expression_matrix, gene_sets)
 
-        # 验证输出形状：2 个通路 x 3 个样本
-        assert result.shape == (2, 3), f"期望形状 (2, 3)，实际为 {result.shape}"
-        # 验证通路名称正确
+        # Two pathways are scored across three samples.
+        assert result.shape == (2, 3), f"Expected shape (2, 3) actual{result.shape}"
+        # Preserve pathway and sample labels.
         assert list(result.index) == ["Pathway_1", "Pathway_2"]
-        # 验证样本名称正确
         assert list(result.columns) == ["Sample_A", "Sample_B", "Sample_C"]
 
     def test_gsva_empty_input(self):
-        """空输入测试：空表达矩阵应返回空 DataFrame"""
+        """Return an empty table for an empty expression matrix."""
         gsva = GSVA(method="gsva")
         empty_matrix = pd.DataFrame()
         gene_sets = {"Pathway_1": {"GENE_0001"}}
 
         result = gsva.analyze_matrix(empty_matrix, gene_sets)
 
-        assert result.empty, "空表达矩阵应返回空 DataFrame"
+        assert result.empty, "An empty expression matrix should return an empty DataFrame"
 
     def test_gsva_small_gene_set(self, expression_matrix):
-        """小基因集测试：基因集大小 < min_size 应被跳过"""
-        # 创建一个只有 5 个基因的基因集（小于默认 min_size=10）
+        """Exclude gene sets smaller than ``min_size`` after intersection."""
+        # Create a gene set with only 5 genes (less than the default men_size=10)
         small_gene_sets = {
-            "Small_Pathway": {f"GENE_{i:04d}" for i in range(1, 6)},  # 仅 5 个基因
+            "Small_Pathway": {f"GENE_{i:04d}" for i in range(1, 6)},  # Only 5 genes
         }
 
         gsva = GSVA(method="gsva", min_size=10, max_size=500)
         result = gsva.analyze_matrix(expression_matrix, small_gene_sets)
 
-        assert result.empty, "基因集大小 < min_size 应被跳过，返回空 DataFrame"
+        assert result.empty, "Gene sets smaller than min_size should be excluded"
 
     def test_gsva_large_gene_set(self, expression_matrix):
-        """大基因集测试：基因集大小 > max_size 应被跳过"""
-        # 创建一个包含 600 个基因的基因集（大于默认 max_size=500）
-        # 表达矩阵中只有 100 个基因，所以需要设置较小的 max_size
+        """Exclude gene sets larger than ``max_size`` after intersection."""
+        # Create a gene set with 600 genes (greater than the default max_size=500)
+        # Only 100 genes in the matrix are expressed, so smaller max_sizes are needed
         large_gene_sets = {
-            "Large_Pathway": {f"GENE_{i:04d}" for i in range(1, 101)},  # 100 个基因
+            "Large_Pathway": {f"GENE_{i:04d}" for i in range(1, 101)},  # 100 genes
         }
 
         gsva = GSVA(method="gsva", min_size=10, max_size=50)  # max_size=50 < 100
         result = gsva.analyze_matrix(expression_matrix, large_gene_sets)
 
-        assert result.empty, "基因集大小 > max_size 应被跳过，返回空 DataFrame"
+        assert result.empty, "Gene sets larger than max_size should be excluded"
 
     def test_gsva_plage_method(self, expression_matrix, gene_sets):
-        """PLAGE 方法测试：验证 PLAGE 方法能正常输出"""
+        """PLAGE method test: Validate PLAGE method to produce properly"""
         gsva = GSVA(method="plage", min_size=10, max_size=500)
         result = gsva.analyze_matrix(expression_matrix, gene_sets)
 
-        # 验证输出形状
-        assert result.shape == (2, 3), f"PLAGE 输出形状期望 (2, 3)，实际为 {result.shape}"
-        # 验证结果为有限数值
-        assert np.all(np.isfinite(result.values)), "PLAGE 结果应全部为有限数值"
+        # Authenticate output shape
+        assert result.shape == (2, 3), f"PLAGE Output Shape Expectation (2, 3), is{result.shape}"
+        # Validation results are limited
+        assert np.all(np.isfinite(result.values)), "The PLAGE results should be all in limited values"
 
     def test_gsva_zscore_method(self, expression_matrix, gene_sets):
-        """Z-score 方法测试：验证 Z-score 方法能正常输出"""
+        """Z-score Method Test: Verify that Z-score is capable of being exported properly"""
         gsva = GSVA(method="zscore", min_size=10, max_size=500)
         result = gsva.analyze_matrix(expression_matrix, gene_sets)
 
-        # 验证输出形状
-        assert result.shape == (2, 3), f"Z-score 输出形状期望 (2, 3)，实际为 {result.shape}"
-        # 验证结果为有限数值
-        assert np.all(np.isfinite(result.values)), "Z-score 结果应全部为有限数值"
+        # Authenticate output shape
+        assert result.shape == (2, 3), f"Z-score Output Shape Expectation (2, 3), actually {result.shape}"
+        # Validation results are limited
+        assert np.all(np.isfinite(result.values)), "Z-score results should be all limited"
 
     def test_gsva_no_overlap(self, expression_matrix):
-        """无交集测试：基因集与表达矩阵无交集时应返回空 DataFrame"""
-        # 创建一个完全不与表达矩阵重叠的基因集
+        """No intersection test: DataFrame will be returned when the gene pool and the expression matrix do not intersect"""
+        # Create a gene pool that does not overlap with the expression matrix
         no_overlap_sets = {
             "No_Overlap_Pathway": {"UNKNOWN_GENE_1", "UNKNOWN_GENE_2", "UNKNOWN_GENE_3"},
         }
 
-        gsva = GSVA(method="gsva", min_size=1, max_size=500)  # 降低 min_size 以排除大小过滤
+        gsva = GSVA(method="gsva", min_size=1, max_size=500)  # Lower Min_size to exclude size filters
         result = gsva.analyze_matrix(expression_matrix, no_overlap_sets)
 
-        assert result.empty, "无交集的基因集应被跳过，返回空 DataFrame"
+        assert result.empty, "The uninterrupted genome should be skipped and returned to empty DataFrame"
 
     def test_gsva_single_sample(self):
-        """单样本测试：仅包含一个样本的表达矩阵"""
+        """Single sample test: a matrix of expressions containing only one sample"""
         np.random.seed(42)
         n_genes = 100
         gene_names = [f"GENE_{i:04d}" for i in range(1, n_genes + 1)]
@@ -144,62 +127,62 @@ class TestGSVA:
         gsva = GSVA(method="gsva", min_size=10, max_size=500)
         result = gsva.analyze_matrix(single_sample_matrix, gene_sets)
 
-        # 验证输出形状：1 个通路 x 1 个样本
-        assert result.shape == (1, 1), f"单样本输出形状期望 (1, 1)，实际为 {result.shape}"
-        # 验证结果为有限数值
-        assert np.all(np.isfinite(result.values)), "单样本结果应全部为有限数值"
+        # Verify output shape: 1 route x 1 sample
+        assert result.shape == (1, 1), f"Single sample output shape expectation (1, 1) actual{result.shape}"
+        # Validation results are limited
+        assert np.all(np.isfinite(result.values)), "The results of the single sample should be all limited"
 
     def test_gsva_result_range(self, expression_matrix, gene_sets):
-        """结果值合理性测试：结果值应为有限数值（非 NaN、非 Inf）"""
+        """Results for reasonableness test: Outcome value should be limited (non-NAN, non-Inf)"""
         gsva = GSVA(method="gsva", min_size=10, max_size=500)
         result = gsva.analyze_matrix(expression_matrix, gene_sets)
 
-        # 验证所有值都是有限数值
-        assert np.all(np.isfinite(result.values)), "GSVA 结果不应包含 NaN 或 Inf"
+        # Verify that all values are limited
+        assert np.all(np.isfinite(result.values)), "GSVA results should not contain nN or inf"
 
-        # 验证结果值在合理范围内（GSVA 得分通常在 [-1, 1] 附近，但具体范围取决于数据）
-        # 这里仅验证不是极端值
-        assert np.all(np.abs(result.values) < 1e6), "GSVA 结果值不应为极端值"
+        # Validation results are within reasonable range (GSVA scores are usually close to [-1, 1], but the range depends on data)
+        # It's not extreme.
+        assert np.all(np.abs(result.values) < 1e6), "GSVA Results should not be extremes"
 
 
 class TestGSVAInit:
-    """GSVA 初始化参数验证测试"""
+    """GSVA Initialization Parameter Validation Test"""
 
     def test_invalid_method(self):
-        """测试无效方法名称应抛出 ValueError"""
-        with pytest.raises(ValueError, match="不支持的 GSVA 方法变体"):
+        """Reject an unknown GSVA method name."""
+        with pytest.raises(ValueError, match="Unsupported GSVA method"):
             GSVA(method="invalid_method")
 
     def test_invalid_kcdf(self):
-        """测试无效核函数类型应抛出 ValueError"""
-        with pytest.raises(ValueError, match="不支持的核函数类型"):
+        """Test invalid nuclear function type to be thrown away ValueError"""
+        with pytest.raises(ValueError, match="Unsupported GSVA kernel"):
             GSVA(method="gsva", kcdf="Invalid")
 
     def test_default_parameters(self):
-        """测试默认参数值"""
+        """Test Default Parameter Value"""
         gsva = GSVA()
         assert gsva.method == "gsva"
         assert gsva.kcdf == "Gaussian"
         assert gsva.tau == 1.0
-        assert gsva.min_size == 10
-        assert gsva.max_size == 500
+        assert gsva.min_size == 1
+        assert gsva.max_size is None
 
 
 class TestGSVACalculatePvalue:
-    """GSVA calculate_pvalue 方法测试"""
+    """GSVA calculate_pvalue method test"""
 
     def test_returns_nan(self):
-        """GSVA 的 calculate_pvalue 应返回 NaN"""
+        """The calculate_pvalue of GSVA returns the n-N"""
         gsva = GSVA()
         result = gsva.calculate_pvalue(10, 50, 100, 1000)
-        assert np.isnan(result), "GSVA 的 calculate_pvalue 应返回 NaN"
+        assert np.isnan(result), "The calculate_pvalue of GSVA returns the n-N"
 
 
 class TestGSVACalculateEnrichment:
-    """GSVA calculate_enrichment 方法测试（兼容基类接口）"""
+    """GSVA calculate_enrichment method test (compatible base-type interface)"""
 
     def test_returns_result_for_valid_input(self):
-        """有效输入应返回 EnrichmentResult"""
+        """Valid input should return EnrichmentResult"""
         gsva = GSVA(min_size=2, max_size=100)
         gene_set = {"GENE_1", "GENE_2", "GENE_3"}
         background_set = {"GENE_1", "GENE_2", "GENE_3", "GENE_4", "GENE_5"}
@@ -219,7 +202,7 @@ class TestGSVACalculateEnrichment:
         assert result.gene_count == 3
 
     def test_returns_none_for_small_gene_set(self):
-        """基因集太小应返回 None"""
+        """The gene set is too small to return to None"""
         gsva = GSVA(min_size=10, max_size=500)
         gene_set = {"GENE_1"}
         background_set = {"GENE_1", "GENE_2"}

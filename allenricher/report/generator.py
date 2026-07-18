@@ -1,88 +1,40 @@
-"""
-Interactive HTML Report Generator for AllEnricher v2.3.0
-
-生成交互式HTML报告模块 - 学术风格设计
-
-采用低调、专业的学术审美风格，符合研究分析报告的视觉标准。
-设计参考：Nature/Science 期刊 supplementary data 的排版风格。
-"""
+"""Generate self-contained, publication-oriented HTML reports for AllEnricher analyses."""
 
 import os
 import json
 import logging
+import re
 import tempfile
 import shutil
-import html
-import re
+from html import escape
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 import pandas as pd
 import base64
 import allenricher
+from allenricher.core.config import database_display_name
+from allenricher.visualization.color_config import PaletteLike, resolve_palette_selection
+from allenricher.report.methods_reference import render_methods_reference_html
 
 logger = logging.getLogger(__name__)
 
 
+def _first_value_for_report(row: pd.Series, names: tuple[str, ...], default: Any = None) -> Any:
+    for name in names:
+        if name in row.index and pd.notna(row.get(name)) and str(row.get(name)).strip():
+            return row.get(name)
+    return default
+
+
 class ReportGenerator:
-    """
-    交互式HTML报告生成器 - 学术风格
-
-    设计特点：
-    - 中性色调：使用灰度色系，避免鲜艳颜色
-    - 专业字体：Noto Serif + Source Sans Pro 组合
-    - 充足留白：类似学术论文的排版密度
-    - 清晰层级：通过字体大小和字重区分信息重要性
-    """
-
-    @staticmethod
-    def _clean_html_value(value: Any) -> str:
-        if value is None:
-            return ""
-        try:
-            if pd.isna(value):
-                return ""
-        except (TypeError, ValueError):
-            pass
-        return str(value)
-
-    @classmethod
-    def _escape_text(cls, value: Any) -> str:
-        return html.escape(cls._clean_html_value(value), quote=False)
-
-    @classmethod
-    def _escape_attr(cls, value: Any) -> str:
-        return html.escape(cls._clean_html_value(value), quote=True)
-
-    @classmethod
-    def _safe_href(cls, value: Any) -> str:
-        href = cls._clean_html_value(value).strip()
-        if not href:
-            return ""
-        if href.startswith(("http://", "https://")):
-            return cls._escape_attr(href)
-        if re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*:", href):
-            return ""
-        return cls._escape_attr(href)
-
-    @classmethod
-    def _link_cell(cls, href: Any, label: Any) -> str:
-        safe_label = cls._escape_text(label)
-        safe_href = cls._safe_href(href)
-        if safe_href:
-            return f'<a href="{safe_href}" target="_blank" rel="noopener noreferrer">{safe_label}</a>'
-        return safe_label
-
-    @staticmethod
-    def _safe_plot_stem(name: Any) -> str:
-        stem = re.sub(r"[^\w.-]+", "_", str(name)).strip("._")
-        return stem or "term"
+    """Build searchable result tables, figures, provenance, and Methods text into one HTML report."""
 
     _TABLE_JS = '''
     <script>
         // Vanilla JS Table Component
         (function() {
-            const tables = document.querySelectorAll('.data-table');
+            const tables = document.querySelectorAll('.data-table[id^="table-"]');
 
             tables.forEach(table => {
                 const tbody = table.querySelector('tbody');
@@ -93,28 +45,26 @@ class ReportGenerator:
                 // State
                 let currentPage = 1;
                 let pageSize = 20;
-                let sortColumn = 5;
+                let sortColumn = Math.max(0, headers.findIndex(th =>
+                    ['adj. p-value', 'padj', 'fdr', 'p-value', 'pval'].includes(th.textContent.trim().toLowerCase())
+                ));
                 let sortDirection = 'asc';
                 let searchTerm = '';
                 let filteredRows = [...rows];
 
                 // Make headers sortable
                 headers.forEach((th, index) => {
-                    if (index !== 6) {  // Skip Action column
-                        th.classList.add('sortable');
-                        th.addEventListener('click', () => {
-                            if (sortColumn === index) {
-                                sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
-                            } else {
-                                sortColumn = index;
-                                sortDirection = 'asc';
-                            }
-                            updateSortIcons();
-                            applyFilters();
-                        });
-                    } else {
-                        th.classList.add('sortable', 'sort-disabled');
-                    }
+                    th.classList.add('sortable');
+                    th.addEventListener('click', () => {
+                        if (sortColumn === index) {
+                            sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+                        } else {
+                            sortColumn = index;
+                            sortDirection = 'asc';
+                        }
+                        updateSortIcons();
+                        applyFilters();
+                    });
                 });
 
                 function updateSortIcons() {
@@ -290,6 +240,11 @@ class ReportGenerator:
             };
         })();
 
+        function exportCellText(cell) {
+            const fullValue = cell.querySelector('[data-full]');
+            return fullValue ? fullValue.dataset.full : cell.textContent.trim();
+        }
+
         function downloadTable(dbName) {
             const table = document.getElementById('table-' + dbName);
             let tsv = [];
@@ -297,10 +252,8 @@ class ReportGenerator:
             tsv.push(headers.join('\\t'));
             const rows = table.querySelectorAll('tbody tr');
             rows.forEach(row => {
-                if (row.style.display !== 'none') {
-                    const cells = Array.from(row.querySelectorAll('td')).map(td => td.textContent.trim());
-                    tsv.push(cells.join('\\t'));
-                }
+                const cells = Array.from(row.querySelectorAll('td')).map(exportCellText);
+                tsv.push(cells.join('\\t'));
             });
             const blob = new Blob([tsv.join('\\n')], { type: 'text/tab-separated-values' });
             const url = URL.createObjectURL(blob);
@@ -313,11 +266,11 @@ class ReportGenerator:
 
         function copyTable(dbName) {
             const table = document.getElementById('table-' + dbName);
-            const visibleRows = Array.from(table.querySelectorAll('tbody tr')).filter(row => row.style.display !== 'none');
             const clone = table.cloneNode(true);
-            const cloneTbody = clone.querySelector('tbody');
-            cloneTbody.innerHTML = '';
-            visibleRows.forEach(row => cloneTbody.appendChild(row.cloneNode(true)));
+            clone.querySelectorAll('tbody tr').forEach(row => row.style.display = '');
+            clone.querySelectorAll('[data-full]').forEach(value => {
+                value.textContent = value.dataset.full;
+            });
 
             const range = document.createRange();
             range.selectNode(clone);
@@ -334,14 +287,26 @@ class ReportGenerator:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.config = config
 
+    @staticmethod
+    def _html_id(value: object) -> str:
+        """Return a stable identifier that is safe in HTML and JavaScript."""
+        slug = re.sub(r"[^A-Za-z0-9_-]+", "-", str(value)).strip("-")
+        return slug or "results"
+
+    @staticmethod
+    def _html_text(value: object) -> str:
+        if value is None or (isinstance(value, float) and pd.isna(value)):
+            return ""
+        return escape(str(value), quote=True)
+
     def generate(
         self,
         results: Dict[str, pd.DataFrame],
         output_file: str,
         gene_list: List[str] = None,
-        ai_interpretation: Dict[str, str] = None,
-        pvalue_cutoff: float = 0.05,
-        qvalue_cutoff: float = 0.05,
+        ai_interpretation: Dict[str, Any] = None,
+        pvalue_cutoff: Optional[float] = None,
+        qvalue_cutoff: Optional[float] = None,
         gsea_results: pd.DataFrame = None,
         gsea_ranked_genes: List[str] = None,
         gsea_gene_weights: Dict[str, float] = None,
@@ -350,36 +315,51 @@ class ReportGenerator:
         gsva_groups: Dict[str, List[str]] = None,
         analysis_method: str = None,
         plot_types: List[str] = None,
-        metadata: dict = None
+        metadata: dict = None,
+        ai_interpretation_error: Dict[str, Any] = None,
     ) -> str:
+        self._ai_interpretation_error = ai_interpretation_error
+        pvalue_cutoff = (
+            getattr(self.config, 'pvalue_cutoff', 0.05)
+            if pvalue_cutoff is None else pvalue_cutoff
+        )
+        qvalue_cutoff = (
+            getattr(self.config, 'qvalue_cutoff', 0.05)
+            if qvalue_cutoff is None else qvalue_cutoff
+        )
         has_results = results and any(len(df) > 0 for df in results.values())
 
         if not has_results:
-            html = self._generate_no_results_page(gene_list, metadata=metadata)
+            html = self._generate_no_results_page(
+                gene_list, metadata=metadata, ai_interpretation=ai_interpretation
+            )
             with open(output_file, 'w', encoding='utf-8') as f:
                 f.write(html)
             return output_file
 
-        # 过滤显著结果：只保留通过 P-value 和 Q-value 阈值的条目
-        # ssGSEA/GSVA 方法跳过 P 值过滤（这些方法不依赖 P 值进行筛选）
+        # ORA and GSEA reports apply the recorded significance thresholds.
+        # Activity matrices have no per-row significance columns and remain unfiltered.
         sig_results = {}
         if analysis_method in ('ssgsea', 'gsva'):
-            # ssGSEA/GSVA：直接使用全部结果，不进行 P 值过滤
             sig_results = {db_name: df.copy() for db_name, df in results.items() if len(df) > 0}
         else:
             for db_name, df in results.items():
                 if len(df) == 0:
                     continue
                 mask = pd.Series(True, index=df.index)
-                if 'P_Value' in df.columns:
-                    mask &= df['P_Value'] <= pvalue_cutoff
-                if 'Adjusted_P_Value' in df.columns:
-                    mask &= df['Adjusted_P_Value'] <= qvalue_cutoff
+                p_column = next((column for column in ('pval', 'P_Value', 'p_value') if column in df.columns), None)
+                q_column = next((column for column in ('padj', 'Adjusted_P_Value', 'FDR') if column in df.columns), None)
+                if p_column:
+                    mask &= df[p_column] <= pvalue_cutoff
+                if q_column:
+                    mask &= df[q_column] <= qvalue_cutoff
                 sig_results[db_name] = df.loc[mask]
 
-        # 如果过滤后无结果，回退到无结果页面
+        # Preserve report structure even when no term passes the recorded filters.
         if not sig_results or all(len(df) == 0 for df in sig_results.values()):
-            html = self._generate_no_results_page(gene_list, metadata=metadata)
+            html = self._generate_no_results_page(
+                gene_list, metadata=metadata, ai_interpretation=ai_interpretation
+            )
             with open(output_file, 'w', encoding='utf-8') as f:
                 f.write(html)
             return output_file
@@ -391,53 +371,56 @@ class ReportGenerator:
                 for db_name in gsea_results[db_col].unique():
                     sub = gsea_results[gsea_results[db_col] == db_name].copy()
                     mask = pd.Series(True, index=sub.index)
-                    if 'FDR' in sub.columns:
-                        mask &= sub['FDR'] <= qvalue_cutoff
-                    if 'p_value' in sub.columns:
-                        mask &= sub['p_value'] <= pvalue_cutoff
+                    q_column = next((column for column in ('padj', 'FDR', 'Adjusted_P_Value') if column in sub.columns), None)
+                    p_column = next((column for column in ('pval', 'p_value', 'P_Value') if column in sub.columns), None)
+                    if q_column:
+                        mask &= sub[q_column] <= qvalue_cutoff
+                    if p_column:
+                        mask &= sub[p_column] <= pvalue_cutoff
                     filtered = sub.loc[mask]
                     if len(filtered) > 0:
                         gsea_sig[db_name] = filtered
                 if gsea_sig:
                     sig_results = gsea_sig
 
-        # ssGSEA/GSVA 处理分支 - 不使用 P 值过滤，直接使用全部结果
-        # ssGSEA 只需 analysis_method 为 'ssgsea' 即可进入（gsva_results 可选）
-        # GSVA 需要 gsva_results 不为 None 才能生成图表
+        # ssGSEA and GSVA share the activity-matrix report layout.
         is_ssgsea_branch = analysis_method == 'ssgsea'
         is_gsva_branch = analysis_method == 'gsva' and gsva_results is not None
         if is_ssgsea_branch or is_gsva_branch:
             sections = {}
+            saved_plots = self._generate_plot_section(results, analysis_method)
+            has_saved_plots = bool(self._plot_file_groups())
+            ai_section = self._generate_ai_content(ai_interpretation)
             for db_name, df in results.items():
                 if 'NES' in df.columns:
                     df = df.reindex(df['NES'].abs().sort_values(ascending=False).index)
                 sections[f'{db_name}_table'] = self._generate_tables(
-                    {db_name: df}, analysis_method=analysis_method
+                    {db_name: df}, analysis_method=analysis_method,
+                    ai_interpretation=ai_interpretation,
                 )
 
-            # 生成 GSVA 专属图表（仅当 gsva_results 不为 None 时）
+            # Generate fallback figures only when the analysis did not save plot files.
             gsva_section = ''
-            if gsva_results is not None:
+            if gsva_results is not None and not has_saved_plots:
                 gsva_section = self._generate_gsva_plots_section(
                     gsva_results=gsva_results,
                     groups=gsva_groups,
-                    plot_types=plot_types or ['heatmap', 'group_comparison', 'correlation']
+                    plot_types=plot_types or ['heatmap', 'group_comparison', 'correlation'],
+                    analysis_method=analysis_method,
                 )
             if gsva_section:
                 sections['gsva_visualization'] = gsva_section
 
-            # 生成摘要
             sections['summary'] = self._generate_summary(
                 results, analysis_method=analysis_method
             )
 
-            # 构建 HTML
             active_db_names = [db for db, df in results.items() if len(df) > 0]
             html = self._build_html(
                 summary=sections.get('summary', ''),
                 tables='\n'.join(v for k, v in sections.items() if k.endswith('_table')),
-                plots='',
-                ai_section='',
+                plots=saved_plots,
+                ai_section=ai_section,
                 db_names=active_db_names,
                 gsva_plots_html=sections.get('gsva_visualization', ''),
                 analysis_method=analysis_method,
@@ -449,23 +432,37 @@ class ReportGenerator:
 
             return output_file
 
-        summary = self._generate_summary(sig_results, gene_list)
-        tables = self._generate_tables(sig_results)
-        plots = self._generate_plot_section(sig_results)
-        ai_section = self._generate_ai_section(ai_interpretation) if ai_interpretation else ""
+        summary = self._generate_summary(sig_results, gene_list, analysis_method)
+        tables = self._generate_tables(
+            sig_results, analysis_method, ai_interpretation=ai_interpretation
+        )
+        plots = self._generate_plot_section(sig_results, analysis_method)
+        has_saved_plots = bool(self._plot_file_groups())
+        ai_section = self._generate_ai_content(ai_interpretation)
 
-        # 生成 GSEA/GSVA 可视化区域
+        # Generate fallback method-specific figures only when no saved figures exist.
         gsea_plots_html = ""
         gsva_plots_html = ""
-        # 从 config 获取图表风格参数
+        # Apply the exact style and semantic palette selection recorded by the run.
         plot_style = getattr(self.config, 'plot_style', 'nature') if self.config else 'nature'
-        plot_palette = getattr(self.config, 'plot_palette', None) if self.config else None
-        if gsea_results is not None and len(gsea_results) > 0:
+        plot_palette = resolve_palette_selection(
+            legacy_palette=getattr(self.config, 'plot_palette', None) if self.config else None,
+            categorical_palette=(
+                getattr(self.config, 'categorical_palette', None) if self.config else None
+            ),
+            sequential_palette=(
+                getattr(self.config, 'sequential_palette', None) if self.config else None
+            ),
+            diverging_palette=(
+                getattr(self.config, 'diverging_palette', None) if self.config else None
+            ),
+        )
+        if not has_saved_plots and gsea_results is not None and len(gsea_results) > 0:
             gsea_plots_html = self._generate_gsea_plots_section(
                 gsea_results, gsea_ranked_genes, gsea_gene_weights,
                 gsea_gene_sets, plot_types, plot_style, plot_palette
             )
-        if gsva_results is not None and len(gsva_results) > 0:
+        if not has_saved_plots and gsva_results is not None and len(gsva_results) > 0:
             gsva_plots_html = self._generate_gsva_plots_section(
                 gsva_results, gsva_groups, plot_types, plot_style, plot_palette
             )
@@ -488,20 +485,26 @@ class ReportGenerator:
 
         return output_file
 
-    def _generate_no_results_page(self, gene_list: List[str] = None, metadata: dict = None) -> str:
-        """生成无富集结果提示页面"""
+    def _generate_no_results_page(
+        self,
+        gene_list: List[str] = None,
+        metadata: dict = None,
+        ai_interpretation: Dict[str, Any] = None,
+    ) -> str:
+        """Build a complete report when no terms pass the recorded filters."""
         _version = allenricher.__version__
         _db_ver = metadata.get("database_version", "") if metadata else ""
         _version_str = f"Version {_version}"
         if _db_ver:
             _version_str += f" | DB: {_db_ver}"
+        methods_reference_html = render_methods_reference_html(metadata)
+        ai_section = self._generate_ai_content(ai_interpretation)
         html = f'''<!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AllEnricher v{_version} - 无富集结果</title>
-    <link href="https://fonts.googleapis.com/css2?family=Noto+Serif:wght@400;600&family=Source+Sans+Pro:wght@400;600&display=swap" rel="stylesheet">
+    <title>AllEnricher v{_version} - No Enrichment Results</title>
     <style>
         :root {{
             --text-primary: #1a1a1a;
@@ -514,7 +517,7 @@ class ReportGenerator:
         }}
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
         body {{
-            font-family: 'Source Sans Pro', -apple-system, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
             line-height: 1.6;
             color: var(--text-primary);
             background-color: var(--bg-secondary);
@@ -525,7 +528,7 @@ class ReportGenerator:
             padding: 1.5rem 2rem;
         }}
         .header h1 {{
-            font-family: 'Noto Serif', Georgia, serif;
+            font-family: Georgia, 'Times New Roman', serif;
             font-size: 1.5rem;
             font-weight: 600;
         }}
@@ -545,8 +548,25 @@ class ReportGenerator:
             border-radius: 4px;
             padding: 2.5rem;
         }}
+        .methods-reference {{
+            background: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            padding: 2rem 2.5rem;
+            margin-top: 1.5rem;
+        }}
+        .methods-reference h2 {{
+            font-family: Georgia, 'Times New Roman', serif;
+            font-size: 1.25rem;
+            margin-bottom: 1rem;
+        }}
+        .methods-reference h3 {{ font-size: 0.95rem; margin: 1rem 0 0.5rem; }}
+        .methods-prose p {{ color: var(--text-secondary); margin-bottom: 0.75rem; }}
+        .methods-references {{ margin-left: 1.25rem; color: var(--text-secondary); }}
+        .methods-references li {{ margin-bottom: 0.5rem; }}
+        .methods-reference a {{ color: var(--accent-color); }}
         .no-results-box h2 {{
-            font-family: 'Noto Serif', Georgia, serif;
+            font-family: Georgia, 'Times New Roman', serif;
             font-size: 1.25rem;
             margin-bottom: 1rem;
             color: var(--text-primary);
@@ -576,9 +596,15 @@ class ReportGenerator:
             padding: 2rem;
             font-size: 0.8rem;
             color: var(--text-muted);
+            border-top: 1px solid var(--border-color);
         }}
         .footer a {{
             color: var(--accent-color);
+        }}
+        .footer .citation {{
+            max-width: 900px;
+            margin: 0.4rem auto 0;
+            line-height: 1.5;
         }}
     </style>
 </head>
@@ -589,107 +615,53 @@ class ReportGenerator:
     </header>
     <main class="main">
         <div class="no-results-box">
-            <h2>未找到显著富集的结果</h2>
+            <h2>No significant enrichment results found</h2>
             <p style="color: var(--text-secondary);">
-                根据当前的分析参数，未能检测到统计上显著富集的功能条目。
+                No terms met the significance criteria recorded for this analysis.
             </p>
             <div class="info-box">
-                <h3>可能的原因</h3>
+                <h3>Possible causes</h3>
                 <ul>
-                    <li>输入基因列表过小或与数据库无交集</li>
-                    <li>P值/Q值阈值过于严格</li>
-                    <li>背景基因集设置不当</li>
-                    <li>基因ID格式与数据库不匹配</li>
+                    <li>The query contains too few genes that map to the selected database.</li>
+                    <li>The configured P-value or adjusted P-value cutoff excludes all terms.</li>
+                    <li>The selected background does not represent the tested gene universe.</li>
+                    <li>The query identifier type does not match the database identifier type.</li>
                 </ul>
             </div>
             <div class="info-box">
-                <h3>建议</h3>
+                <h3>Recommendations</h3>
                 <ul>
-                    <li>增加输入基因数量（建议至少10个以上）</li>
-                    <li>放宽P值/Q值阈值（如 <code>-p 0.1 -q 0.1</code>）</li>
-                    <li>检查基因ID格式是否正确</li>
-                    <li>尝试使用其他数据库进行分析</li>
+                    <li>Review the input-to-database mapping reported in the analysis log.</li>
+                    <li>Confirm that the background contains all genes eligible for selection.</li>
+                    <li>Confirm that gene IDs match the identifier type used by the database.</li>
+                    <li>Use a different database only when it addresses the analysis question.</li>
                 </ul>
             </div>
         </div>
+        {ai_section}
+        {methods_reference_html}
     </main>
     <footer class="footer">
-        <p>Generated by <a href="https://github.com/zd105/AllEnricher">AllEnricher v{_version}</a></p>
+        <p>Generated by <a href="https://github.com/zhangducsu/AllEnricher-v2" target="_blank" rel="noopener noreferrer">AllEnricher v{_version}</a></p>
+        <p class="citation"><strong>Citation:</strong> <cite>Zhang D, Hu Q, Liu X, et al. AllEnricher: a comprehensive gene set function enrichment tool for both model and non-model species. BMC Bioinformatics. 2020;21:106.</cite></p>
     </footer>
 </body>
 </html>'''
         return html
 
     def _generate_summary(self, results: Dict[str, pd.DataFrame], gene_list: List[str] = None, analysis_method: str = None) -> str:
-        """生成统计摘要部分"""
+        """Summarize the recorded analysis without interpreting its biological meaning."""
         total_terms = sum(len(df) for df in results.values())
         databases = list(results.keys())
 
-        # ssGSEA 专属摘要
-        if analysis_method == 'ssgsea':
-            all_nes = []
-            all_gene_counts = []
-            summary_stats = []
-            for db_name, df in results.items():
-                if len(df) > 0:
-                    if 'NES' in df.columns:
-                        all_nes.extend(df['NES'].dropna().tolist())
-                    gc_col = 'Gene_Count' if 'Gene_Count' in df.columns else ('setSize' if 'setSize' in df.columns else None)
-                    if gc_col:
-                        all_gene_counts.extend(df[gc_col].dropna().tolist())
-                    summary_stats.append({
-                        "database": db_name,
-                        "terms": len(df),
-                    })
-
-            nes_min = min(all_nes) if all_nes else 0
-            nes_max = max(all_nes) if all_nes else 0
-            gc_min = int(min(all_gene_counts)) if all_gene_counts else 0
-            gc_max = int(max(all_gene_counts)) if all_gene_counts else 0
-
-            rows_html = "".join([
-                f'<tr><td><a href="#{s["database"]}-table">{s["database"]}</a></td>'
-                f'<td>{s["terms"]}</td></tr>'
-                for s in summary_stats
-            ])
-
-            html = f'''
-            <div class="section" id="summary">
-                <h2>ssGSEA Analysis Summary</h2>
-                <div class="summary-grid">
-                    <div class="stat-item">
-                        <span class="stat-value">{total_terms}</span>
-                        <span class="stat-label">Pathways</span>
-                    </div>
-                    <div class="stat-item">
-                        <span class="stat-value">{nes_min:.2f} ~ {nes_max:.2f}</span>
-                        <span class="stat-label">NES Range</span>
-                    </div>
-                    <div class="stat-item">
-                        <span class="stat-value">{gc_min} ~ {gc_max}</span>
-                        <span class="stat-label">Gene Set Size Range</span>
-                    </div>
-                </div>
-                <table class="data-table">
-                    <thead>
-                        <tr>
-                            <th>Database</th>
-                            <th>Pathways</th>
-                        </tr>
-                    </thead>
-                    <tbody>{rows_html}</tbody>
-                </table>
-            </div>'''
-            return html
-
-        # GSVA 专属摘要
-        if analysis_method == 'gsva':
+        # ssGSEA and GSVA output a pathway-by-sample activity matrix.
+        if analysis_method in ('ssgsea', 'gsva'):
             all_scores = []
             sample_cols_set = set()
             summary_stats = []
             for db_name, df in results.items():
                 if len(df) > 0:
-                    # 只保留数值类型的列作为样本列
+                    # Only numeric columns represent sample activity scores.
                     sample_cols = [c for c in df.columns if c not in [
                         'Term_ID', 'Term_Name', 'Gene_Count', 'Background_Count',
                         'Term_URL', 'NES', 'ES', 'P_Value', 'Adjusted_P_Value',
@@ -706,21 +678,22 @@ class ReportGenerator:
                         "terms": len(df),
                     })
 
-            # 过滤非数值值，确保 min/max 计算安全
+            # Ignore missing values when reporting the observed score range.
             numeric_scores = [x for x in all_scores if isinstance(x, (int, float))]
             score_min = min(numeric_scores) if numeric_scores else 0
             score_max = max(numeric_scores) if numeric_scores else 0
             n_samples = len(sample_cols_set)
 
             rows_html = "".join([
-                f'<tr><td><a href="#{s["database"]}-table">{s["database"]}</a></td>'
+                f'<tr><td><a href="#{self._html_id(s["database"])}-table">'
+                f'{self._html_text(database_display_name(s["database"]))}</a></td>'
                 f'<td>{s["terms"]}</td></tr>'
                 for s in summary_stats
             ])
 
             html = f'''
             <div class="section" id="summary">
-                <h2>GSVA Analysis Summary</h2>
+                <h2>{'ssGSEA' if analysis_method == 'ssgsea' else 'GSVA'} Analysis Summary</h2>
                 <div class="summary-grid">
                     <div class="stat-item">
                         <span class="stat-value">{total_terms}</span>
@@ -753,14 +726,17 @@ class ReportGenerator:
                 summary_stats.append({
                     "database": db_name,
                     "terms": len(df),
-                    "min_pval": df['P_Value'].min() if 'P_Value' in df.columns
-                                else (df['p_value'].min() if 'p_value' in df.columns else 0),
-                    "min_adj_pval": df['Adjusted_P_Value'].min() if 'Adjusted_P_Value' in df.columns
-                                    else (df['FDR'].min() if 'FDR' in df.columns else 0)
+                    "min_pval": df['pval'].min() if 'pval' in df.columns
+                                else (df['P_Value'].min() if 'P_Value' in df.columns
+                                      else (df['p_value'].min() if 'p_value' in df.columns else 0)),
+                    "min_adj_pval": df['padj'].min() if 'padj' in df.columns
+                                    else (df['Adjusted_P_Value'].min() if 'Adjusted_P_Value' in df.columns
+                                          else (df['FDR'].min() if 'FDR' in df.columns else 0))
                 })
 
         rows_html = "".join([
-            f'<tr><td><a href="#{s["database"]}-table">{s["database"]}</a></td>'
+            f'<tr><td><a href="#{self._html_id(s["database"])}-table">'
+            f'{self._html_text(database_display_name(s["database"]))}</a></td>'
             f'<td>{s["terms"]}</td>'
             f'<td>{s["min_pval"]:.2e}</td>'
             f'<td>{s["min_adj_pval"]:.2e}</td></tr>'
@@ -772,7 +748,7 @@ class ReportGenerator:
             <h2>Analysis Summary</h2>
             <div class="summary-grid">
                 <div class="stat-item">
-                    <span class="stat-value">{len(gene_list) if gene_list else "—"}</span>
+                    <span class="stat-value">{len(gene_list) if gene_list else " - "}</span>
                     <span class="stat-label">Input Genes</span>
                 </div>
                 <div class="stat-item">
@@ -798,198 +774,127 @@ class ReportGenerator:
         </div>'''
         return html
 
-    def _generate_tables(self, results: Dict[str, pd.DataFrame], analysis_method: str = None) -> str:
-        """生成交互式数据表格（含 GeneList 列）"""
+    def _generate_tables(
+        self,
+        results: Dict[str, pd.DataFrame],
+        analysis_method: str = None,
+        ai_interpretation: Dict[str, Any] = None,
+    ) -> str:
+        """Build searchable result tables with stable term identifiers and descriptive names."""
         tables_html = []
+        is_activity = analysis_method in {'ssgsea', 'gsva'}
 
-        is_ssgsea = analysis_method == 'ssgsea'
-        is_gsva = analysis_method == 'gsva'
+        def format_number(value: object, pattern: str) -> str:
+            try:
+                if pd.isna(value):
+                    return ""
+                return format(float(value), pattern)
+            except (TypeError, ValueError):
+                return self._html_text(value)
 
         for db_name, df in results.items():
             if len(df) == 0:
                 continue
-
+            db_id = self._html_id(db_name)
+            db_label = self._html_text(database_display_name(db_name))
             rows = []
             is_gsea = 'NES' in df.columns or ('ES' in df.columns and 'setSize' in df.columns)
+            has_hierarchy = (
+                'Hierarchy' in df.columns
+                and df['Hierarchy'].fillna('').astype(str).str.strip().ne('').any()
+            )
 
-            # ssGSEA 专属 8 列表格
-            if is_ssgsea:
-                html_parts = []
-                safe_db_attr = self._escape_attr(db_name)
-                safe_db_text = self._escape_text(db_name)
-                safe_db_js = self._escape_attr(json.dumps(str(db_name)))
-                html_parts.append(f'<div class="section" id="{safe_db_attr}-table">')
-                html_parts.append(f'<h2>{safe_db_text} ssGSEA Results <span class="result-count">({len(df)} pathways)</span></h2>')
-                headers = ['Term ID', 'Term Name', 'NES', 'ES', 'Gene Count', 'Gene Ratio', 'Genes', 'Leading Edge']
-                html_parts.append('<div class="table-wrapper"><table class="data-table" id="table-{0}">'.format(safe_db_attr))
-                html_parts.append('<thead><tr>')
-                for h in headers:
-                    html_parts.append(f'<th>{self._escape_text(h)}</th>')
-                html_parts.append('</tr></thead><tbody>')
-                for _, row in df.iterrows():
-                    term_id = row.get('Term_ID', '')
-                    term_url = row.get('Term_URL', '')
-                    term_name = row.get('Term_Name', '')
-                    nes = row.get('NES', '')
-                    es = row.get('ES', '')
-                    gene_count = row.get('Gene_Count', row.get('setSize', ''))
-                    gene_ratio = row.get('Gene_Ratio', '')
-                    genes = row.get('Genes', '')
-                    leading_edge = row.get('Leading_Edge', '')
-
-                    html_parts.append('<tr>')
-                    html_parts.append(f'<td>{self._link_cell(term_url, term_id)}</td>')
-                    html_parts.append(f'<td>{self._escape_text(term_name)}</td>')
-                    html_parts.append(f'<td>{self._escape_text(nes)}</td>')
-                    html_parts.append(f'<td>{self._escape_text(es)}</td>')
-                    html_parts.append(f'<td>{self._escape_text(gene_count)}</td>')
-                    html_parts.append(f'<td>{self._escape_text(gene_ratio)}</td>')
-                    genes_raw = str(genes) if genes else ''
-                    genes_display = self._escape_text(self._truncate_genes(genes_raw)) if genes_raw else ''
-                    html_parts.append(f'<td class="genes" data-full="{self._escape_attr(genes_raw)}">{genes_display}</td>')
-                    leading_edge_raw = str(leading_edge) if leading_edge else ''
-                    le_display = self._escape_text(self._truncate_genes(leading_edge_raw)) if leading_edge_raw else ''
-                    html_parts.append(f'<td class="genes" data-full="{self._escape_attr(leading_edge_raw)}">{le_display}</td>')
-                    html_parts.append('</tr>')
-                html_parts.append('</tbody></table></div>')
-                html_parts.append('<div class="table-actions">')
-                html_parts.append(f'<button onclick="downloadTable({safe_db_js})">Download TSV</button>')
-                html_parts.append(f'<button onclick="copyTable({safe_db_js})">Copy</button>')
-                html_parts.append('</div></div>')
-                tables_html.append('\n'.join(html_parts))
-                continue
-
-            # GSVA 专属动态样本列表格
-            if is_gsva:
-                html_parts = []
-                safe_db_attr = self._escape_attr(db_name)
-                safe_db_text = self._escape_text(db_name)
-                safe_db_js = self._escape_attr(json.dumps(str(db_name)))
-                html_parts.append(f'<div class="section" id="{safe_db_attr}-table">')
-                html_parts.append(f'<h2>{safe_db_text} GSVA Results <span class="result-count">({len(df)} pathways)</span></h2>')
-                sample_cols = [c for c in df.columns if c not in [
-                    'Term_ID', 'Term_Name', 'Gene_Count', 'Background_Count',
-                    'Term_URL', 'NES', 'ES', 'P_Value', 'Adjusted_P_Value',
-                    'FDR', 'Genes', 'Leading_Edge'
-                ]]
-                headers = ['Term ID', 'Term Name', 'Gene Count'] + sample_cols
-                html_parts.append('<div class="table-wrapper"><table class="data-table" id="table-{0}">'.format(safe_db_attr))
-                html_parts.append('<thead><tr>')
-                for h in headers:
-                    html_parts.append(f'<th>{self._escape_text(h)}</th>')
-                html_parts.append('</tr></thead><tbody>')
-                for _, row in df.iterrows():
-                    term_id = row.get('Term_ID', '')
-                    term_url = row.get('Term_URL', '')
-                    term_name = row.get('Term_Name', '')
-                    gene_count = row.get('Gene_Count', '')
-
-                    html_parts.append('<tr>')
-                    html_parts.append(f'<td>{self._link_cell(term_url, term_id)}</td>')
-                    html_parts.append(f'<td>{self._escape_text(term_name)}</td>')
-                    html_parts.append(f'<td>{self._escape_text(gene_count)}</td>')
-                    for col in sample_cols:
-                        val = row.get(col, '')
-                        html_parts.append(f'<td>{self._escape_text(val)}</td>')
-                    html_parts.append('</tr>')
-                html_parts.append('</tbody></table></div>')
-                html_parts.append('<div class="table-actions">')
-                html_parts.append(f'<button onclick="downloadTable({safe_db_js})">Download TSV</button>')
-                html_parts.append(f'<button onclick="copyTable({safe_db_js})">Copy</button>')
-                html_parts.append('</div></div>')
-                tables_html.append('\n'.join(html_parts))
-                continue
-
-            for idx, row in df.iterrows():
-                term_url = row.get('Term_URL', '')
-                if is_gsea:
-                    # GSEA 13-column 格式
-                    tid = row.get('Term_ID', row.get('Term', row.get('ID', 'N/A')))
-                    tname = row.get('Term_Name', row.get('Description', 'N/A'))
-                    db = row.get('Database', db_name)
-                    set_size = row.get('setSize', row.get('Gene_Count', 0))
-                    es = row.get('ES', row.get('es', 0))
-                    nes = row.get('NES', row.get('nes', 0))
-                    pv = row.get('p_value', row.get('NOM p-val', row.get('pvalue', row.get('P_Value', 1))))
-                    fdr = row.get('FDR', row.get('FDR q-val', row.get('p.adjust', row.get('Adjusted_P_Value', 1))))
-                    rank = row.get('rank', row.get('Rank', 0))
-                    tag_pct = row.get('tag %', row.get('Tag_%', row.get('tag_percent', '')))
-                    gene_pct = row.get('gene %', row.get('Gene_%', row.get('gene_percent', '')))
-                    lead_genes = str(row.get('lead_genes', row.get('Lead_genes', '')))
-                    matched_genes = str(row.get('matched_genes', row.get('core_enrichment', row.get('Genes', ''))))
-
-                    tid_cell = self._link_cell(term_url, tid)
-
-                    es_str = f"{es:.4f}" if isinstance(es, (int, float)) else str(es)
-                    nes_str = f"{nes:.4f}" if isinstance(nes, (int, float)) else str(nes)
-                    pv_str = f"{pv:.2e}" if isinstance(pv, (int, float)) else str(pv)
-                    fdr_str = f"{fdr:.2e}" if isinstance(fdr, (int, float)) else str(fdr)
-
-                    gene_preview = self._escape_text(self._truncate_genes(matched_genes))
-                    lead_preview = self._escape_text(self._truncate_genes(lead_genes))
-
-                    rows.append(
-                        f'<tr>'
-                        f'<td>{tid_cell}</td>'
-                        f'<td>{self._escape_text(tname)}</td>'
-                        f'<td>{self._escape_text(db)}</td>'
-                        f'<td>{self._escape_text(set_size)}</td>'
-                        f'<td>{self._escape_text(es_str)}</td>'
-                        f'<td>{self._escape_text(nes_str)}</td>'
-                        f'<td>{self._escape_text(pv_str)}</td>'
-                        f'<td>{self._escape_text(fdr_str)}</td>'
-                        f'<td>{self._escape_text(rank)}</td>'
-                        f'<td>{self._escape_text(tag_pct)}</td>'
-                        f'<td>{self._escape_text(gene_pct)}</td>'
-                        f'<td class="genes" data-full="{self._escape_attr(lead_genes)}">{lead_preview}</td>'
-                        f'<td class="genes" data-full="{self._escape_attr(matched_genes)}">{gene_preview}</td>'
-                        f'</tr>'
-                    )
-                else:
-                    # ORA 7-column 格式
-                    tid = row.get('Term_ID', 'N/A')
-                    tname = row.get('Term_Name', 'N/A')
-                    gcount = row.get('Gene_Count', 0)
-                    rf = f"{row.get('Rich_Factor', 0):.4f}"
-                    pv = f"{row.get('P_Value', 1):.2e}"
-                    adjpv = f"{row.get('Adjusted_P_Value', 1):.2e}"
-                    genes_str = str(row.get('Genes', ''))
-
-                    tid_cell = self._link_cell(term_url, tid)
-                    gene_preview = self._escape_text(self._truncate_genes(genes_str))
-
-                    rows.append(
-                        f'<tr>'
-                        f'<td>{tid_cell}</td>'
-                        f'<td>{self._escape_text(tname)}</td>'
-                        f'<td>{self._escape_text(gcount)}</td>'
-                        f'<td>{self._escape_text(rf)}</td>'
-                        f'<td>{self._escape_text(pv)}</td>'
-                        f'<td>{self._escape_text(adjpv)}</td>'
-                        f'<td class="genes" data-full="{self._escape_attr(genes_str)}">{gene_preview}</td>'
-                        f'</tr>'
-                    )
-
-            # 构建表头
-            if is_gsea:
-                headers = [
-                    'Term ID', 'Term Name', 'Database', 'setSize', 'ES', 'NES',
-                    'p_value', 'FDR', 'rank', 'Tag %', 'Gene %',
-                    'Lead_genes', 'matched_genes'
+            if is_activity:
+                metadata_columns = {
+                    'Term_ID', 'Term_Name', 'Hierarchy', 'Database', 'Gene_Count',
+                    'Background_Count', 'Term_URL', 'NES', 'ES', 'P_Value',
+                    'Adjusted_P_Value', 'FDR', 'Genes', 'Leading_Edge',
+                    'Rich_Factor', 'Gene_Ratio', 'Background_Ratio', 'Expected_Count',
+                }
+                sample_cols = [
+                    column for column in df.columns
+                    if column not in metadata_columns and pd.api.types.is_numeric_dtype(df[column])
                 ]
+                headers = ['Term ID', 'Term Name']
+                if has_hierarchy:
+                    headers.append('Hierarchy')
+                headers.extend(map(str, sample_cols))
+                for index, row in df.iterrows():
+                    term_id = row.get('Term_ID', index)
+                    term_name = row.get('Term_Name', term_id)
+                    row_anchor = self._evidence_row_anchor(db_name, row, ai_interpretation)
+                    cells = [self._html_text(term_id), self._html_text(term_name)]
+                    if has_hierarchy:
+                        cells.append(self._html_text(row.get('Hierarchy', '')))
+                    cells.extend(format_number(row.get(column, ''), '.6g') for column in sample_cols)
+                    rows.append(f'<tr{row_anchor}>' + ''.join(f'<td>{cell}</td>' for cell in cells) + '</tr>')
+                method_label = 'ssGSEA' if analysis_method == 'ssgsea' else 'GSVA'
+                count_label = 'pathways'
+            elif is_gsea:
+                headers = ['Term ID', 'Term Name']
+                if has_hierarchy:
+                    headers.append('Hierarchy')
+                headers.extend(['pathway', 'pval', 'padj', 'log2err', 'ES', 'NES', 'size', 'leadingEdge'])
+                for index, row in df.iterrows():
+                    term_id = row.get('Term_ID', row.get('pathway', index))
+                    term_name = row.get('Term_Name', term_id)
+                    row_anchor = self._evidence_row_anchor(db_name, row, ai_interpretation)
+                    leading_edge = str(row.get('leadingEdge', row.get('Lead_genes', '')))
+                    cells = [self._html_text(term_id), self._html_text(term_name)]
+                    if has_hierarchy:
+                        cells.append(self._html_text(row.get('Hierarchy', '')))
+                    cells.extend([
+                        self._html_text(row.get('pathway', term_id)),
+                        format_number(row.get('pval', row.get('P_Value', 1)), '.2e'),
+                        format_number(row.get('padj', row.get('Adjusted_P_Value', 1)), '.2e'),
+                        format_number(row.get('log2err', ''), '.4f'),
+                        format_number(row.get('ES', row.get('es', 0)), '.4f'),
+                        format_number(row.get('NES', row.get('nes', 0)), '.4f'),
+                        self._html_text(row.get('size', row.get('setSize', 0))),
+                        f'<span class="genes" data-full="{self._html_text(leading_edge)}">'
+                        f'{self._html_text(self._truncate_genes(leading_edge))}</span>',
+                    ])
+                    rows.append(f'<tr{row_anchor}>' + ''.join(f'<td>{cell}</td>' for cell in cells) + '</tr>')
+                method_label = 'GSEA'
+                count_label = 'pathways'
             else:
-                headers = ['Term ID', 'Term Name', 'Gene Count', 'Rich Factor', 'P-value', 'Adj. P-value', 'Gene List']
+                headers = ['Term ID', 'Term Name']
+                if has_hierarchy:
+                    headers.append('Hierarchy')
+                headers.extend(['Gene Count', 'Rich Factor', 'P-value', 'Adj. P-value', 'Gene List'])
+                for _, row in df.iterrows():
+                    term_id = row.get('Term_ID', 'N/A')
+                    term_name = row.get('Term_Name', term_id)
+                    row_anchor = self._evidence_row_anchor(db_name, row, ai_interpretation)
+                    term_url = self._html_text(row.get('Term_URL', ''))
+                    term_id_text = self._html_text(term_id)
+                    term_id_cell = (
+                        f'<a href="{term_url}" target="_blank" rel="noopener">{term_id_text}</a>'
+                        if term_url else term_id_text
+                    )
+                    genes = str(row.get('Genes', ''))
+                    cells = [term_id_cell, self._html_text(term_name)]
+                    if has_hierarchy:
+                        cells.append(self._html_text(row.get('Hierarchy', '')))
+                    cells.extend([
+                        self._html_text(row.get('Gene_Count', 0)),
+                        format_number(row.get('Rich_Factor', 0), '.4f'),
+                        format_number(row.get('P_Value', 1), '.2e'),
+                        format_number(row.get('Adjusted_P_Value', 1), '.2e'),
+                        f'<span class="genes" data-full="{self._html_text(genes)}">'
+                        f'{self._html_text(self._truncate_genes(genes))}</span>',
+                    ])
+                    rows.append(f'<tr{row_anchor}>' + ''.join(f'<td>{cell}</td>' for cell in cells) + '</tr>')
+                method_label = 'ORA'
+                count_label = 'terms'
 
-            header_html = "".join(f'<th>{self._escape_text(h)}</th>' for h in headers)
-            safe_db_text = self._escape_text(db_name)
-            safe_db_attr = self._escape_attr(db_name)
-            safe_db_js = self._escape_attr(json.dumps(str(db_name)))
+            header_html = "".join(f'<th>{self._html_text(header)}</th>' for header in headers)
 
             table_html = f'''
-            <div class="section" id="{safe_db_attr}-table">
-                <h2>{safe_db_text} Enrichment Results <span class="result-count">({len(df)} significant terms)</span></h2>
+            <div class="section" id="{db_id}-table">
+                <h2>{db_label} {method_label} Results <span class="result-count">({len(df)} {count_label})</span></h2>
                 <div class="table-wrapper">
-                    <table class="data-table" id="table-{safe_db_attr}">
+                    <table class="data-table" id="table-{db_id}">
                         <thead>
                             <tr>{header_html}</tr>
                         </thead>
@@ -997,160 +902,175 @@ class ReportGenerator:
                     </table>
                 </div>
                 <div class="table-actions">
-                    <button onclick="downloadTable({safe_db_js})">Download TSV</button>
-                    <button onclick="copyTable({safe_db_js})">Copy</button>
+                    <button onclick="downloadTable('{db_id}')">Download TSV</button>
+                    <button onclick="copyTable('{db_id}')">Copy</button>
                 </div>
             </div>'''
             tables_html.append(table_html)
 
         return "\n".join(tables_html)
 
+    def _evidence_row_anchor(
+        self,
+        database: str,
+        row: pd.Series,
+        ai_interpretation: Optional[Dict[str, Any]],
+    ) -> str:
+        """Return the stable HTML row id for code-selected evidence."""
+        if not isinstance(ai_interpretation, dict):
+            return ""
+        evidence = ai_interpretation.get("evidence", {})
+        if not isinstance(evidence, dict):
+            return ""
+        row_id = str(_first_value_for_report(row, ("Term_ID", "ID", "term_id", "pathway"), ""))
+        row_name = str(_first_value_for_report(row, ("Term_Name", "Description", "term_name", "pathway"), ""))
+        for evidence_id, record in evidence.items():
+            if not isinstance(record, dict) or str(record.get("database")) != str(database):
+                continue
+            if row_id and str(record.get("term_id", "")) == row_id:
+                return f' id="evidence-{self._html_id(evidence_id)}"'
+            if row_name and str(record.get("term_name", "")) == row_name:
+                return f' id="evidence-{self._html_id(evidence_id)}"'
+        return ""
+
     @staticmethod
     def _truncate_genes(genes_str: str, max_len: int = 80) -> str:
-        """截断基因列表预览，超出部分用 ... 表示"""
+        """Truncate long gene lists for table display while preserving the full result file."""
         if not genes_str or genes_str == 'nan':
             return ''
         if len(genes_str) > max_len:
             return genes_str[:max_len] + '...'
         return genes_str
 
-    def _collect_gsea_plot_files(self, db_name: str, df: pd.DataFrame, gsea_plot_dir: Path) -> List[Path]:
-        """收集当前数据库已生成的 GSEA 图，按报告展示顺序返回。"""
-        if not gsea_plot_dir.exists():
-            return []
+    def _plot_file_groups(self) -> List[tuple[str, List[Path]]]:
+        """Group alternate plot formats by figure stem."""
+        supported = {'.png', '.jpg', '.jpeg', '.svg', '.pdf'}
+        groups: Dict[str, List[Path]] = {}
+        for path in self.output_dir.rglob('*'):
+            if path.is_file() and path.suffix.lower() in supported:
+                key = path.relative_to(self.output_dir).with_suffix('').as_posix()
+                groups.setdefault(key, []).append(path)
+        return sorted(groups.items())
 
-        ordered_names = [
-            f"{db_name}_nes_barplot.png",
-            f"{db_name}_dotplot.png",
-            f"{db_name}_barplot.png",
-            f"{db_name}_ridgeplot.png",
-            f"{db_name}_emapplot.png",
-            f"{db_name}_cnetplot.png",
-            f"{db_name}_circos.png",
-            f"{db_name}_enrichment2.png",
-            f"{db_name}_heatmap.png",
+    def _plot_identity(
+        self,
+        stem: str,
+        results: Dict[str, pd.DataFrame],
+        analysis_method: Optional[str],
+    ) -> tuple[str, str]:
+        term_names: Dict[str, tuple[str, str, str]] = {}
+        for database, frame in results.items():
+            id_column = next(
+                (column for column in ('Term_ID', 'pathway', 'term_id') if column in frame.columns),
+                None,
+            )
+            if id_column is None:
+                continue
+            for _, row in frame.iterrows():
+                term_id = str(row.get(id_column, '')).strip()
+                term_name = str(row.get('Term_Name', term_id)).strip() or term_id
+                if term_id:
+                    identity = (database, term_name, term_id)
+                    term_names[term_id] = identity
+                    term_names[re.sub(r'[^A-Za-z0-9_.-]+', '_', term_id)] = identity
+
+        for safe_term_id, (database, term_name, term_id) in term_names.items():
+            if stem == f'{safe_term_id}_enrichment':
+                return database, f'{term_name} ({term_id}) - GSEA Enrichment Plot'
+
+        database = next(
+            (name for name in results if stem.casefold().startswith(f'{name}_'.casefold())),
+            next(iter(results), 'Analysis'),
+        )
+        base = stem[len(database) + 1:] if stem.casefold().startswith(f'{database}_'.casefold()) else stem
+        method_label = {
+            'hypergeometric': 'ORA', 'gsea': 'GSEA',
+            'ssgsea': 'ssGSEA', 'gsva': 'GSVA',
+        }.get(analysis_method, 'Enrichment')
+        labels = (
+            ('activity_heatmap', f'{method_label} Pathway Activity Heatmap'),
+            ('sample_correlation', f'{method_label} Sample Correlation'),
+            ('group_comparison', f'{method_label} Group Comparison'),
+            ('enrichment2_up', 'GSEA Multi-pathway Enrichment - Up'),
+            ('enrichment2_down', 'GSEA Multi-pathway Enrichment - Down'),
+            ('lollipop', f'{method_label} Lollipop Plot'),
+            ('emapplot', f'{method_label} Pathway Network'),
+            ('ridgeplot', 'GSEA Ridge Plot'),
+            ('barplot', f'{method_label} Bar Plot'),
+        )
+        title = next((label for token, label in labels if token in base.casefold()), base.replace('_', ' '))
+        return database, title
+
+    def _generate_plot_section(
+        self,
+        results: Dict[str, pd.DataFrame],
+        analysis_method: Optional[str] = None,
+    ) -> str:
+        """Embed every generated figure type with one preview per format group."""
+        groups = self._plot_file_groups()
+        if not groups:
+            return (
+                '<div class="section" id="plots"><h2>Figures</h2>'
+                '<div class="plot-placeholder"><p>No figures were generated.</p></div></div>'
+            )
+
+        by_database: Dict[str, List[str]] = {}
+        priority = {'.png': 0, '.jpg': 1, '.jpeg': 1, '.svg': 2, '.pdf': 3}
+        mime_types = {
+            '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+            '.svg': 'image/svg+xml', '.pdf': 'application/pdf',
+        }
+        for _, files in groups:
+            files = sorted(files, key=lambda path: priority[path.suffix.lower()])
+            preview = files[0]
+            database, title = self._plot_identity(preview.stem, results, analysis_method)
+            encoded = self._encode_image_to_base64(preview)
+            suffix = preview.suffix.lower()
+            title_html = self._html_text(title)
+            if suffix == '.pdf':
+                media = (
+                    f'<object data="data:application/pdf;base64,{encoded}" '
+                    f'type="application/pdf" class="plot-pdf" title="{title_html}">'
+                    f'<p>PDF preview unavailable.</p></object>'
+                )
+            else:
+                media = (
+                    f'<img src="data:{mime_types[suffix]};base64,{encoded}" '
+                    f'alt="{title_html}" class="plot-img">'
+                )
+            format_links = ''.join(
+                f'<a href="{self._html_text(path.relative_to(self.output_dir).as_posix())}" '
+                f'target="_blank" rel="noopener">{path.suffix[1:].upper()}</a>'
+                for path in files
+            )
+            relative = self._html_text(preview.relative_to(self.output_dir).as_posix())
+            card = (
+                '<div class="plot-container">'
+                f'<p class="plot-title">{title_html}</p>{media}'
+                f'<p class="plot-caption">{relative}</p>'
+                f'<div class="plot-formats">{format_links}</div></div>'
+            )
+            by_database.setdefault(database, []).append(card)
+
+        parts = [
+            '<div class="section" id="plots">',
+            f'<h2>Figures <span class="result-count">({len(groups)} plot types)</span></h2>',
         ]
-        files: List[Path] = []
-        seen = set()
-
-        for name in ordered_names:
-            path = gsea_plot_dir / name
-            if path.exists():
-                files.append(path)
-                seen.add(path.resolve())
-
-        term_col = next((c for c in ["Term_ID", "term_id", "ID", "id"] if c in df.columns), None)
-        if term_col:
-            for term_id in df[term_col].head(20):
-                path = gsea_plot_dir / f"{self._safe_plot_stem(term_id)}_enrichment.png"
-                if path.exists() and path.resolve() not in seen:
-                    files.append(path)
-                    seen.add(path.resolve())
-
-        for path in sorted(gsea_plot_dir.glob("*_enrichment.png")):
-            if path.resolve() not in seen:
-                files.append(path)
-                seen.add(path.resolve())
-
-        return files
-
-    @staticmethod
-    def _caption_for_plot(path: Path) -> str:
-        stem = path.stem.lower()
-        captions = [
-            ("nes_barplot", "GSEA signed NES ranking"),
-            ("dotplot", "GSEA pathway summary"),
-            ("barplot", "GSEA top pathway bar plot"),
-            ("ridgeplot", "Running enrichment score distribution"),
-            ("emapplot", "Pathway overlap map"),
-            ("cnetplot", "Pathway-gene network"),
-            ("circos", "Pathway-gene circos overview"),
-            ("enrichment2", "Multi-pathway enrichment trajectories"),
-            ("heatmap", "Expression heatmap for selected genes"),
-            ("enrichment", "Single-pathway enrichment trajectory"),
-        ]
-        for key, caption in captions:
-            if key in stem:
-                return caption
-        return "Generated enrichment plot"
-
-    def _generate_plot_section(self, results: Dict[str, pd.DataFrame]) -> str:
-        """生成图表展示区域 - 使用PNG图片直接嵌入HTML"""
-        plots_html = ['<div class="section" id="plots"><h2>Visualization</h2>']
-
-        has_any_plot = False
-        for db_name, df in results.items():
-            plot_dir = self.output_dir / "plots"
-            gsea_plot_dir = self.output_dir / "gsea_plots"
-
-            # ORA plots
-            barplot_png = plot_dir / f"{db_name}_barplot.png"
-            barplot_pdf = plot_dir / f"{db_name}_barplot.pdf"
-            bubble_png = plot_dir / f"{db_name}_bubble.png"
-            bubble_pdf = plot_dir / f"{db_name}_bubble.pdf"
-
-            gsea_plot_files = self._collect_gsea_plot_files(db_name, df, gsea_plot_dir)
-
-            has_bar = barplot_png.exists() or barplot_pdf.exists()
-            has_bubble = bubble_png.exists() or bubble_pdf.exists()
-
-            if has_bar or has_bubble or gsea_plot_files:
-                has_any_plot = True
-                plots_html.append(f'<div class="plot-group"><h3>{self._escape_text(db_name)}</h3>')
-
-                # ORA barplot
-                if barplot_png.exists():
-                    img_data = self._encode_image_to_base64(barplot_png)
-                    plots_html.append(f'''
-                        <div class="plot-container">
-                            <img src="data:image/png;base64,{img_data}" alt="{self._escape_attr(db_name)} Bar Plot" class="plot-img">
-                            <p class="plot-caption">Bar Plot (Top enriched terms by Q-value)</p>
-                        </div>''')
-                elif barplot_pdf.exists():
-                    plots_html.append(f'<a href="plots/{self._escape_attr(barplot_pdf.name)}" target="_blank" class="plot-link">Bar Plot (PDF)</a>')
-
-                # ORA bubble plot
-                if bubble_png.exists():
-                    img_data = self._encode_image_to_base64(bubble_png)
-                    plots_html.append(f'''
-                        <div class="plot-container">
-                            <img src="data:image/png;base64,{img_data}" alt="{self._escape_attr(db_name)} Bubble Plot" class="plot-img">
-                            <p class="plot-caption">Bubble Plot (Gene count vs Rich factor)</p>
-                        </div>''')
-                elif bubble_pdf.exists():
-                    plots_html.append(f'<a href="plots/{self._escape_attr(bubble_pdf.name)}" target="_blank" class="plot-link">Bubble Plot (PDF)</a>')
-
-                for plot_file in gsea_plot_files:
-                    img_data = self._encode_image_to_base64(plot_file)
-                    if not img_data:
-                        continue
-                    title = plot_file.stem.replace("_", " ")
-                    caption = self._escape_text(self._caption_for_plot(plot_file))
-                    plots_html.append(f'''
-                        <div class="plot-container">
-                            <img src="data:image/png;base64,{img_data}" alt="{self._escape_attr(title)}" class="plot-img">
-                            <p class="plot-caption">{caption}</p>
-                        </div>''')
-
-                plots_html.append('</div>')
-
-        if not has_any_plot:
-            plots_html.append('''
-                <div class="plot-placeholder">
-                    <p>No plots generated. Plots can be created by running the analysis with the
-                    <code>--plot-formats png</code> option or by using the visualization module directly.</p>
-                </div>''')
-
-        plots_html.append('</div>')
-        return "\n".join(plots_html)
+        for database, cards in by_database.items():
+            parts.extend([
+                f'<div class="plot-group"><h3>{self._html_text(database_display_name(database))} Figures</h3>',
+                '<div class="plot-grid">', *cards, '</div></div>',
+            ])
+        parts.append('</div>')
+        return '\n'.join(parts)
 
     def _encode_image_to_base64(self, image_path: Path) -> str:
-        """将图片文件编码为base64字符串"""
+        """Encode an image for embedding in a self-contained HTML report."""
         try:
             with open(image_path, 'rb') as f:
                 return base64.b64encode(f.read()).decode('utf-8')
         except Exception as e:
-            logger.warning(f"图片编码失败: {image_path}, {e}")
+            logger.warning("Failed to embed image %s: %s", image_path, e)
             return ""
 
     def _generate_gsea_plots_section(
@@ -1161,30 +1081,13 @@ class ReportGenerator:
         gene_sets: Dict[str, set] = None,
         plot_types: List[str] = None,
         plot_style: str = 'nature',
-        plot_palette: Optional[str] = None,
+        plot_palette: PaletteLike = None,
     ) -> str:
-        """
-        生成GSEA可视化区域HTML
-
-        调用 gsea_plots 模块生成图表，保存为临时PNG，base64编码嵌入HTML。
-        只为前5个最显著通路生成富集曲线图。
-
-        Args:
-            gsea_results: GSEA分析结果DataFrame，需包含 pathway, nes, pvalue, gene_count 等列
-            ranked_genes: GSEA排序基因列表
-            gene_weights: GSEA基因权重字典
-            gene_sets: GSEA基因集字典 {pathway_name: set_of_genes}
-            plot_types: 要生成的图表类型列表
-            plot_style: 图表风格主题 (nature, science, colorblind, presentation, omicshare)
-            plot_palette: 自定义配色方案名称（可选）
-
-        Returns:
-            str: GSEA可视化区域HTML字符串
-        """
+        """Build the GSEA figure section from recorded analysis inputs."""
         if plot_types is None:
-            plot_types = ["enrichment", "nes_barplot", "dotplot"]
+            plot_types = ["enrichment"]
 
-        # 创建临时目录
+        # Temporary figures are embedded before the directory is removed.
         temp_dir = Path(tempfile.mkdtemp(prefix="gsea_plots_"))
         html_parts = ['<div class="section" id="gsea-plots">',
                        '<h2>GSEA Visualization</h2>',
@@ -1193,7 +1096,7 @@ class ReportGenerator:
         has_any_plot = False
 
         try:
-            # 1. 富集曲线图（前5个最显著通路）
+            # Render at most five leading pathways when running-ES inputs are available.
             if "enrichment" in plot_types and ranked_genes and gene_weights and gene_sets:
                 top_pathways = gsea_results.head(5)
                 for _, row in top_pathways.iterrows():
@@ -1207,9 +1110,10 @@ class ReportGenerator:
                             ranked_genes=ranked_genes,
                             gene_weights=gene_weights,
                             gene_set=gene_sets[pw_name],
-                            es=row.get("es", 0.0),
-                            nes=row.get("nes", 0.0),
-                            pvalue=row.get("pvalue", 1.0),
+                            es=row.get("ES", row.get("es", 0.0)),
+                            nes=row.get("NES", row.get("nes", 0.0)),
+                            pvalue=row.get("pval", row.get("pvalue", 1.0)),
+                            padj=row.get("padj"),
                             title=pw_name,
                             output_file=output_file,
                             dpi=150,
@@ -1227,73 +1131,15 @@ class ReportGenerator:
                                 f'<p class="plot-title">{pw_name}</p>'
                                 f'<img src="data:image/png;base64,{img_data}" '
                                 f'alt="GSEA Enrichment: {pw_name}" class="plot-img">'
-                                f'<p class="plot-caption">NES = {row.get("nes", 0):.2f}, '
-                                f'P-value = {row.get("pvalue", 1):.2e}</p>'
+                                f'<p class="plot-caption">NES = {row.get("NES", row.get("nes", 0)):.2f}, '
+                                f'P-value = {row.get("pval", row.get("pvalue", 1)):.2e}</p>'
                                 f'</div>'
                             )
                     except Exception as e:
-                        logger.warning(f"生成GSEA富集曲线图失败 ({pw_name}): {e}")
-
-            # 2. NES 条形图
-            if "nes_barplot" in plot_types:
-                try:
-                    from allenricher.visualization.gsea_plots import plot_gsea_nes_barplot
-                    output_file = str(temp_dir / "nes_barplot.png")
-                    fig = plot_gsea_nes_barplot(
-                        results_df=gsea_results,
-                        output_file=output_file,
-                        dpi=150,
-                        style=plot_style,
-                        palette=plot_palette,
-                    )
-                    import matplotlib.pyplot as plt
-                    plt.close(fig)
-
-                    img_data = self._encode_image_to_base64(Path(output_file))
-                    if img_data:
-                        has_any_plot = True
-                        html_parts.append(
-                            f'<div class="gsea-plot-container">'
-                            f'<p class="plot-title">NES Ranking</p>'
-                            f'<img src="data:image/png;base64,{img_data}" '
-                            f'alt="GSEA NES Barplot" class="plot-img">'
-                            f'<p class="plot-caption">Normalized Enrichment Score ranking across pathways</p>'
-                            f'</div>'
-                        )
-                except Exception as e:
-                    logger.warning(f"生成GSEA NES条形图失败: {e}")
-
-            # 3. 气泡图
-            if "dotplot" in plot_types:
-                try:
-                    from allenricher.visualization.gsea_plots import plot_gsea_dotplot
-                    output_file = str(temp_dir / "gsea_dotplot.png")
-                    fig = plot_gsea_dotplot(
-                        results_df=gsea_results,
-                        output_file=output_file,
-                        dpi=150,
-                        style=plot_style,
-                        palette=plot_palette,
-                    )
-                    import matplotlib.pyplot as plt
-                    plt.close(fig)
-
-                    img_data = self._encode_image_to_base64(Path(output_file))
-                    if img_data:
-                        has_any_plot = True
-                        html_parts.append(
-                            f'<div class="gsea-plot-container">'
-                            f'<p class="plot-title">GSEA Dot Plot</p>'
-                            f'<img src="data:image/png;base64,{img_data}" '
-                            f'alt="GSEA Dotplot" class="plot-img">'
-                            f'<p class="plot-caption">NES vs gene count, colored by significance</p>'
-                            f'</div>'
-                        )
-                except Exception as e:
-                    logger.warning(f"生成GSEA气泡图失败: {e}")
+                        logger.warning(f"Failed to generate GSEA enrichment plot ({pw_name}): {e}")
 
         finally:
-            # 清理临时目录
+            # Embedded images no longer depend on their temporary files.
             try:
                 shutil.rmtree(temp_dir, ignore_errors=True)
             except Exception:
@@ -1302,7 +1148,7 @@ class ReportGenerator:
         if not has_any_plot:
             html_parts.append(
                 '<div class="plot-placeholder">'
-                '<p>Failed to generate GSEA plots. Check input data format.</p>'
+                '<p>No GSEA figure could be generated from the recorded plotting inputs.</p>'
                 '</div>'
             )
 
@@ -1315,42 +1161,31 @@ class ReportGenerator:
         groups: Dict[str, List[str]] = None,
         plot_types: List[str] = None,
         plot_style: str = 'nature',
-        plot_palette: Optional[str] = None,
+        plot_palette: PaletteLike = None,
+        analysis_method: str = 'gsva',
     ) -> str:
-        """
-        生成ssGSEA/GSVA可视化区域HTML
-
-        调用 gsva_plots 模块生成图表，保存为临时PNG，base64编码嵌入HTML。
-
-        Args:
-            gsva_results: ssGSEA/GSVA活性矩阵，行为通路名，列为样本名
-            groups: 样本分组字典 {group_name: [sample_names]}
-            plot_types: 要生成的图表类型列表
-            plot_style: 图表风格主题 (nature, science, colorblind, presentation, omicshare)
-            plot_palette: 自定义配色方案名称（可选）
-
-        Returns:
-            str: GSVA可视化区域HTML字符串
-        """
+        """Build the ssGSEA or GSVA activity figure section."""
         if plot_types is None:
             plot_types = ["heatmap", "group_comparison", "correlation"]
+        method_label = 'ssGSEA' if analysis_method == 'ssgsea' else 'GSVA'
 
-        # 创建临时目录
+        # Temporary figures are embedded before the directory is removed.
         temp_dir = Path(tempfile.mkdtemp(prefix="gsva_plots_"))
         html_parts = ['<div class="section" id="gsva-plots">',
-                       '<h2>ssGSEA/GSVA Visualization</h2>',
+                       f'<h2>{method_label} Visualization</h2>',
                        '<div class="plot-grid">']
 
         has_any_plot = False
 
         try:
-            # 1. 通路活性热图
+            # Pathway-by-sample activity heatmap.
             if "heatmap" in plot_types:
                 try:
                     from allenricher.visualization.gsva_plots import plot_pathway_heatmap
                     output_file = str(temp_dir / "pathway_heatmap.png")
                     fig = plot_pathway_heatmap(
                         scores_df=gsva_results,
+                        title=f'{method_label} Pathway Activity',
                         output_file=output_file,
                         dpi=150,
                         style=plot_style,
@@ -1364,16 +1199,16 @@ class ReportGenerator:
                         has_any_plot = True
                         html_parts.append(
                             f'<div class="gsva-plot-container">'
-                            f'<p class="plot-title">Pathway Activity Heatmap</p>'
+                            f'<p class="plot-title">{method_label} Pathway Activity</p>'
                             f'<img src="data:image/png;base64,{img_data}" '
                             f'alt="Pathway Heatmap" class="plot-img">'
                             f'<p class="plot-caption">Sample-pathway activity scores with hierarchical clustering</p>'
                             f'</div>'
                         )
                 except Exception as e:
-                    logger.warning(f"生成通路活性热图失败: {e}")
+                    logger.warning("Failed to generate the pathway activity heatmap: %s", e)
 
-            # 2. 组间比较图（需要分组信息）
+            # Group comparison requires at least two recorded sample groups.
             if "group_comparison" in plot_types and groups and len(groups) >= 2:
                 try:
                     from allenricher.visualization.gsva_plots import plot_group_comparison
@@ -1401,9 +1236,9 @@ class ReportGenerator:
                             f'</div>'
                         )
                 except Exception as e:
-                    logger.warning(f"生成组间比较图失败: {e}")
+                    logger.warning("Failed to generate the group comparison figure: %s", e)
 
-            # 3. 样本相关性热图
+            # Sample correlation based on pathway activity profiles.
             if "correlation" in plot_types:
                 try:
                     from allenricher.visualization.gsva_plots import plot_sample_correlation
@@ -1430,10 +1265,10 @@ class ReportGenerator:
                             f'</div>'
                         )
                 except Exception as e:
-                    logger.warning(f"生成样本相关性热图失败: {e}")
+                    logger.warning(f"Failed to generate sample-correlation plot: {e}")
 
         finally:
-            # 清理临时目录
+            # Embedded images no longer depend on their temporary files.
             try:
                 shutil.rmtree(temp_dir, ignore_errors=True)
             except Exception:
@@ -1442,33 +1277,122 @@ class ReportGenerator:
         if not has_any_plot:
             html_parts.append(
                 '<div class="plot-placeholder">'
-                '<p>Failed to generate GSVA plots. Check input data format.</p>'
+                f'<p>No {method_label} figure could be generated from the recorded plotting inputs.</p>'
                 '</div>'
             )
 
         html_parts.append('</div></div>')
         return "\n".join(html_parts)
 
-    def _generate_ai_section(self, ai_interpretation: Dict[str, str]) -> str:
-        """生成AI解读部分"""
+    def _generate_ai_content(self, ai_interpretation: Dict[str, Any] = None) -> str:
+        if ai_interpretation:
+            return self._generate_ai_section(ai_interpretation)
+        error = getattr(self, "_ai_interpretation_error", None)
+        if not error:
+            return ""
+        code = self._html_text(error.get("error_code", "AI_INTERPRETATION_FAILED"))
+        backend = self._html_text(error.get("backend", "unknown"))
+        mode = self._html_text(error.get("mode", "summary"))
+        message = self._html_text(error.get("message", "Unknown AI interpretation error"))
+        return f'''
+        <div class="section" id="ai-interpretation">
+            <h2>AI Interpretation</h2>
+            <div class="ai-error">
+                <strong>AI interpretation unavailable.</strong>
+                The enrichment analysis completed successfully; only the optional AI layer failed.
+                <p><strong>Error code:</strong> {code}<br>
+                <strong>Backend:</strong> {backend}<br>
+                <strong>Profile:</strong> {mode}<br>
+                <strong>Details:</strong> {message}</p>
+            </div>
+        </div>'''
+
+    def _generate_ai_section(self, ai_interpretation: Dict[str, Any]) -> str:
+        """Build the optional AI interpretation section."""
         if not ai_interpretation:
             return ""
 
+        if ai_interpretation.get("schema_version") == 1:
+            def evidence_links(evidence_ids: List[str]) -> str:
+                return " ".join(
+                    f'<a class="ai-evidence-link" href="#evidence-{self._html_id(evidence_id)}">'
+                    f'{self._html_text(evidence_id)}</a>'
+                    for evidence_id in evidence_ids
+                )
+
+            section_labels = {
+                "core_themes": "Core themes",
+                "key_evidence": "Key evidence",
+                "limitations": "Contradictions and limitations",
+                "computational_checks": "Computational checks",
+            }
+            database_blocks = []
+            for database, content in ai_interpretation.get("databases", {}).items():
+                groups = []
+                for section, label in section_labels.items():
+                    items = content.get(section, []) if isinstance(content, dict) else []
+                    entries = []
+                    for item in items:
+                        text = self._html_text(item.get("text", ""))
+                        ids = item.get("evidence_ids", [])
+                        links = evidence_links(ids)
+                        evidence_markup = (
+                            f' <span class="ai-evidence">[{links}]</span>' if links else ""
+                        )
+                        entries.append(
+                            f'<li><span>{text}</span>'
+                            f'{evidence_markup}</li>'
+                        )
+                    if not entries:
+                        entries.append('<li class="ai-empty">None recorded.</li>')
+                    groups.append(
+                        f'<div class="ai-subsection"><h4>{label}</h4><ul>{"".join(entries)}</ul></div>'
+                    )
+                database_blocks.append(
+                    f'<div class="ai-block"><h3>{self._html_text(database_display_name(database))}</h3>'
+                    f'{"".join(groups)}</div>'
+                )
+            mode = self._html_text(ai_interpretation.get("profile", "summary"))
+            backend_labels = {
+                "openai": "OpenAI",
+                "claude": "Claude",
+                "deepseek": "DeepSeek",
+                "glm": "GLM",
+                "minimax": "MiniMax",
+                "ollama": "Ollama",
+                "mock": "Mock",
+            }
+            backend_value = str(ai_interpretation.get("backend", "unknown"))
+            backend = self._html_text(
+                backend_labels.get(backend_value.lower(), backend_value)
+            )
+            return f'''
+        <div class="section" id="ai-interpretation">
+            <h2>AI Interpretation <span class="ai-note">(Model: {backend} | Profile: {mode}; requires expert review)</span></h2>
+            {"".join(database_blocks)}
+            <div class="ai-disclaimer">
+                <strong>Important:</strong> AI text is restricted to the linked evidence and must be checked against the source tables before use.
+            </div>
+        </div>'''
+
         interpretations = []
         for db_name, interpretation in ai_interpretation.items():
-            # 将 Markdown 格式转换为 HTML：\n 转为 <br>，**bold** 转为 <strong>bold</strong>
-            html_text = interpretation.replace('\n', '<br>')
-            import re
-            # 使用正则替换成对的 ** 为 <strong>...</strong>
+            if not isinstance(interpretation, str):
+                continue
+            # Escape model output before supporting line breaks and bold Markdown.
+            html_text = escape(str(interpretation), quote=False).replace('\n', '<br>')
             html_text = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', html_text)
-            interpretations.append(f'<div class="ai-block"><h3>{db_name}</h3><p>{html_text}</p></div>')
+            interpretations.append(
+                f'<div class="ai-block"><h3>{self._html_text(database_display_name(db_name))}</h3>'
+                f'<p>{html_text}</p></div>'
+            )
 
         html = f'''
         <div class="section" id="ai-interpretation">
-            <h2>AI Interpretation <span class="ai-note">(Review recommended)</span></h2>
+            <h2>AI Interpretation <span class="ai-note">(Requires expert review)</span></h2>
             {"".join(interpretations)}
             <div class="ai-disclaimer">
-                <strong>Disclaimer:</strong> This AI-generated interpretation is for reference only and should be reviewed by domain experts. Verify all biological conclusions with literature.
+                <strong>Important:</strong> This text was generated from the displayed enrichment tables. It may contain errors and must be checked against the source results, the study design, and verified literature before use.
             </div>
         </div>'''
         return html
@@ -1479,7 +1403,7 @@ class ReportGenerator:
                     gsva_plots_html: str = "",
                     analysis_method: str = None,
                     metadata: dict = None) -> str:
-        """构建完整HTML文档"""
+        """Assemble the complete self-contained HTML document."""
 
         _version = allenricher.__version__
         _db_ver = metadata.get("database_version", "") if metadata else ""
@@ -1487,27 +1411,36 @@ class ReportGenerator:
         if _db_ver:
             _version_str += f" | DB: {_db_ver}"
 
-        # 根据 analysis_method 确定报告标题
+        # Match the report title to the method that actually ran.
         _title_map = {
-            'ssgsea': 'ssGSEA Enrichment Analysis Report',
-            'gsva': 'GSVA Enrichment Analysis Report',
+            'hypergeometric': 'ORA Enrichment Analysis Report',
+            'ssgsea': 'ssGSEA Pathway Activity Report',
+            'gsva': 'GSVA Pathway Activity Report',
             'gsea': 'GSEA Enrichment Analysis Report',
         }
         _report_title = _title_map.get(analysis_method, 'Enrichment Analysis Report')
+        methods_reference_html = render_methods_reference_html(metadata)
 
         nav_items = '<li><a href="#summary">Summary</a></li>'
-        nav_items += '<li><a href="#plots">Plots</a></li>'
-        # GSEA/GSVA 导航链接
+        nav_items += '<li><a href="#methods-reference">Materials and Methods</a></li>'
+        if plots:
+            nav_items += '<li><a href="#plots">Figures</a></li>'
+        # Add method-specific figure links only when those sections exist.
         if gsea_plots_html:
-            nav_items += '<li><a href="#gsea-plots">GSEA</a></li>'
+            nav_items += '<li><a href="#gsea-plots">GSEA Figures</a></li>'
         if gsva_plots_html:
-            nav_items += '<li><a href="#gsva-plots">GSVA</a></li>'
+            activity_label = 'ssGSEA' if analysis_method == 'ssgsea' else 'GSVA'
+            nav_items += f'<li><a href="#gsva-plots">{activity_label} Figures</a></li>'
         if db_names:
-            nav_items += ''.join([f'<li><a href="#{db}-table">{db}</a></li>' for db in db_names])
+            nav_items += ''.join(
+                f'<li><a href="#{self._html_id(db)}-table">'
+                f'{self._html_text(database_display_name(db))} Results</a></li>'
+                for db in db_names
+            )
         if ai_section:
-            nav_items += '<li><a href="#ai-interpretation">AI</a></li>'
+            nav_items += '<li><a href="#ai-interpretation">AI Interpretation</a></li>'
 
-        # 在 plots section 之后、tables section 之前插入 GSEA/GSVA 可视化区域
+        # Keep method-specific figures together before the result tables.
         gsea_gsva_sections = ""
         if gsea_plots_html:
             gsea_gsva_sections += gsea_plots_html
@@ -1520,7 +1453,6 @@ class ReportGenerator:
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AllEnricher v{_version} - {_report_title}</title>
-    <link href="https://fonts.googleapis.com/css2?family=Noto+Serif:wght@400;600&family=Source+Sans+Pro:wght@400;600&display=swap" rel="stylesheet">
     <style>
         :root {{
             --text-primary: #1a1a1a;
@@ -1536,7 +1468,7 @@ class ReportGenerator:
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
 
         body {{
-            font-family: 'Source Sans Pro', -apple-system, BlinkMacSystemFont, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
             font-size: 14px;
             line-height: 1.6;
             color: var(--text-primary);
@@ -1553,21 +1485,21 @@ class ReportGenerator:
         .header-content {{
             max-width: 1200px;
             margin: 0 auto;
-            display: flex;
-            justify-content: space-between;
-            align-items: baseline;
+            display: block;
         }}
 
         .header h1 {{
-            font-family: 'Noto Serif', Georgia, serif;
+            font-family: Georgia, 'Times New Roman', serif;
             font-size: 1.25rem;
             font-weight: 600;
             color: var(--text-primary);
         }}
 
         .header .meta {{
+            display: block;
             font-size: 0.8rem;
             color: var(--text-muted);
+            margin-top: 0.35rem;
         }}
 
         /* Navigation */
@@ -1620,7 +1552,7 @@ class ReportGenerator:
         }}
 
         .section h2 {{
-            font-family: 'Noto Serif', Georgia, serif;
+            font-family: Georgia, 'Times New Roman', serif;
             font-size: 1.1rem;
             font-weight: 600;
             color: var(--text-primary);
@@ -1631,11 +1563,31 @@ class ReportGenerator:
 
         .section h2 .result-count,
         .section h2 .ai-note {{
-            font-family: 'Source Sans Pro', sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
             font-weight: 400;
             font-size: 0.875rem;
             color: var(--text-muted);
         }}
+
+        .methods-reference h3 {{
+            font-size: 0.95rem;
+            margin: 1rem 0 0.5rem;
+            color: var(--text-secondary);
+        }}
+
+        .methods-prose p {{
+            margin-bottom: 0.75rem;
+            color: var(--text-secondary);
+        }}
+
+        .methods-references {{
+            margin-left: 1.25rem;
+            color: var(--text-secondary);
+        }}
+
+        .methods-references li {{ margin-bottom: 0.55rem; }}
+
+        .methods-reference a {{ color: var(--accent-color); }}
 
         /* Summary Grid */
         .summary-grid {{
@@ -1772,7 +1724,7 @@ class ReportGenerator:
             text-decoration: underline;
         }}
 
-        /* Plot Images - PNG嵌入样式 */
+        /* Prot Images - PNG Embedded Styles
         .plot-container {{
             margin: 1rem 0;
             padding: 1rem;
@@ -1785,9 +1737,27 @@ class ReportGenerator:
         .plot-img {{
             max-width: 100%;
             height: auto;
-            max-height: 600px;
             border: 1px solid var(--border-color);
             background: white;
+        }}
+
+        .plot-pdf {{
+            width: 100%;
+            min-height: 700px;
+            border: 1px solid var(--border-color);
+            background: white;
+        }}
+
+        .plot-formats {{
+            display: flex;
+            justify-content: center;
+            gap: 0.75rem;
+            margin-top: 0.35rem;
+            font-size: 0.8rem;
+        }}
+
+        .plot-formats a {{
+            color: var(--accent-color);
         }}
 
         .plot-caption {{
@@ -1811,6 +1781,17 @@ class ReportGenerator:
             color: var(--text-secondary);
             margin-bottom: 0.5rem;
         }}
+
+        .ai-subsection {{ margin-top: 0.75rem; }}
+        .ai-subsection h4 {{
+            font-size: 0.82rem;
+            color: var(--text-secondary);
+            margin-bottom: 0.25rem;
+        }}
+        .ai-subsection ul {{ margin: 0 0 0 1.1rem; color: var(--text-secondary); }}
+        .ai-subsection li {{ margin: 0.25rem 0; line-height: 1.55; }}
+        .ai-evidence-link {{ color: var(--accent-color); white-space: nowrap; }}
+        .ai-empty {{ color: var(--text-muted); font-style: italic; }}
 
         .ai-block p {{
             font-size: 0.875rem;
@@ -1841,6 +1822,12 @@ class ReportGenerator:
         .footer a {{
             color: var(--accent-color);
             text-decoration: none;
+        }}
+
+        .footer .citation {{
+            max-width: 900px;
+            margin: 0.4rem auto 0;
+            line-height: 1.5;
         }}
 
         /* Table Controls */
@@ -2026,12 +2013,12 @@ class ReportGenerator:
 
         .plot-grid {{
             display: grid;
-            grid-template-columns: repeat(2, 1fr);
+            grid-template-columns: minmax(0, 1fr);
             gap: 1.5rem;
         }}
 
         .plot-title {{
-            font-family: 'Noto Serif', Georgia, serif;
+            font-family: Georgia, 'Times New Roman', serif;
             font-size: 0.95rem;
             font-weight: 600;
             color: var(--text-primary);
@@ -2053,6 +2040,7 @@ class ReportGenerator:
 
     <main class="main">
         {summary}
+        {methods_reference_html}
         {plots}
         {gsea_gsva_sections}
         {tables}
@@ -2060,7 +2048,8 @@ class ReportGenerator:
     </main>
 
     <footer class="footer">
-        <p>Generated by <a href="https://github.com/zd105/AllEnricher">AllEnricher v{_version}</a></p>
+        <p>Generated by <a href="https://github.com/zhangducsu/AllEnricher-v2" target="_blank" rel="noopener noreferrer">AllEnricher v{_version}</a></p>
+        <p class="citation"><strong>Citation:</strong> <cite>Zhang D, Hu Q, Liu X, et al. AllEnricher: a comprehensive gene set function enrichment tool for both model and non-model species. BMC Bioinformatics. 2020;21:106.</cite></p>
     </footer>
 
     {self._TABLE_JS}

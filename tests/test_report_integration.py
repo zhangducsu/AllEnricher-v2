@@ -1,25 +1,26 @@
 """
-报告生成器集成测试 - GSEA/GSVA 可视化嵌入
+Report Generator Integration Test - GSEA/GSVA Visualize embedding
 ===========================================
 
-测试 ReportGenerator 的 GSEA/GSVA 可视化嵌入功能：
-- 新增参数不破坏现有功能（向后兼容）
-- GSEA 结果嵌入报告
-- GSVA 结果嵌入报告
-- 无 GSEA/GSVA 结果时报告正常生成
-- 报告 HTML 包含 base64 图片标签
-- plot_types 过滤功能
+Test ReportGenerator The... GSEA/GSVA Visualize embedded functionality: 
+- Add parameters without compromising existing functionality (Recompatible)
+- GSEA The result embedded in the report
+- GSVA The result embedded in the report
+- None GSEA/GSVA Report normal production at the end of the process
+- Report HTML Organisation base64 Picture Tab
+- plot_types Filter
 """
 
 import sys
 import os
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
 
 import pytest
 import pandas as pd
 
-# 确保项目根目录在 sys.path 中
+# Ensure that root directory in sys.path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from allenricher.report.generator import ReportGenerator
@@ -31,13 +32,13 @@ from allenricher.report.generator import ReportGenerator
 
 @pytest.fixture
 def output_dir(tmp_path):
-    """创建临时输出目录"""
+    """Create temporary output directory"""
     return str(tmp_path / "report_output")
 
 
 @pytest.fixture
 def sample_results():
-    """创建示例富集结果"""
+    """Create example rich result"""
     results = {
         "GO": pd.DataFrame({
             "Term_ID": ["GO:0005576", "GO:0005737"],
@@ -65,7 +66,7 @@ def sample_results():
 
 @pytest.fixture
 def gsea_results_df():
-    """创建示例 GSEA 分析结果"""
+    """Create Example GSEA Analysis"""
     return pd.DataFrame({
         "pathway": ["HSA_Cell_Cycle", "HSA_Apoptosis", "HSA_PI3K_AKT", "HSA_MAPK"],
         "nes": [2.5, -1.8, 1.5, -2.1],
@@ -77,7 +78,7 @@ def gsea_results_df():
 
 @pytest.fixture
 def gsva_results_df():
-    """创建示例 ssGSEA/GSVA 活性矩阵"""
+    """Create Example ssGSEA/GSVAActive matrix"""
     return pd.DataFrame({
         "Normal_1": [0.1, 0.2, 0.8, 0.3, 0.5],
         "Normal_2": [0.15, 0.25, 0.7, 0.35, 0.45],
@@ -90,7 +91,7 @@ def gsva_results_df():
 
 @pytest.fixture
 def gsva_groups():
-    """创建示例分组"""
+    """Create Example Group"""
     return {
         "Normal": ["Normal_1", "Normal_2", "Normal_3"],
         "Disease": ["Disease_1", "Disease_2", "Disease_3"],
@@ -99,45 +100,34 @@ def gsva_groups():
 
 @pytest.fixture
 def ranked_genes():
-    """创建示例排序基因列表"""
+    """Create a list of genes for example sorting"""
     return ["GENE001", "GENE002", "GENE003", "GENE004", "GENE005"]
 
 
 @pytest.fixture
 def gene_weights():
-    """创建示例基因权重"""
+    """Create an example of gene weight"""
     return {"GENE001": 5.0, "GENE002": 4.0, "GENE003": 3.0, "GENE004": 2.0, "GENE005": 1.0}
 
 
 @pytest.fixture
 def gene_sets():
-    """创建示例基因集"""
+    """Create an example gene set"""
     return {
         "HSA_Cell_Cycle": {"GENE001", "GENE002", "GENE003"},
         "HSA_Apoptosis": {"GENE002", "GENE004"},
     }
 
 
-def _write_minimal_png(path):
-    """写入一个最小 PNG 文件，用于报告嵌入测试。"""
-    path.write_bytes(
-        b"\x89PNG\r\n\x1a\n"
-        b"\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
-        b"\x08\x06\x00\x00\x00\x1f\x15\xc4\x89"
-        b"\x00\x00\x00\nIDATx\x9cc`\x00\x00\x00\x02\x00\x01"
-        b"\xe2!\xbc3\x00\x00\x00\x00IEND\xaeB`\x82"
-    )
-
-
 # ===========================================================================
-# 1. 向后兼容测试
+# 1. Retrocompatibility tests
 # ===========================================================================
 
 class TestBackwardCompatibility:
-    """测试新增参数不破坏现有功能"""
+    """Test for additional parameters without destroying existing functionality"""
 
     def test_generate_without_new_params(self, output_dir, sample_results, tmp_path):
-        """不传新增参数时，generate 方法应正常工作"""
+        """The generate method should work normally without sending additional parameters"""
         gen = ReportGenerator(output_dir)
         output_file = str(tmp_path / "report.html")
         gene_list = ["TP53", "BRCA1", "EGFR"]
@@ -154,12 +144,17 @@ class TestBackwardCompatibility:
         assert "AllEnricher" in html
         assert "GO" in html
         assert "KEGG" in html
-        # 不应包含 GSEA/GSVA 区域
+        assert 'href="https://github.com/zhangducsu/AllEnricher-v2"' in html
+        assert "BMC Bioinformatics. 2020;21:106." in html
+        # Should not contain GSEA/GSVARegional
         assert "gsea-plots" not in html
         assert "gsva-plots" not in html
+        assert ".header-content" in html
+        assert ".header .meta" in html
+        assert "display: block" in html
 
     def test_generate_no_results_backward_compat(self, output_dir, tmp_path):
-        """无结果时向后兼容"""
+        """Compatibility with no result"""
         gen = ReportGenerator(output_dir)
         output_file = str(tmp_path / "report.html")
 
@@ -172,9 +167,70 @@ class TestBackwardCompatibility:
         with open(result, 'r', encoding='utf-8') as f:
             html = f.read()
         assert "AllEnricher" in html
+        assert 'href="https://github.com/zhangducsu/AllEnricher-v2"' in html
+        assert "BMC Bioinformatics. 2020;21:106." in html
+        assert "Materials and Methods Writing Reference" in html
+
+    @pytest.mark.parametrize(
+        "method, method_text",
+        [
+            ("hypergeometric", "over-representation analysis (ORA)"),
+            ("gsea", "gene set enrichment analysis (GSEA)"),
+            ("ssgsea", "single-sample gene set enrichment analysis (ssGSEA)"),
+            ("gsva", "gene set variation analysis (GSVA)"),
+        ],
+    )
+    def test_methods_reference_is_embedded_for_each_analysis_method(
+        self, output_dir, tmp_path, method, method_text
+    ):
+        results = {
+            "GO": pd.DataFrame(
+                {
+                    "Term_ID": ["GO:0001"],
+                    "Term_Name": ["Example pathway"],
+                    "P_Value": [0.01],
+                    "Adjusted_P_Value": [0.02],
+                    "Sample_1": [0.4],
+                }
+            )
+        }
+        metadata = {
+            "allenricher_version": "2.1-test",
+            "analysis_method": method,
+            "species": "hsa",
+            "databases": ["GO"],
+            "parameters": {"ssgsea_tau": 0.25},
+        }
+        output_file = tmp_path / f"{method}_methods_report.html"
+
+        ReportGenerator(output_dir).generate(
+            results,
+            str(output_file),
+            analysis_method=method,
+            metadata=metadata,
+            pvalue_cutoff=1.0,
+            qvalue_cutoff=1.0,
+        )
+
+        html = output_file.read_text(encoding="utf-8")
+        assert "Materials and Methods Writing Reference" in html
+        assert "AllEnricher version 2.1-test" in html
+        assert method_text in html
+
+    def test_tf_report_template_links_repository_and_shows_citation(self):
+        template = (
+            Path(__file__).parent.parent
+            / "allenricher"
+            / "report"
+            / "templates"
+            / "tf_report.html"
+        ).read_text(encoding="utf-8")
+
+        assert 'href="https://github.com/zhangducsu/AllEnricher-v2"' in template
+        assert "BMC Bioinformatics. 2020;21:106." in template
 
     def test_generate_all_filtered_out_backward_compat(self, output_dir, tmp_path):
-        """所有结果被过滤掉时向后兼容"""
+        """All results are filtered back in compatibility."""
         gen = ReportGenerator(output_dir)
         output_file = str(tmp_path / "report.html")
 
@@ -201,24 +257,16 @@ class TestBackwardCompatibility:
 
 
 # ===========================================================================
-# 2. GSEA 结果嵌入测试
+# 2. GSEA results embedded testing
 # ===========================================================================
 
 class TestGSEAIntegration:
-    """测试 GSEA 结果嵌入报告"""
+    """Test GSEA results embedded in report"""
 
-    @patch("allenricher.visualization.gsea_plots.plot_gsea_nes_barplot")
-    @patch("allenricher.visualization.gsea_plots.plot_gsea_dotplot")
     def test_gsea_results_embedded_in_report(
-        self, mock_dotplot, mock_barplot, output_dir, sample_results,
-        gsea_results_df, tmp_path
+        self, output_dir, sample_results, gsea_results_df, tmp_path
     ):
-        """GSEA 结果应正确嵌入到 HTML 报告中"""
-        # 模拟图表生成返回 Figure 对象
-        mock_fig = MagicMock()
-        mock_barplot.return_value = mock_fig
-        mock_dotplot.return_value = mock_fig
-
+        """GSEA results should be correctly embedded in HTML reports"""
         gen = ReportGenerator(output_dir)
         output_file = str(tmp_path / "report_gsea.html")
 
@@ -227,32 +275,28 @@ class TestGSEAIntegration:
             output_file=output_file,
             gene_list=["TP53"],
             gsea_results=gsea_results_df,
-            plot_types=["nes_barplot", "dotplot"],  # 排除 enrichment（需要更多参数）
+            plot_types=["enrichment"],
         )
 
         assert os.path.exists(result)
         with open(result, 'r', encoding='utf-8') as f:
             html = f.read()
 
-        # 验证 GSEA 区域存在
+        # Verify GSEA Area Exists
         assert "gsea-plots" in html
         assert "GSEA Visualization" in html
-        # 验证导航栏包含 GSEA 链接
+        # Verify that the navigation bar contains GSEA links
         assert 'href="#gsea-plots"' in html
 
     @patch("allenricher.visualization.gsea_plots.plot_gsea_enrichment")
-    @patch("allenricher.visualization.gsea_plots.plot_gsea_nes_barplot")
-    @patch("allenricher.visualization.gsea_plots.plot_gsea_dotplot")
     def test_gsea_enrichment_plots(
-        self, mock_dotplot, mock_barplot, mock_enrichment,
+        self, mock_enrichment,
         output_dir, sample_results, gsea_results_df,
         ranked_genes, gene_weights, gene_sets, tmp_path
     ):
-        """测试富集曲线图生成"""
+        """Test a curved image generation"""
         mock_fig = MagicMock()
         mock_enrichment.return_value = mock_fig
-        mock_barplot.return_value = mock_fig
-        mock_dotplot.return_value = mock_fig
 
         gen = ReportGenerator(output_dir)
         output_file = str(tmp_path / "report_gsea_full.html")
@@ -271,58 +315,15 @@ class TestGSEAIntegration:
         with open(result, 'r', encoding='utf-8') as f:
             html = f.read()
 
-        # 验证 enrichment 图表被调用（仅对 gene_sets 中存在的通路）
+        # Verify that the enrichment chart is called (for the access that exists in the gene_sets only)
         assert mock_enrichment.called
 
-    @patch("allenricher.visualization.gsea_plots.plot_gsea_nes_barplot")
-    @patch("allenricher.visualization.gsea_plots.plot_gsea_dotplot")
-    def test_gsea_base64_images(
-        self, mock_dotplot, mock_barplot, output_dir, sample_results,
-        gsea_results_df, tmp_path
-    ):
-        """报告应包含 base64 编码的图片"""
-        import matplotlib
-        matplotlib.use('Agg')
-        import matplotlib.pyplot as plt
-
-        def create_and_save_fig(*args, **kwargs):
-            fig, ax = plt.subplots(figsize=(6, 4))
-            ax.barh([0, 1], [1, 2])
-            # 模拟 _save_figure 行为：如果传了 output_file 就保存
-            output_file = kwargs.get("output_file")
-            if output_file:
-                fig.savefig(output_file, dpi=150, bbox_inches="tight")
-            return fig
-
-        mock_barplot.side_effect = create_and_save_fig
-        mock_dotplot.side_effect = create_and_save_fig
-
-        gen = ReportGenerator(output_dir)
-        output_file = str(tmp_path / "report_gsea_b64.html")
-
-        result = gen.generate(
-            results=sample_results,
-            output_file=output_file,
-            gsea_results=gsea_results_df,
-            plot_types=["nes_barplot", "dotplot"],
-        )
-
-        assert os.path.exists(result)
-        with open(result, 'r', encoding='utf-8') as f:
-            html = f.read()
-
-        # 验证包含 base64 图片标签
-        assert "data:image/png;base64," in html
-
-        plt.close("all")
-
-
 # ===========================================================================
-# 3. GSVA 结果嵌入测试
+# 3. GSVA Results embedded for testing
 # ===========================================================================
 
 class TestGSVAIntegration:
-    """测试 GSVA 结果嵌入报告"""
+    """Test GSVA Results embedded in report"""
 
     @patch("allenricher.visualization.gsva_plots.plot_sample_correlation")
     @patch("allenricher.visualization.gsva_plots.plot_pathway_heatmap")
@@ -330,7 +331,7 @@ class TestGSVAIntegration:
         self, mock_heatmap, mock_corr, output_dir, sample_results,
         gsva_results_df, tmp_path
     ):
-        """GSVA 结果应正确嵌入到 HTML 报告中"""
+        """GSVA results should be correctly embedded in HTML reports"""
         mock_fig = MagicMock()
         mock_heatmap.return_value = mock_fig
         mock_corr.return_value = mock_fig
@@ -343,17 +344,19 @@ class TestGSVAIntegration:
             output_file=output_file,
             gene_list=["TP53"],
             gsva_results=gsva_results_df,
-            plot_types=["heatmap", "correlation"],  # 排除 group_comparison
+            analysis_method="gsva",
+            plot_types=["heatmap", "correlation"],  # Exclude group_comparison
         )
 
         assert os.path.exists(result)
         with open(result, 'r', encoding='utf-8') as f:
             html = f.read()
 
-        # 验证 GSVA 区域存在
+        # Verify GSVA Area Exists
         assert "gsva-plots" in html
-        assert "ssGSEA/GSVA Visualization" in html
-        # 验证导航栏包含 GSVA 链接
+        assert "GSVA Visualization" in html
+        assert mock_heatmap.call_args.kwargs["title"] == "GSVA Pathway Activity"
+        # Validation Navigation Bar contains GSVA links
         assert 'href="#gsva-plots"' in html
 
     @patch("allenricher.visualization.gsva_plots.plot_group_comparison")
@@ -363,7 +366,7 @@ class TestGSVAIntegration:
         self, mock_heatmap, mock_corr, mock_group,
         output_dir, sample_results, gsva_results_df, gsva_groups, tmp_path
     ):
-        """测试带分组的 GSVA 可视化"""
+        """Test GSVA visualization with grouping"""
         mock_fig = MagicMock()
         mock_heatmap.return_value = mock_fig
         mock_corr.return_value = mock_fig
@@ -384,7 +387,7 @@ class TestGSVAIntegration:
         with open(result, 'r', encoding='utf-8') as f:
             html = f.read()
 
-        # group_comparison 应被调用（有分组信息）
+        # Group_comparison should be called (group information available)
         assert mock_group.called
 
     @patch("allenricher.visualization.gsva_plots.plot_sample_correlation")
@@ -393,7 +396,7 @@ class TestGSVAIntegration:
         self, mock_heatmap, mock_corr, output_dir, sample_results,
         gsva_results_df, tmp_path
     ):
-        """GSVA 报告应包含 base64 编码的图片"""
+        """GSVA report should contain picture of base64 code"""
         import matplotlib
         matplotlib.use('Agg')
         import matplotlib.pyplot as plt
@@ -401,7 +404,7 @@ class TestGSVAIntegration:
         def create_and_save_fig(*args, **kwargs):
             fig, ax = plt.subplots(figsize=(6, 4))
             ax.imshow([[1, 2], [3, 4]])
-            # 模拟保存行为：如果传了 output_file 就保存
+            # Simulate saving behaviour: Save if output_file
             output_file = kwargs.get("output_file")
             if output_file:
                 fig.savefig(output_file, dpi=150, bbox_inches="tight", facecolor="white")
@@ -430,14 +433,14 @@ class TestGSVAIntegration:
 
 
 # ===========================================================================
-# 4. 无 GSEA/GSVA 结果测试
+# 4. N/A GSEA/GSVAResults test
 # ===========================================================================
 
 class TestNoGseaGsvaResults:
-    """测试无 GSEA/GSVA 结果时报告正常生成"""
+    """Report normal generation when no GSEA/GSVA results are tested"""
 
     def test_no_gsea_gsva_params(self, output_dir, sample_results, tmp_path):
-        """不传 GSEA/GSVA 参数时报告应正常生成"""
+        """No GSEA/GSVAReport when parameters should be generated properly"""
         gen = ReportGenerator(output_dir)
         output_file = str(tmp_path / "report_no_extra.html")
 
@@ -456,7 +459,7 @@ class TestNoGseaGsvaResults:
         assert "GO" in html
 
     def test_none_gsea_results(self, output_dir, sample_results, tmp_path):
-        """gsea_results=None 时报告应正常生成"""
+        """Report should be generated normally when gsea_reults=Noone"""
         gen = ReportGenerator(output_dir)
         output_file = str(tmp_path / "report_none_gsea.html")
 
@@ -475,7 +478,7 @@ class TestNoGseaGsvaResults:
         assert "gsva-plots" not in html
 
     def test_empty_gsea_results(self, output_dir, sample_results, tmp_path):
-        """gsea_results 为空 DataFrame 时报告应正常生成"""
+        """The report should be generated normally when gsea_reults are empty"""
         gen = ReportGenerator(output_dir)
         output_file = str(tmp_path / "report_empty_gsea.html")
 
@@ -495,86 +498,20 @@ class TestNoGseaGsvaResults:
 
 
 # ===========================================================================
-# 5. 已生成 GSEA R 图嵌入测试
-# ===========================================================================
-
-class TestGeneratedGseaPlotEmbedding:
-    """测试已生成的 GSEA R 图会进入主报告 Visualization 区域"""
-
-    def test_generated_r_gsea_plots_are_embedded(self, output_dir):
-        gen = ReportGenerator(output_dir)
-        gsea_plot_dir = Path(output_dir) / "gsea_plots"
-        gsea_plot_dir.mkdir(parents=True, exist_ok=True)
-
-        plot_names = [
-            "KEGG_nes_barplot.png",
-            "KEGG_dotplot.png",
-            "KEGG_barplot.png",
-            "KEGG_ridgeplot.png",
-            "KEGG_emapplot.png",
-            "KEGG_cnetplot.png",
-            "KEGG_circos.png",
-            "KEGG_enrichment2.png",
-            "KEGG_heatmap.png",
-            "hsa04110_enrichment.png",
-        ]
-        for plot_name in plot_names:
-            _write_minimal_png(gsea_plot_dir / plot_name)
-
-        results = {
-            "KEGG": pd.DataFrame({
-                "Term_ID": ["hsa04110"],
-                "Term_Name": ["Cell cycle"],
-                "NES": [2.1],
-                "ES": [0.7],
-                "P_Value": [0.001],
-                "Adjusted_P_Value": [0.01],
-                "Set_Size": [32],
-                "Lead_genes": ["CDK1;CCNB1"],
-                "matched_genes": ["CDK1;CCNB1;CDC20"],
-            })
-        }
-
-        html = gen._generate_plot_section(results)
-
-        assert html.count("data:image/png;base64,") == len(plot_names)
-        for caption in [
-            "GSEA signed NES ranking",
-            "GSEA pathway summary",
-            "GSEA top pathway bar plot",
-            "Running enrichment score distribution",
-            "Pathway overlap map",
-            "Pathway-gene network",
-            "Pathway-gene circos overview",
-            "Multi-pathway enrichment trajectories",
-            "Expression heatmap for selected genes",
-            "Single-pathway enrichment trajectory",
-        ]:
-            assert caption in html
-
-
-# ===========================================================================
-# 6. plot_types 过滤测试
+# 5. Plot_types filtering test
 # ===========================================================================
 
 class TestPlotTypesFilter:
-    """测试 plot_types 过滤功能"""
+    """Tests for filters"""
 
-    @patch("allenricher.visualization.gsea_plots.plot_gsea_nes_barplot")
-    @patch("allenricher.visualization.gsea_plots.plot_gsea_dotplot")
-    def test_gsea_plot_types_filter(
-        self, mock_dotplot, mock_barplot, output_dir, sample_results,
-        gsea_results_df, tmp_path
+    def test_retired_gsea_plot_type_is_ignored(
+        self, output_dir, sample_results, gsea_results_df, tmp_path
     ):
-        """只生成指定的图表类型"""
-        mock_fig = MagicMock()
-        mock_barplot.return_value = mock_fig
-        mock_dotplot.return_value = mock_fig
-
+        """The NES barplot that is retired should no longer be called by the report generator."""
         gen = ReportGenerator(output_dir)
         output_file = str(tmp_path / "report_filter.html")
 
-        # 只请求 nes_barplot，不请求 dotplot
+        # The old configuration is still readable but does not generate decommissioned charts.
         result = gen.generate(
             results=sample_results,
             output_file=output_file,
@@ -583,8 +520,6 @@ class TestPlotTypesFilter:
         )
 
         assert os.path.exists(result)
-        mock_barplot.assert_called_once()
-        mock_dotplot.assert_not_called()
 
     @patch("allenricher.visualization.gsva_plots.plot_sample_correlation")
     @patch("allenricher.visualization.gsva_plots.plot_pathway_heatmap")
@@ -592,7 +527,7 @@ class TestPlotTypesFilter:
         self, mock_heatmap, mock_corr, output_dir, sample_results,
         gsva_results_df, tmp_path
     ):
-        """只生成指定的 GSVA 图表类型"""
+        """Generate only the specified GSVA chart type"""
         mock_fig = MagicMock()
         mock_heatmap.return_value = mock_fig
         mock_corr.return_value = mock_fig
@@ -600,7 +535,7 @@ class TestPlotTypesFilter:
         gen = ReportGenerator(output_dir)
         output_file = str(tmp_path / "report_gsva_filter.html")
 
-        # 只请求 correlation，不请求 heatmap
+        # Request only claretation, not headmap
         result = gen.generate(
             results=sample_results,
             output_file=output_file,
@@ -612,17 +547,10 @@ class TestPlotTypesFilter:
         mock_corr.assert_called_once()
         mock_heatmap.assert_not_called()
 
-    @patch("allenricher.visualization.gsea_plots.plot_gsea_nes_barplot")
-    @patch("allenricher.visualization.gsea_plots.plot_gsea_dotplot")
     def test_default_plot_types(
-        self, mock_dotplot, mock_barplot, output_dir, sample_results,
-        gsea_results_df, tmp_path
+        self, output_dir, sample_results, gsea_results_df, tmp_path
     ):
-        """不指定 plot_types 时应使用默认值"""
-        mock_fig = MagicMock()
-        mock_barplot.return_value = mock_fig
-        mock_dotplot.return_value = mock_fig
-
+        """Default values should be used when not specifying plot_types"""
         gen = ReportGenerator(output_dir)
         output_file = str(tmp_path / "report_default_types.html")
 
@@ -630,34 +558,27 @@ class TestPlotTypesFilter:
             results=sample_results,
             output_file=output_file,
             gsea_results=gsea_results_df,
-            # 不传 plot_types，应使用默认值 ["enrichment", "nes_barplot", "dotplot"]
+            # Do not send plot_types, use default enrichment.
         )
 
         assert os.path.exists(result)
-        # enrichment 需要额外参数所以不会调用，但 nes_barplot 和 dotplot 应该被调用
-        mock_barplot.assert_called_once()
-        mock_dotplot.assert_called_once()
 
 
 # ===========================================================================
-# 7. GSEA + GSVA 同时存在测试
+# 6. GSEA + GSVA concurrent presence of tests
 # ===========================================================================
 
 class TestCombinedGseaGsva:
-    """测试 GSEA 和 GSVA 结果同时存在"""
+    """Test GSEA and GSVA results exist simultaneously"""
 
     @patch("allenricher.visualization.gsva_plots.plot_sample_correlation")
     @patch("allenricher.visualization.gsva_plots.plot_pathway_heatmap")
-    @patch("allenricher.visualization.gsea_plots.plot_gsea_nes_barplot")
-    @patch("allenricher.visualization.gsea_plots.plot_gsea_dotplot")
     def test_both_gsea_and_gsva(
-        self, mock_dotplot, mock_barplot, mock_heatmap, mock_corr,
+        self, mock_heatmap, mock_corr,
         output_dir, sample_results, gsea_results_df, gsva_results_df, tmp_path
     ):
-        """GSEA 和 GSVA 结果同时存在时应都嵌入报告"""
+        """GSEA and GSVA results should be embedded in the report when they exist"""
         mock_fig = MagicMock()
-        mock_barplot.return_value = mock_fig
-        mock_dotplot.return_value = mock_fig
         mock_heatmap.return_value = mock_fig
         mock_corr.return_value = mock_fig
 
@@ -669,25 +590,129 @@ class TestCombinedGseaGsva:
             output_file=output_file,
             gsea_results=gsea_results_df,
             gsva_results=gsva_results_df,
-            plot_types=["nes_barplot", "dotplot", "heatmap", "correlation"],
+            plot_types=["enrichment", "heatmap", "correlation"],
         )
 
         assert os.path.exists(result)
         with open(result, 'r', encoding='utf-8') as f:
             html = f.read()
 
-        # 验证两个区域都存在
+        # Verify that both areas exist.
         assert "gsea-plots" in html
         assert "gsva-plots" in html
-        # 验证导航栏包含两个链接
+        # Verify that the navigation bar contains two links
         assert 'href="#gsea-plots"' in html
         assert 'href="#gsva-plots"' in html
-        # 验证 GSEA/GSVA 区域在 plots 和 tables 之间
+        # Validate GSEA/GSVA between plots and tables
         plots_pos = html.find('id="plots"')
         gsea_pos = html.find('id="gsea-plots"')
         gsva_pos = html.find('id="gsva-plots"')
         tables_pos = html.find('id="GO-table"')
         assert plots_pos < gsea_pos < tables_pos or plots_pos < gsva_pos < tables_pos
+
+
+class TestReportCompletenessContract:
+    """The report must faithfully present the official results sheet and all the maps that have been generated by CLI."""
+
+    def test_gsea_report_embeds_all_saved_plots_and_readable_term_metadata(
+        self, output_dir, tmp_path
+    ):
+        plot_dir = Path(output_dir) / "gsea_plots"
+        plot_dir.mkdir(parents=True)
+        (plot_dir / "PATH_001_enrichment.png").write_bytes(b"png")
+        (plot_dir / "GO_lollipop.png").write_bytes(b"png")
+        (plot_dir / "GO_lollipop.svg").write_text("<svg/>", encoding="utf-8")
+        (plot_dir / "GO_ridgeplot.png").write_bytes(b"png")
+
+        results = {
+            "GO": pd.DataFrame({
+                "Term_ID": ["PATH:001"],
+                "Term_Name": ["Readable pathway name"],
+                "Hierarchy": ["Class A|Subclass B|Readable pathway name"],
+                "pathway": ["PATH:001"],
+                "pval": [0.2],
+                "padj": [0.3],
+                "log2err": [0.01],
+                "ES": [0.5],
+                "NES": [1.6],
+                "size": [20],
+                "leadingEdge": ["G1,G2,G3"],
+            })
+        }
+        config = SimpleNamespace(pvalue_cutoff=1.0, qvalue_cutoff=1.0)
+        output_file = tmp_path / "gsea_report.html"
+
+        ReportGenerator(output_dir, config).generate(
+            results,
+            str(output_file),
+            analysis_method="gsea",
+        )
+        html = output_file.read_text(encoding="utf-8")
+
+        assert "GSEA Enrichment Analysis Report" in html
+        assert "Readable pathway name (PATH:001) - GSEA Enrichment Plot" in html
+        assert "Class A|Subclass B|Readable pathway name" in html
+        assert "3 plot types" in html
+        assert html.count("<img ") == 3
+        assert ">PNG</a>" in html and ">SVG</a>" in html
+        assert 'href="#GO-table">GO Results</a>' in html
+        assert "fonts.googleapis.com" not in html
+        assert 'class="no-results-box"' not in html
+        assert "fullValue ? fullValue.dataset.full" in html
+
+    def test_activity_report_uses_explicit_term_fields_safe_ids_and_method_label(
+        self, output_dir, tmp_path
+    ):
+        results = {
+            "TF <Custom>": pd.DataFrame({
+                "Term_ID": ["TF:001"],
+                "Term_Name": ["Regulatory <script>alert(1)</script> pathway"],
+                "Hierarchy": ["TF class|Regulatory pathway"],
+                "Sample_1": [0.25],
+                "Sample_2": [-0.15],
+            })
+        }
+        output_file = tmp_path / "activity_report.html"
+
+        ReportGenerator(output_dir).generate(
+            results,
+            str(output_file),
+            analysis_method="ssgsea",
+            ai_interpretation={"TF <Custom>": "**Result** <script>bad()</script>"},
+        )
+        html = output_file.read_text(encoding="utf-8")
+
+        assert "ssGSEA Pathway Activity Report" in html
+        assert "GSVA Pathway Activity Report" not in html
+        assert 'id="TF-Custom-table"' in html
+        assert '<td>TF:001</td><td>Regulatory &lt;script&gt;alert(1)&lt;/script&gt; pathway</td>' in html
+        assert "TF class|Regulatory pathway" in html
+        assert "AI Interpretation" in html
+        assert "<script>bad()" not in html
+        assert "&lt;script&gt;bad()&lt;/script&gt;" in html
+
+
+def test_report_keeps_analysis_successful_when_ai_interpretation_fails(
+    output_dir, sample_results, tmp_path
+):
+    config = SimpleNamespace(pvalue_cutoff=1.0, qvalue_cutoff=1.0)
+    output_file = tmp_path / "ai_failure_report.html"
+    ReportGenerator(output_dir, config).generate(
+        sample_results,
+        str(output_file),
+        analysis_method="hypergeometric",
+        ai_interpretation_error={
+            "error_code": "AI_INTERPRETATION_FAILED",
+            "backend": "deepseek",
+            "mode": "summary",
+            "message": "Error: Missing credentials",
+        },
+    )
+    html = output_file.read_text(encoding="utf-8")
+    assert "Analysis Summary" in html
+    assert "AI interpretation unavailable." in html
+    assert "AI_INTERPRETATION_FAILED" in html
+    assert "Error: Missing credentials" in html
 
 
 if __name__ == "__main__":

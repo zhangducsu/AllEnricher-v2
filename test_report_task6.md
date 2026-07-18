@@ -1,26 +1,26 @@
-# Task 6 测试报告：WikiPathways 数据库支持
+# Task 6 Test Report: WikiPathways Database Support
 
-## 任务概述
-扩展 DatabaseManager 以支持在运行时加载 WikiPathways 数据库。
+## Overview of the mandate
+Extends the DataManager to support loading of the WikiPathways database while running.
 
-## 修改内容
+## Modify Contents
 
-### 文件修改
-**文件**: `f:\OneDrive\Documents\TraeSOLO\AllEnricher\AllEnricher-v2\allenricher\database\manager.py`
+### File Changes
+** Documentation**: `f: \OneDrive\Documents\TraeSOLO\AllEnricher\AllEnricher-v2\allenricher\d ' atabase\manager. py`
 
-#### 修改 1: `load_database()` 方法中的 `name_to_prefix` 映射
+#### Modify 1: `load_database()`In the methodology`name_to_prefix`Map
 ```python
 name_to_prefix = {
     'GO': 'GO',
     'KEGG': 'kegg',
     'REACTOME': 'Reactome',
     'DO': 'DO',
-    'DISGENET': 'CUI',  # DisGeNET 使用 CUI 前缀
-    'WIKIPATHWAYS': 'WikiPathways',  # 新增
+'DISGENET': 'cui', #DisGeNET using the Cui prefix
+'WIKIPATHWAYS': 'WikiPathways', # add
 }
 ```
 
-#### 修改 2: `_load_term_names()` 方法中的 `name_to_prefix` 映射
+#### Modify 2: `_load_term_names()`In the methodology`name_to_prefix`Map
 ```python
 name_to_prefix = {
     'GO': 'GO',
@@ -28,44 +28,44 @@ name_to_prefix = {
     'REACTOME': 'Reactome',
     'DO': 'DO',
     'DISGENET': 'CUI',
-    'WIKIPATHWAYS': 'WikiPathways',  # 新增
+'WIKIPATHWAYS': 'WikiPathways', # add
 }
 ```
 
-## 关键细节
+## Key Details
 
-- **文件名格式**: 使用 prefix = 'WikiPathways'，生成的文件名为 `{species}.WikiPathways2gene.tab.gz`
-- **Term 名称加载**: 通过 `_load_term_names()` 方法从 `{species}.WikiPathways2disc.gz` 或 `{species}.WikiPathways.tab.id.gz` 加载
-- **解析器兼容**: `_parse_tab_file()` 方法是数据库无关的，可直接用于 WikiPathways 文件
+- ** Filename format**: The file is created using prefix = 'WikiPathways', with the name `{species}. WikiPathways2gene. tab. gz`
+- ** Term Name Load**: Through`_load_term_names()`Method from `{species}. WikiPathways2disc. gz` or `{species}WikiPathways. tab.id.gz`loaded
+- ** Solver compatibility**: `_parse_tab_file()` method is not related to the database and can be used directly in WikiPathways files
 
-## 验证结果
+## Validate Results
 
-### 测试 1: 导入测试
+### Test 1: Import Test
 ```bash
 python -c "from allenricher.database.manager import DatabaseManager; dm = DatabaseManager('./database', 'hsa'); print('WIKIPATHWAYS' in str(dm.__class__.__dict__))"
 ```
-**结果**: 成功（无导入错误）
+** Result**: Success (no import error)
 
-### 测试 2: 完整功能测试
+### Test 2: Full Function Test
 ```bash
 python test_wikipathways_support.py
 ```
-**结果**: 所有测试通过
+** Results**: All tests passed
 
 ```
-[1/3] 测试导入 DatabaseManager...
-    ✓ 导入成功
-[2/3] 检查 load_database 方法中的 WIKIPATHWAYS 映射...
-    ✓ load_database 方法包含 WIKIPATHWAYS 映射
-[3/3] 检查 _load_term_names 方法中的 WIKIPATHWAYS 映射...
-    ✓ _load_term_names 方法包含 WIKIPATHWAYS 映射
+[1/3Test Imported with DatabaseManager...
+* Imported successfully
+[2/3Check the WIKIPATHWAYS map in the load_database method...
+load_database method contains WIKIPATHWAYS mapping
+[3/3] Checking _load_term_names_WIKIPATHWAYS mapping...
+load_term_names method contains WIKIPATHWAYS mapping
 
-✓ 所有测试通过！WIKIPATHWAYS 数据库支持已正确添加。
+*All tests are correctly added through the WIKIPATHWAYS database.
 ```
 
-## 结论
+## Conclusions
 
-Task 6 已成功完成。DatabaseManager 现已支持加载 WikiPathways 数据库，可以通过以下方式使用：
+Task 6 has been successfully completed. DatabaseManager has supported the loading of the WikiPathways database, which can be used as follows:
 
 ```python
 from allenricher.database.manager import DatabaseManager
@@ -75,5 +75,5 @@ dm.load_database('WIKIPATHWAYS')
 ```
 
 ---
-**测试时间**: 2026-05-30
-**测试状态**: 通过
+** Test time**: 2026-05-30
+** Test state**: pass

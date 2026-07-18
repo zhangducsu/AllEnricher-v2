@@ -1,17 +1,4 @@
-"""
-hTFtarget 数据下载器
-
-从 guolab.wchscu.cn 下载人类转录因子-靶基因关系数据。
-
-hTFtarget 特性：
-- 基于 ENCODE/SRA 的 ChIP-Seq 数据
-- 659 个人类 TF 的 ~134 万条 TF-target 关系
-- 30% 阈值过滤（至少 3 个数据集）
-- 包含组织来源信息
-
-数据源：
-- hTFtarget: https://guolab.wchscu.cn/hTFtarget/
-"""
+"""Download the human hTFtarget transcription-factor target dataset."""
 
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -20,56 +7,51 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# hTFtarget 下载链接
+# HTFtarget Download Link
 HTFTARGET_DOWNLOAD_URL = (
     "https://guolab.wchscu.cn/static/hTFtarget/file_download/tf-target-infomation.txt"
 )
 
 
 class HTFtargetFetcher:
-    """hTFtarget 数据下载器
+    """Retrieve the human hTFtarget regulatory interaction file."""
 
-    下载人类转录因子-靶基因关系数据。
-
-    Usage::
-
-        fetcher = HTFtargetFetcher(basic_dir='./database/basic')
-        fetcher.download()
-    """
-
-    REQUEST_TIMEOUT = 300  # 56MB 文件需要较长时间
+    REQUEST_TIMEOUT = 300  # 56MB file takes longer
 
     def __init__(self, basic_dir: str):
         """
         Args:
-            basic_dir: 基础缓存目录
+Basic_dir: Base Cache Directory
         """
         self.basic_dir = Path(basic_dir)
         self.basic_dir.mkdir(parents=True, exist_ok=True)
 
     def _get_cache_dir(self) -> Path:
-        """获取缓存目录"""
+        """Return the local cache directory for this data source."""
         cache_dir = self.basic_dir / "htftarget"
         cache_dir.mkdir(parents=True, exist_ok=True)
         return cache_dir
 
+    @staticmethod
+    def _is_valid_tabular_file(path: Path) -> bool:
+        """Return whether a download is tabular data rather than an HTML error page."""
+        if not path.is_file() or path.stat().st_size == 0:
+            return False
+        head = path.read_bytes()[:4096].lstrip().lower()
+        return not head.startswith((b"<!doctype", b"<html")) and b"\t" in head
+
     def download(self, overwrite: bool = False) -> Path:
-        """下载 hTFtarget TF-target 关系文件
-
-        Args:
-            overwrite: 是否覆盖已存在的文件
-
-        Returns:
-            下载的 TSV 文件路径
-        """
+        """Download and validate the hTFtarget interaction file."""
         cache_dir = self._get_cache_dir()
         local_path = cache_dir / "tf-target-information.txt"
 
-        if local_path.exists() and not overwrite:
-            logger.info(f"hTFtarget 已缓存，跳过: {local_path}")
+        if local_path.exists() and not overwrite and self._is_valid_tabular_file(local_path):
+            logger.info(f"hTFtarget cached, skipping: {local_path}")
             return local_path
+        if local_path.exists() and not overwrite:
+            logger.warning("hTFtarget Cache is not a valid table and will be re-downloaded: %s", local_path)
 
-        logger.info(f"下载 hTFtarget: {HTFTARGET_DOWNLOAD_URL}")
+        logger.info(f"Download hTFtarget: {HTFTARGET_DOWNLOAD_URL}")
 
         try:
             resp = requests.get(
@@ -80,25 +62,36 @@ class HTFtargetFetcher:
             )
             resp.raise_for_status()
         except requests.RequestException as e:
-            raise RuntimeError(f"hTFtarget 下载失败: {e}") from e
+            raise RuntimeError(f"Could not close temporary folder: %s{e}") from e
 
-        # 流式写入
-        with open(local_path, "wb") as f:
+        # Fluid Writing
+        temporary_path = local_path.with_name(local_path.name + ".part")
+        with open(temporary_path, "wb") as f:
             for chunk in resp.iter_content(chunk_size=8192):
                 if chunk:
                     f.write(chunk)
 
+        if not self._is_valid_tabular_file(temporary_path):
+            temporary_path.unlink(missing_ok=True)
+            raise RuntimeError("hTFtarget Downloading is not a valid tab data")
+        temporary_path.replace(local_path)
+
         size_mb = local_path.stat().st_size / 1024 / 1024
-        logger.info(f"hTFtarget 已保存: {local_path} ({size_mb:.1f} MB)")
+        logger.info(f"hTFtarget saved: {local_path} ({size_mb: .1f} MB)")
         return local_path
 
     @staticmethod
     def get_info() -> Dict[str, str]:
-        """获取数据库基本信息"""
+        """Return source metadata suitable for provenance reporting."""
         return {
             "name": "hTFtarget",
             "version": "2020",
             "url": "https://guolab.wchscu.cn/hTFtarget/",
             "species": "Homo sapiens",
-            "description": "人类TF-target关系，基于ChIP-Seq",
+            "description": "Human TF-target based on ChIP-Seq",
         }
+
+    @staticmethod
+    def get_supported_species_records() -> List[tuple[int, str]]:
+        """Return TaxID-keyed species coverage derived from downloaded source data."""
+        return [(9606, "Homo sapiens")]

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""GSEA全量端到端测试"""
+"""GSEA end-to-end test."""
 
 import sys
 import time
@@ -15,14 +15,14 @@ RESULTS_DIR = Path("test_data/e2e_results")
 RESULTS_DIR.mkdir(exist_ok=True)
 
 def load_test_data():
-    """加载测试数据"""
-    # 读取500基因排序列表（从现有的2000基因中选取前500个）
+    """Loading test data"""
+    # Read the list of 500 gene sequences (the top 500 from the current 2000 genes)
     ranked_df = pd.read_csv(TEST_DATA_DIR / "ranked_genes.tsv", sep='\t')
-    ranked_df = ranked_df.head(500)  # 只取前500个
+    ranked_df = ranked_df.head(500)  # Only 500.
     ranked_genes = ranked_df['gene'].tolist()
     gene_weights = dict(zip(ranked_df['gene'], ranked_df['weight']))
     
-    # 读取测试通路（从GMT选取所有10个通路）
+    # Read test circuits (all 10 routes selected from GMT)
     gene_sets = {}
     with open(TEST_DATA_DIR / "gene_sets.gmt", 'r') as f:
         for line in f:
@@ -34,19 +34,19 @@ def load_test_data():
     return ranked_genes, gene_weights, gene_sets
 
 def test_gsea_full():
-    """GSEA全量测试 - 所有通路"""
+    """GSEA full-scale testing - all routes"""
     print("=" * 60)
-    print("GSEA全量端到端测试")
+    print("GSEA end-to-end test")
     print("=" * 60)
     
     ranked_genes, gene_weights, gene_sets = load_test_data()
-    print(f"✓ 排序基因列表: {len(ranked_genes)} genes")
-    print(f"✓ 测试通路数: {len(gene_sets)} pathways")
+    print(f"* Sorting the list of genes: {len(ranked_genes)} genes")
+    print(f"* Test number of circuits: {len(gene_sets)} pathways")
     
-    # 创建GSEA分析器
+    # Create GSEA Analyzer
     gsea = GSEA(permutations=100)
     
-    # 测试所有通路
+    # Test all routes.
     results = []
     start_time = time.time()
     
@@ -65,13 +65,13 @@ def test_gsea_full():
     
     elapsed = time.time() - start_time
     
-    # 转换为DataFrame
+    # Convert to DataFrame
     df_results = pd.DataFrame(results)
     
-    # 保存结果
+    # Save Results
     df_results.to_csv(RESULTS_DIR / "gsea_results.csv", index=False)
     
-    # 生成测试报告
+    # Generate test report
     report = {
         "test_name": "GSEA Full E2E Test",
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -96,18 +96,18 @@ def test_gsea_full():
     with open(RESULTS_DIR / "gsea_report.json", 'w') as f:
         json.dump(report, f, indent=2)
     
-    # 打印结果
-    print(f"\n✓ GSEA分析完成，耗时: {elapsed:.2f}s")
-    print(f"✓ 结果保存: {RESULTS_DIR / 'gsea_results.csv'}")
-    print(f"\n统计信息:")
-    print(f"  - 总通路数: {len(df_results)}")
-    print(f"  - 显著通路 (p<0.05): {report['results']['significant_p05']}")
-    print(f"  - NES范围: [{df_results['nes'].min():.3f}, {df_results['nes'].max():.3f}]")
+    # Print Results
+    print(f"\nGSEA completed in {elapsed:.2f}s")
+    print(f"• Results saved: {RESULTS_DIR / 'gsea_results.csv'}")
+    print(f"\nStatistical information:")
+    print(f"- Total number of routes: {len(df_results)}")
+    print(f"  - Nominal P < 0.05: {report['results']['significant_p05']}")
+    print(f"- NES Scope: [{df_results['nes'].min(): .3f}, {df_results['nes'].max(): .3f}]")
     
     return report
 
 if __name__ == "__main__":
     report = test_gsea_full()
     print("\n" + "=" * 60)
-    print("GSEA E2E测试完成!")
+    print("GSEA E2E test complete!")
     print("=" * 60)

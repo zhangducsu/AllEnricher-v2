@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ssGSEA全量端到端测试"""
+"""ssGSEA end-to-end test."""
 
 import sys
 import time
@@ -16,11 +16,11 @@ RESULTS_DIR = Path("test_data/e2e_results")
 RESULTS_DIR.mkdir(exist_ok=True)
 
 def load_test_data():
-    """加载测试数据"""
-    # 读取6000×6表达矩阵
+    """Loading test data"""
+    # Read 6, 000 x 6 for matrix
     expr_matrix = pd.read_csv(TEST_DATA_DIR / "expression_matrix_6000.tsv", sep='\t', index_col=0)
     
-    # 读取测试通路
+    # Read Test Channel
     gene_sets = {}
     with open(TEST_DATA_DIR / "test_pathways_from_gmt.gmt", 'r') as f:
         for line in f:
@@ -32,35 +32,35 @@ def load_test_data():
     return expr_matrix, gene_sets
 
 def test_ssgsea_full():
-    """ssGSEA全量测试"""
+    """Run the ssGSEA end-to-end check."""
     print("=" * 60)
-    print("ssGSEA全量端到端测试")
+    print("ssGSEA end-to-end test")
     print("=" * 60)
     
     expr_matrix, gene_sets = load_test_data()
-    print(f"✓ 表达矩阵: {expr_matrix.shape[0]} genes × {expr_matrix.shape[1]} samples")
-    print(f"✓ 测试通路数: {len(gene_sets)} pathways")
+    print(f"• Expression matrix: {expr_matrix.shape[0]} genes × {expr_matrix.shape[1]} samples")
+    print(f"* Test number of circuits: {len(gene_sets)} pathways")
     
-    # 创建ssGSEA分析器
+    # Create the ssGSEA analyzer.
     ssgsea = SSGSEA(min_size=10, max_size=500)
     
-    # 测试所有通路
+    # Test all routes.
     start_time = time.time()
     results_df = ssgsea.analyze_matrix(expr_matrix, gene_sets)
     elapsed = time.time() - start_time
     
-    # 保存结果
+    # Save Results
     results_df.to_csv(RESULTS_DIR / "ssgsea_results.csv")
     
-    # 统计分析
+    # Statistical analysis
     sample_means = results_df.mean(axis=0)
     sample_stds = results_df.std(axis=0)
     pathway_means = results_df.mean(axis=1)
     
-    # 样本间相关性
+    # Relevance between samples
     sample_corr = results_df.corr()
     
-    # 生成测试报告
+    # Generate test report
     report = {
         "test_name": "ssGSEA Full E2E Test",
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -88,18 +88,18 @@ def test_ssgsea_full():
     with open(RESULTS_DIR / "ssgsea_report.json", 'w') as f:
         json.dump(report, f, indent=2)
     
-    # 打印结果
-    print(f"\n✓ ssGSEA分析完成，耗时: {elapsed:.2f}s")
-    print(f"✓ 结果保存: {RESULTS_DIR / 'ssgsea_results.csv'}")
-    print(f"\n统计信息:")
-    print(f"  - 输出矩阵: {results_df.shape[0]} pathways × {results_df.shape[1]} samples")
-    print(f"  - 得分范围: [{results_df.values.min():.3f}, {results_df.values.max():.3f}]")
-    print(f"  - 均值: {results_df.values.mean():.3f}")
+    # Print Results
+    print(f"\nssGSEA completed in {elapsed:.2f}s")
+    print(f"• Results saved: {RESULTS_DIR / 'ssgsea_results.csv'}")
+    print(f"\nStatistical information:")
+    print(f"- Output matrix: {results_df.shape[0]} pathways × {results_df.shape[1]} samples")
+    print(f"- Score range: [{results_df.values.min(): .3f}, {results_df.values.max(): .3f}]")
+    print(f"- Average: {results_df.values.mean(): .3f}")
     
     return report
 
 if __name__ == "__main__":
     report = test_ssgsea_full()
     print("\n" + "=" * 60)
-    print("ssGSEA E2E测试完成!")
+    print("ssGSEA E2E test complete.")
     print("=" * 60)

@@ -1,139 +1,154 @@
-"""
-REST API module for AllEnricher v2.3.0 using FastAPI
+"""Serve the local AllEnricher web application and REST API through the canonical CLI workflow."""
 
-AllEnricher v2.3.0 REST API 服务模块
-====================================
+from __future__ import annotations
 
-本模块基于 FastAPI 框架实现了基因集富集分析（Gene Set Enrichment Analysis）的 REST API 服务。
-主要功能包括：
-
-1. 基因列表的提交与文件上传
-2. 异步执行富集分析任务（支持 GO、KEGG、Reactome 等多种数据库）
-3. 任务状态查询与进度跟踪
-4. 分析结果的获取（支持 JSON 和 TSV 格式）
-5. 可视化图表的生成与下载（柱状图、气泡图、点图等）
-6. HTML 交互式报告的生成与下载
-7. 任务的删除与资源清理
-
-本服务采用异步后台任务机制，提交分析请求后会立即返回任务ID，
-客户端可通过轮询任务状态端点来获取分析进度和结果。
-
-依赖模块：
-    - allenricher.core.config: 配置管理
-    - allenricher.core.enrichment: 富集分析核心引擎
-    - allenricher.database.manager: 数据库管理器
-    - allenricher.visualization.plotter: 可视化绑图工具
-    - allenricher.report.generator: HTML 报告生成器
-"""
-
-import os
+import json
 import logging
-import tempfile
+import mimetypes
+import os
+import re
+import shutil
+import subprocess
+import sys
+import threading
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Any, Dict, List, Literal, Optional
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, BackgroundTasks, Query
+import pandas as pd
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
-from pathlib import Path
+from pydantic import BaseModel, ConfigDict, Field
 
-from allenricher.core.config import Config
-from allenricher.core.enrichment import EnrichmentAnalyzer
-from allenricher.database.manager import DatabaseManager
-from allenricher.visualization.plotter import Plotter
-from allenricher.report.generator import ReportGenerator
 from allenricher import __version__
+from allenricher.core.config import Config, DATABASE_CATALOG, SPECIES_CONFIGS
+from allenricher.database.manager import DatabaseManager
+from allenricher.report.methods_reference import build_methods_reference
+
 
 logger = logging.getLogger(__name__)
 
-# 创建 FastAPI 应用实例
-# 配置 API 的基本信息，包括标题、描述、版本号，
-# 以及 Swagger 文档（/docs）和 ReDoc 文档（/redoc）的访问路径
+MAX_UPLOAD_SIZE = 100 * 1024 * 1024
+SAFE_JOB_ID = re.compile(r"^[A-Za-z0-9-]+$")
+SAFE_PLOT_TOKEN = re.compile(r"^[A-Za-z0-9_.-]+$")
+SAFE_SPECIES_CODE = re.compile(r"^[A-Za-z0-9_-]+$")
+RESULT_SUFFIX = "_enrichment.tsv"
+LOG_ARTIFACTS = {"command.txt", "stdout.log", "stderr.log"}
+DEFAULT_JOB_ROOT = Path.home() / ".allenricher" / "api_jobs"
+AI_BACKEND_LABELS = {
+    "openai": "OpenAI",
+    "claude": "Claude",
+    "deepseek": "DeepSeek",
+    "glm": "GLM",
+    "minimax": "MiniMax",
+    "ollama": "Ollama",
+    "mock": "Mock (validation only)",
+}
+AI_BACKEND_NAMES = tuple(AI_BACKEND_LABELS)
+
+
 app = FastAPI(
     title="AllEnricher API",
-    description="REST API for gene set enrichment analysis",
+    description="Local REST API for enrichment analysis, visualization and HTML reports",
     version=__version__,
     docs_url="/docs",
-    redoc_url="/redoc"
+    redoc_url="/redoc",
 )
 
-# 配置 CORS（跨域资源共享）中间件
-# 允许所有来源（allow_origins=["*"]）的跨域请求，
-# 支持携带凭证（cookies）、所有 HTTP 方法和所有请求头。
-# 这使得前端应用可以从不同的域名/端口访问本 API 服务。
-# CORS 配置：控制跨域请求策略
-# 注意：allow_origins=["*"] 与 allow_credentials=True 同时使用时，
-# 部分浏览器会拒绝该配置（CORS 规范不允许通配符来源携带凭据）。
-# 生产环境中建议：1) 将 allow_origins 限制为具体前端域名，或
-# 2) 设置 allow_credentials=False，或
-# 3) 通过环境变量 ALLOWED_ORIGINS 动态配置（如 os.getenv("ALLOWED_ORIGINS", "*").split(",")）
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # 生产环境应限制为具体域名
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+allowed_origins = [
+    value.strip()
+    for value in os.getenv("ALLENRICHER_CORS_ORIGINS", "").split(",")
+    if value.strip()
+]
+if allowed_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=allowed_origins,
+        allow_credentials=False,
+        allow_methods=["GET", "POST", "DELETE"],
+        allow_headers=["Content-Type"],
+    )
 
-# 挂载静态文件目录（用于 Web 界面）
 static_dir = Path(__file__).parent / "static"
 if static_dir.exists():
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
-# 任务存储字典（内存中存储所有分析任务的状态和结果）
-# 键为任务ID（UUID字符串），值为包含任务详细信息的字典
-# 生产环境中应替换为持久化数据库（如 Redis、PostgreSQL 等）
+
 jobs: Dict[str, Dict[str, Any]] = {}
+_jobs_lock = threading.RLock()
 
 
-# ===================== 请求/响应数据模型 =====================
+class RankedGene(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    gene: str = Field(min_length=1)
+    weight: float
+
 
 class EnrichmentRequest(BaseModel):
-    """
-    富集分析请求模型
+    """Define an analysis request using the same parameters as `allenricher analyze`."""
 
-    用于接收客户端提交的富集分析参数，包括基因列表、物种、
-    目标数据库、统计方法、多重检验校正方法及各种阈值设置。
+    model_config = ConfigDict(extra="forbid")
 
-    Attributes:
-        genes: 待分析的基因符号列表（必填）
-        species: 物种代码，默认为 "hsa"（人类），也支持 "mmu"（小鼠）等
-        databases: 要分析的数据库列表，默认为 GO 和 KEGG
-        method: 富集分析方法，默认为 Fisher 精确检验（"fisher"）
-        correction: 多重检验校正方法，默认为 BH（Benjamini-Hochberg）
-        pvalue_cutoff: p 值显著性阈值，默认为 0.05
-        qvalue_cutoff: q 值（校正后 p 值）阈值，默认为 0.05
-        min_genes: 每个功能条目中最少需要的基因数，默认为 2
-        background: 自定义背景基因列表，可选；若不提供则使用数据库默认背景
-    """
-    genes: List[str] = Field(..., description="List of gene symbols")
-    species: str = Field(default="hsa", description="Species code (e.g., hsa, mmu)")
-    databases: List[str] = Field(default=["GO", "KEGG"], description="Databases to analyze")
-    method: str = Field(default="fisher", description="Enrichment method")
-    correction: str = Field(default="BH", description="Multiple testing correction")
-    pvalue_cutoff: float = Field(default=0.05, description="P-value cutoff")
-    qvalue_cutoff: float = Field(default=0.05, description="Q-value cutoff")
-    min_genes: int = Field(default=2, description="Minimum genes per term")
-    background: Optional[List[str]] = Field(default=None, description="Background gene list")
+    genes: List[str] = Field(default_factory=list)
+    ranked_genes: Optional[List[RankedGene]] = None
+    expression_matrix: Optional[Dict[str, Dict[str, float]]] = None
+    gmt_lines: Optional[List[str]] = None
+    background: Optional[List[str]] = None
+
+    species: str = "hsa"
+    databases: List[str] = Field(default_factory=lambda: ["GO", "KEGG"], min_length=1)
+    method: Literal["hypergeometric", "gsea", "ssgsea", "gsva"] = "hypergeometric"
+    correction: Literal["BH", "BY", "bonferroni", "holm", "none"] = "BH"
+    pvalue_cutoff: float = Field(default=0.05, gt=0, le=1)
+    qvalue_cutoff: float = Field(default=0.05, gt=0, le=1)
+    min_genes: int = Field(default=3, ge=1)
+    background_mode: Literal["annotated", "genome", "custom"] = "annotated"
+    jobs: int = Field(default=1, ge=1, le=128)
+    database_dir: Optional[str] = None
+    use_version: Optional[str] = None
+    groups: Optional[str] = None
+
+    no_plot: bool = False
+    no_report: bool = False
+    methods_language: Literal["zh", "en"] = "en"
+    only_significant: bool = False
+    plot_types: Optional[str] = None
+    plot_format: Literal["png", "pdf", "svg"] = "png"
+    plot_dpi: int = Field(default=300, ge=72, le=1200)
+    style: Literal["nature", "science", "presentation", "cell", "omicshare"] = "nature"
+    palette: Optional[str] = None
+    categorical_palette: Optional[str] = None
+    sequential_palette: Optional[str] = None
+    diverging_palette: Optional[str] = None
+    use_r_plots: bool = False
+    ai_backend: Optional[Literal["openai", "claude", "deepseek", "glm", "minimax", "ollama", "mock"]] = None
+    ai_mode: Literal["summary", "reviewer", "caption"] = "summary"
+    ai_top_n: Optional[int] = Field(default=None, ge=1)
+
+    tf_database: Optional[Literal["trrust", "chea3", "animaltfdb", "htftarget", "both"]] = None
+    tf_library: Optional[str] = None
+    tf_tissue: Optional[str] = None
+    tf_regulation: Literal["all", "activation", "repression", "unknown"] = "all"
+    tf_min_size: Optional[int] = Field(default=None, ge=1)
+    tf_max_size: Optional[int] = Field(default=None, ge=1)
+    tf_combine: Literal["none", "meanrank", "toprank"] = "none"
+    tf_only: bool = False
+
+    emapplot_qvalue: float = Field(default=0.05, gt=0, le=1)
+    emapplot_min_count: int = Field(default=3, ge=1)
+    emapplot_top_n: int = Field(default=30, ge=1)
+    gsea_enrichment_top_up: int = Field(default=5, ge=0)
+    gsea_enrichment_top_down: int = Field(default=5, ge=0)
+    gsea_multi_top_up: int = Field(default=3, ge=0)
+    gsea_multi_top_down: int = Field(default=3, ge=0)
+    verbose: bool = False
 
 
 class EnrichmentResponse(BaseModel):
-    """
-    富集分析响应模型
-
-    当客户端提交分析请求后，返回此响应模型，包含任务ID、
-    当前状态、提示信息以及可选的分析结果。
-
-    Attributes:
-        job_id: 分析任务的唯一标识符（UUID 格式）
-        status: 任务当前状态（如 "pending"、"running"、"completed"、"failed"）
-        message: 状态描述信息，用于提示用户下一步操作
-        results: 分析结果数据，仅在任务完成时包含，默认为 None
-    """
     job_id: str
     status: str
     message: str
@@ -141,21 +156,6 @@ class EnrichmentResponse(BaseModel):
 
 
 class JobStatusResponse(BaseModel):
-    """
-    任务状态响应模型
-
-    用于查询分析任务的详细状态信息，包括创建时间、完成时间、
-    执行进度、结果摘要以及错误信息。
-
-    Attributes:
-        job_id: 分析任务的唯一标识符
-        status: 任务当前状态（"pending" / "running" / "completed" / "failed"）
-        created_at: 任务创建时间（ISO 8601 格式）
-        completed_at: 任务完成时间，任务未完成时为 None
-        progress: 任务执行进度（0.0 到 1.0 之间的浮点数）
-        results: 分析结果摘要信息，仅在任务完成时包含
-        error: 错误信息，仅在任务失败时包含
-    """
     job_id: str
     status: str
     created_at: str
@@ -163,601 +163,970 @@ class JobStatusResponse(BaseModel):
     progress: float
     results: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
+    ai_interpretation_error: Optional[Dict[str, Any]] = None
 
 
 class DatabaseInfoResponse(BaseModel):
-    """
-    数据库信息响应模型
-
-    返回系统中可用的富集分析数据库列表及其描述信息。
-
-    Attributes:
-        databases: 数据库信息列表，每个元素为包含数据库名称、描述和支持物种的字典
-    """
     databases: List[Dict[str, Any]]
 
 
 class SpeciesInfoResponse(BaseModel):
-    """
-    物种信息 API 响应模型
-
-    描述系统支持的物种信息，包括物种代码、名称、分类学ID和显示名称。
-    用于 /api/species 端点的响应序列化。
-
-    注意：内部物种数据结构使用 allenricher.database.species_lookup.SpeciesInfo（dataclass），
-    本类仅用于 API 层的请求/响应序列化（Pydantic BaseModel）。
-
-    Attributes:
-        code: 物种代码（如 "hsa" 表示人类，"mmu" 表示小鼠）
-        name: 物种拉丁学名（如 "Homo sapiens"）
-        taxonomy_id: NCBI 分类学ID（如人类为 9606）
-        display_name: 物种的常用显示名称（如 "Human"、"Mouse"）
-    """
     code: str
     name: str
     taxonomy_id: int
     display_name: str
+    databases: List[str] = Field(default_factory=list)
 
 
-# ===================== API 端点 =====================
+class SpeciesDatabaseSupportResponse(BaseModel):
+    species: str
+    databases: List[str]
+
+
+class AIBackendStatus(BaseModel):
+    name: str
+    label: str
+    configured: bool
+
+
+class AIBackendStatusResponse(BaseModel):
+    backends: List[AIBackendStatus]
+    configuration_error: Optional[str] = None
+
+
+def _job_root() -> Path:
+    root = Path(os.getenv("ALLENRICHER_API_JOB_DIR", str(DEFAULT_JOB_ROOT))).expanduser().resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def _managed_task_dir(job_id: str) -> Path:
+    if not SAFE_JOB_ID.fullmatch(job_id):
+        raise HTTPException(status_code=400, detail="Invalid job ID")
+    return (_job_root() / job_id).resolve()
+
+
+def _disk_safe_job(job: Dict[str, Any]) -> Dict[str, Any]:
+    payload = dict(job)
+    request = dict(payload.get("request") or {})
+    for key in ("genes", "ranked_genes", "expression_matrix", "gmt_lines", "background"):
+        value = request.pop(key, None)
+        if value is not None:
+            request[f"{key}_count"] = len(value)
+    payload["request"] = request
+    return payload
+
+
+def _persist_job(job_id: str) -> None:
+    with _jobs_lock:
+        job = jobs.get(job_id)
+        if not job or not job.get("task_dir"):
+            return
+        task_dir = Path(job["task_dir"])
+        task_dir.mkdir(parents=True, exist_ok=True)
+        target = task_dir / "job.json"
+        temporary = task_dir / "job.json.tmp"
+        temporary.write_text(
+            json.dumps(_disk_safe_job(job), ensure_ascii=False, indent=2, default=str),
+            encoding="utf-8",
+        )
+        temporary.replace(target)
+
+
+def _server_config() -> tuple[Config, Optional[str]]:
+    """Load optional server-side settings without exposing credentials."""
+    config_path = os.getenv("ALLENRICHER_CONFIG")
+    if not config_path:
+        return Config(), None
+    try:
+        return Config.from_file(config_path), None
+    except (OSError, ValueError, TypeError) as exc:
+        return Config(), f"Could not load server configuration: {exc}"
+
+
+def _ai_backend_statuses() -> tuple[List[AIBackendStatus], Optional[str]]:
+    config, configuration_error = _server_config()
+    statuses = []
+    for name in AI_BACKEND_NAMES:
+        backend_config = config.get_ai_backend_config(name)
+        enabled = backend_config.enabled if backend_config else True
+        if name == "mock":
+            configured = True
+        elif name == "ollama":
+            configured = enabled and (backend_config is not None or bool(os.getenv("OLLAMA_BASE_URL")))
+        else:
+            configured = enabled and bool(config.get_ai_api_key(name))
+        statuses.append(AIBackendStatus(name=name, label=AI_BACKEND_LABELS[name], configured=configured))
+    return statuses, configuration_error
+
+
+def _validate_ai_backend(request: EnrichmentRequest) -> None:
+    if not request.ai_backend:
+        return
+    statuses, configuration_error = _ai_backend_statuses()
+    if configuration_error:
+        raise HTTPException(status_code=422, detail=configuration_error)
+    status = next(item for item in statuses if item.name == request.ai_backend)
+    if not status.configured:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"AI backend '{request.ai_backend}' is not configured on this server. "
+                "Set ALLENRICHER_CONFIG or the backend environment variable, then restart the server; "
+                "use 'mock' for offline validation."
+            ),
+        )
+
+
+def _get_job(job_id: str) -> Optional[Dict[str, Any]]:
+    with _jobs_lock:
+        if job_id in jobs:
+            return jobs[job_id]
+    if not SAFE_JOB_ID.fullmatch(job_id):
+        return None
+    job_file = _managed_task_dir(job_id) / "job.json"
+    if not job_file.exists():
+        return None
+    try:
+        job = json.loads(job_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        logger.exception("Failed to load API job metadata: %s", job_file)
+        return None
+    if not job.get("ai_interpretation_error"):
+        error_file = Path(job.get("output_dir", "")) / "ai_interpretation_error.json"
+        if error_file.is_file():
+            try:
+                job["ai_interpretation_error"] = json.loads(error_file.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                pass
+    interpretation = job.get("ai_interpretation")
+    if isinstance(interpretation, dict) and not interpretation.get("backend"):
+        request_backend = (job.get("request") or {}).get("ai_backend")
+        if request_backend:
+            interpretation["backend"] = request_backend
+    with _jobs_lock:
+        jobs[job_id] = job
+    return job
+
+
+def _create_job(request: EnrichmentRequest) -> tuple[str, Dict[str, Any]]:
+    job_id = str(uuid.uuid4())
+    task_dir = _managed_task_dir(job_id)
+    (task_dir / "input").mkdir(parents=True, exist_ok=False)
+    (task_dir / "output").mkdir(parents=True, exist_ok=False)
+    job = {
+        "status": "pending",
+        "created_at": datetime.now().isoformat(),
+        "completed_at": None,
+        "progress": 0.0,
+        "request": request.model_dump(),
+        "input_files": {},
+        "results": None,
+        "results_summary": None,
+        "artifacts": [],
+        "error": None,
+        "task_dir": str(task_dir),
+        "output_dir": str(task_dir / "output"),
+    }
+    with _jobs_lock:
+        jobs[job_id] = job
+    _persist_job(job_id)
+    return job_id, job
+
+
+def _write_gene_list(path: Path, genes: List[str]) -> None:
+    cleaned = list(dict.fromkeys(str(gene).strip() for gene in genes if str(gene).strip()))
+    path.write_text("\n".join(cleaned) + ("\n" if cleaned else ""), encoding="utf-8")
+
+
+def _prepare_json_inputs(job: Dict[str, Any], request: EnrichmentRequest) -> None:
+    input_dir = Path(job["task_dir"]) / "input"
+    files: Dict[str, str] = {}
+
+    if request.genes:
+        gene_path = input_dir / "genes.txt"
+        _write_gene_list(gene_path, request.genes)
+        files["input"] = str(gene_path)
+    if request.background:
+        background_path = input_dir / "background.txt"
+        _write_gene_list(background_path, request.background)
+        files["background"] = str(background_path)
+    if request.ranked_genes:
+        ranked_path = input_dir / "ranked_genes.tsv"
+        pd.DataFrame([item.model_dump() for item in request.ranked_genes]).to_csv(
+            ranked_path, sep="\t", index=False
+        )
+        files["ranked"] = str(ranked_path)
+    if request.expression_matrix:
+        expression_path = input_dir / "expression.tsv"
+        expression = pd.DataFrame.from_dict(request.expression_matrix, orient="index")
+        expression.index.name = "gene"
+        expression.to_csv(expression_path, sep="\t")
+        files["expression"] = str(expression_path)
+    if request.gmt_lines:
+        gmt_path = input_dir / "gene_sets.gmt"
+        gmt_path.write_text("\n".join(request.gmt_lines) + "\n", encoding="utf-8")
+        files["gmt"] = str(gmt_path)
+
+    job["input_files"] = files
+
+
+async def _save_upload(upload: UploadFile, target: Path) -> bytes:
+    content = await upload.read(MAX_UPLOAD_SIZE + 1)
+    if len(content) > MAX_UPLOAD_SIZE:
+        raise HTTPException(status_code=413, detail="Uploaded file exceeds 100 MB")
+    try:
+        content.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise HTTPException(status_code=422, detail=f"{upload.filename or 'file'} must be UTF-8") from exc
+    target.write_bytes(content)
+    return content
+
+
+def _derive_input_genes(files: Dict[str, str], input_dir: Path) -> None:
+    if files.get("input"):
+        return
+    genes: List[str] = []
+    if files.get("ranked"):
+        frame = pd.read_csv(files["ranked"], sep="\t")
+        if "gene" not in frame.columns:
+            raise HTTPException(status_code=422, detail="Ranked file requires gene and weight columns")
+        genes = frame["gene"].dropna().astype(str).tolist()
+    elif files.get("expression"):
+        path = Path(files["expression"])
+        sep = "," if path.suffix.lower() == ".csv" else "\t"
+        frame = pd.read_csv(path, sep=sep, index_col=0)
+        genes = frame.index.dropna().astype(str).tolist()
+    if genes:
+        input_path = input_dir / "genes.txt"
+        _write_gene_list(input_path, genes)
+        files["input"] = str(input_path)
+
+
+def _validate_inputs(request: EnrichmentRequest, files: Dict[str, str]) -> None:
+    if not files.get("input"):
+        raise HTTPException(status_code=422, detail="A gene list or a method-specific input file is required")
+    if request.method == "gsea" and not files.get("ranked"):
+        raise HTTPException(status_code=422, detail="GSEA requires a ranked gene TSV file")
+    if request.method in {"ssgsea", "gsva"} and not files.get("expression"):
+        raise HTTPException(status_code=422, detail=f"{request.method} requires an expression matrix")
+    if request.background_mode == "custom" and not files.get("background"):
+        raise HTTPException(status_code=422, detail="Custom background mode requires a background file")
+    if request.tf_only and not request.tf_database:
+        raise HTTPException(status_code=422, detail="TF-only mode requires a TF database")
+    if request.tf_database and request.method != "hypergeometric":
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "The legacy TF-only endpoint supports ORA only. For GSEA, ssGSEA, or GSVA, "
+                "select a TF database in the main database list."
+            ),
+        )
+
+
+def _append_option(command: List[str], flag: str, value: Any) -> None:
+    if value is not None and value != "":
+        command.extend([flag, str(value)])
+
+
+def build_cli_command(request: EnrichmentRequest, files: Dict[str, str], output_dir: Path) -> List[str]:
+    """Translate a validated API request into the canonical CLI command."""
+
+    command = [
+        sys.executable,
+        "-m",
+        "allenricher",
+        "analyze",
+        "-i",
+        files["input"],
+        "-s",
+        request.species,
+        "-d",
+        ",".join(request.databases),
+        "-o",
+        str(output_dir),
+        "-m",
+        request.method,
+        "-c",
+        request.correction,
+        "-p",
+        str(request.pvalue_cutoff),
+        "-q",
+        str(request.qvalue_cutoff),
+        "-n",
+        str(request.min_genes),
+        "-j",
+        str(request.jobs),
+        "--background-mode",
+        request.background_mode,
+        "--plot-format",
+        request.plot_format,
+        "--plot-dpi",
+        str(request.plot_dpi),
+        "--style",
+        request.style,
+        "--methods-language",
+        request.methods_language,
+        "--emapplot-qvalue",
+        str(request.emapplot_qvalue),
+        "--emapplot-min-count",
+        str(request.emapplot_min_count),
+        "--emapplot-top-n",
+        str(request.emapplot_top_n),
+        "--gsea-enrichment-top-up",
+        str(request.gsea_enrichment_top_up),
+        "--gsea-enrichment-top-down",
+        str(request.gsea_enrichment_top_down),
+        "--gsea-multi-top-up",
+        str(request.gsea_multi_top_up),
+        "--gsea-multi-top-down",
+        str(request.gsea_multi_top_down),
+    ]
+    file_flags = {
+        "background": "--background",
+        "expression": "--expression-matrix",
+        "ranked": "--ranked-genes",
+        "gmt": "--gmt",
+    }
+    for key, flag in file_flags.items():
+        if files.get(key):
+            command.extend([flag, files[key]])
+
+    _append_option(command, "--database-dir", request.database_dir)
+    _append_option(command, "--config", os.getenv("ALLENRICHER_CONFIG"))
+    _append_option(command, "--use-version", request.use_version)
+    _append_option(command, "--groups", request.groups)
+    _append_option(command, "--plot-types", request.plot_types)
+    _append_option(command, "--palette", request.palette)
+    _append_option(command, "--categorical-palette", request.categorical_palette)
+    _append_option(command, "--sequential-palette", request.sequential_palette)
+    _append_option(command, "--diverging-palette", request.diverging_palette)
+    _append_option(command, "--tf-database", request.tf_database)
+    _append_option(command, "--tf-library", request.tf_library)
+    _append_option(command, "--tf-tissue", request.tf_tissue)
+    _append_option(command, "--tf-regulation", request.tf_regulation)
+    _append_option(command, "--tf-min-size", request.tf_min_size)
+    _append_option(command, "--tf-max-size", request.tf_max_size)
+    _append_option(command, "--tf-combine", request.tf_combine)
+    if request.ai_backend:
+        command.extend(["--ai", request.ai_backend, "--ai-mode", request.ai_mode])
+        _append_option(command, "--ai-top-n", request.ai_top_n)
+
+    for enabled, flag in (
+        (request.no_plot, "--no-plot"),
+        (request.no_report, "--no-report"),
+        (request.only_significant, "--only-significant"),
+        (request.tf_only, "--tf-only"),
+        (request.use_r_plots, "--use-r-plots"),
+        (request.verbose, "--verbose"),
+    ):
+        if enabled:
+            command.append(flag)
+    return command
+
+
+def _read_result_tables(output_dir: Path) -> tuple[Dict[str, List[Dict[str, Any]]], Optional[Path]]:
+    tables: Dict[str, List[Dict[str, Any]]] = {}
+    combined: List[pd.DataFrame] = []
+    for path in sorted(output_dir.glob(f"*{RESULT_SUFFIX}")):
+        database = path.name[: -len(RESULT_SUFFIX)]
+        frame = pd.read_csv(path, sep="\t")
+        for column in ("Term_ID", "Pathway_ID", "DO_ID", "Disease_ID", "TF_ID"):
+            if column in frame.columns:
+                frame[column] = frame[column].astype("string")
+        tables[database] = json.loads(frame.to_json(orient="records", force_ascii=False))
+        export_frame = frame.copy()
+        if "Database" not in export_frame.columns:
+            export_frame.insert(0, "Database", database)
+        combined.append(export_frame)
+
+    if not combined:
+        return tables, None
+    results_file = output_dir / "enrichment_results.tsv"
+    pd.concat(combined, ignore_index=True, sort=False).to_csv(results_file, sep="\t", index=False)
+    return tables, results_file
+
+
+def _artifact_category(path: Path) -> str:
+    suffix = path.suffix.lower()
+    if suffix in {".png", ".pdf", ".svg"}:
+        return "figure"
+    if suffix in {".html", ".htm"}:
+        return "report"
+    if suffix in {".tsv", ".csv", ".xlsx", ".xls"}:
+        return "table"
+    return "log" if path.name in LOG_ARTIFACTS else "other"
+
+
+def _collect_artifacts(job: Dict[str, Any]) -> List[Dict[str, Any]]:
+    task_dir = Path(job["task_dir"])
+    output_dir = Path(job["output_dir"])
+    paths = [path for path in output_dir.rglob("*") if path.is_file()]
+    paths.extend(task_dir / name for name in sorted(LOG_ARTIFACTS) if (task_dir / name).is_file())
+    artifacts = []
+    for path in sorted(paths, key=lambda item: str(item).lower()):
+        relative = path.relative_to(task_dir).as_posix()
+        artifacts.append(
+            {
+                "name": path.name,
+                "path": relative,
+                "size": path.stat().st_size,
+                "category": _artifact_category(path),
+                "media_type": mimetypes.guess_type(path.name)[0] or "application/octet-stream",
+            }
+        )
+    return artifacts
+
+
+def run_analysis(job_id: str, request: EnrichmentRequest) -> None:
+    """Execute one analysis job through the CLI and record its artifacts."""
+
+    job = _get_job(job_id)
+    if job is None:
+        logger.error("API job disappeared before execution: %s", job_id)
+        return
+    try:
+        job["status"] = "running"
+        job["progress"] = 0.1
+        _persist_job(job_id)
+
+        files = dict(job.get("input_files") or {})
+        input_dir = Path(job["task_dir"]) / "input"
+        _derive_input_genes(files, input_dir)
+        _validate_inputs(request, files)
+        job["input_files"] = files
+
+        output_dir = Path(job["output_dir"])
+        command = build_cli_command(request, files, output_dir)
+        display_command = subprocess.list2cmdline(command)
+        (Path(job["task_dir"]) / "command.txt").write_text(display_command + "\n", encoding="utf-8")
+        job["command"] = command
+        job["progress"] = 0.2
+        _persist_job(job_id)
+
+        environment = os.environ.copy()
+        environment.setdefault("PYTHONUTF8", "1")
+        completed = subprocess.run(
+            command,
+            cwd=str(Path(__file__).resolve().parents[2]),
+            env=environment,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            capture_output=True,
+            check=False,
+        )
+        task_dir = Path(job["task_dir"])
+        (task_dir / "stdout.log").write_text(completed.stdout or "", encoding="utf-8")
+        (task_dir / "stderr.log").write_text(completed.stderr or "", encoding="utf-8")
+        job["return_code"] = completed.returncode
+        if completed.returncode != 0:
+            error_lines = [line for line in (completed.stderr or completed.stdout).splitlines() if line.strip()]
+            detail = error_lines[-1] if error_lines else f"CLI exited with code {completed.returncode}"
+            raise RuntimeError(detail)
+
+        results, results_file = _read_result_tables(output_dir)
+        job["results"] = results
+        job["results_summary"] = {
+            database: {"term_count": len(rows), "top_terms": rows[:10]}
+            for database, rows in results.items()
+        }
+        if results_file:
+            job["results_file"] = str(results_file)
+        reports = sorted(output_dir.rglob("*report*.html"))
+        if reports:
+            job["report_file"] = str(reports[0])
+        interpretation_file = output_dir / "ai_interpretation.json"
+        if interpretation_file.is_file():
+            try:
+                job["ai_interpretation"] = json.loads(interpretation_file.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise RuntimeError(f"AI interpretation output is invalid: {exc}") from exc
+        interpretation_error_file = output_dir / "ai_interpretation_error.json"
+        if interpretation_error_file.is_file():
+            try:
+                job["ai_interpretation_error"] = json.loads(
+                    interpretation_error_file.read_text(encoding="utf-8")
+                )
+            except (OSError, json.JSONDecodeError) as exc:
+                job["ai_interpretation_error"] = {
+                    "error_code": "AI_INTERPRETATION_ERROR_RECORD_INVALID",
+                    "message": str(exc),
+                }
+        job["artifacts"] = _collect_artifacts(job)
+        job["status"] = "completed"
+        job["progress"] = 1.0
+        job["completed_at"] = datetime.now().isoformat()
+    except Exception as exc:
+        logger.exception("Analysis job %s failed", job_id)
+        job["status"] = "failed"
+        job["error"] = str(exc)
+        job["completed_at"] = datetime.now().isoformat()
+        job["artifacts"] = _collect_artifacts(job)
+    finally:
+        _persist_job(job_id)
+
+
+def _submit(request: EnrichmentRequest, background_tasks: BackgroundTasks) -> EnrichmentResponse:
+    _validate_ai_backend(request)
+    job_id, job = _create_job(request)
+    try:
+        _prepare_json_inputs(job, request)
+        _derive_input_genes(job["input_files"], Path(job["task_dir"]) / "input")
+        _validate_inputs(request, job["input_files"])
+        _persist_job(job_id)
+    except Exception:
+        shutil.rmtree(job["task_dir"], ignore_errors=True)
+        with _jobs_lock:
+            jobs.pop(job_id, None)
+        raise
+    background_tasks.add_task(run_analysis, job_id, request)
+    return EnrichmentResponse(
+        job_id=job_id,
+        status="pending",
+        message="Analysis started. Use /api/status/{job_id} to check progress.",
+    )
+
 
 @app.get("/", response_class=HTMLResponse)
-async def root():
-    """
-    根端点 (GET /)
-
-    返回 Web 分析界面。如果 static/index.html 存在则返回该页面，
-    否则返回 API 基本信息（JSON 格式）。
-    """
+async def root() -> Any:
     index_file = static_dir / "index.html"
     if index_file.exists():
-        with open(index_file, "r", encoding="utf-8") as f:
-            return f.read()
-    
-    # 如果没有静态文件，返回 API 信息
-    return {
-        "name": "AllEnricher API",
-        "version": __version__,
-        "docs": "/docs",
-        "webui": "/static/index.html (if available)",
-        "endpoints": {
-            "analyze": "/api/analyze",
-            "upload": "/api/upload",
-            "status": "/api/status/{job_id}",
-            "results": "/api/results/{job_id}",
-            "databases": "/api/databases",
-            "species": "/api/species"
-        }
-    }
+        html = index_file.read_text(encoding="utf-8").replace(
+            "{{ ALLENRICHER_VERSION }}", __version__
+        )
+        return HTMLResponse(html)
+    return {"name": "AllEnricher API", "version": __version__, "docs": "/docs"}
+
+
+def _available_databases(species: str) -> List[str]:
+    manager = DatabaseManager(os.getenv("ALLENRICHER_DATABASE_DIR", "./database"), species)
+    return [item["name"] for item in DATABASE_CATALOG if manager.has_database(item["name"])]
 
 
 @app.get("/api/species", response_model=List[SpeciesInfoResponse])
-async def get_species():
-    """
-    获取支持的物种列表 (GET /api/species)
-
-    返回系统中所有支持进行富集分析的物种信息列表。
-    每个物种包含代码、拉丁学名、NCBI 分类学 ID 和显示名称。
-    客户端可使用返回的物种代码作为分析请求中的 species 参数。
-
-    Returns:
-        List[SpeciesInfoResponse]: 支持的物种信息列表
-    """
-    from allenricher.core.config import SPECIES_CONFIGS
-    
-    species_list = []
-    for code, config in SPECIES_CONFIGS.items():
-        species_list.append(SpeciesInfoResponse(
+async def get_species() -> List[SpeciesInfoResponse]:
+    database_dir = Path(os.getenv("ALLENRICHER_DATABASE_DIR", "./database"))
+    organism_dir = database_dir / "organism"
+    built_codes = {
+        species_dir.name
+        for version_dir in organism_dir.iterdir()
+        if version_dir.is_dir()
+        for species_dir in version_dir.iterdir()
+        if species_dir.is_dir()
+    } if organism_dir.is_dir() else set()
+    species: Dict[str, SpeciesInfoResponse] = {
+        code: SpeciesInfoResponse(
             code=code,
             name=config.name,
             taxonomy_id=config.taxonomy_id,
-            display_name=config.display_name
-        ))
-    
-    return species_list
+            display_name=config.display_name,
+            databases=_available_databases(code),
+        )
+        for code, config in SPECIES_CONFIGS.items()
+    }
+    try:
+        from allenricher.database.species_registry import SpeciesRegistry
+
+        registry = SpeciesRegistry.load_default(database_dir)
+        for entry in registry.entries.values():
+            code = entry.kegg_code if entry.has_kegg and entry.kegg_code else str(entry.taxid)
+            if code in species or code not in built_codes:
+                continue
+            available = _available_databases(code)
+            if not available:
+                continue
+            display_name = (entry.common_name or "").strip()
+            if len(display_name) < 3 or display_name.startswith("%"):
+                display_name = entry.latin_name
+            registry_item = SpeciesInfoResponse(
+                    code=code,
+                    name=entry.latin_name,
+                    taxonomy_id=entry.taxid,
+                    display_name=display_name,
+                    databases=available,
+                )
+            species[code] = registry_item
+    except Exception:
+        logger.debug("SpeciesRegistry unavailable; using built-in species", exc_info=True)
+    for code in built_codes - set(species):
+        species[code] = SpeciesInfoResponse(
+            code=code,
+            name=code,
+            taxonomy_id=0,
+            display_name=code,
+            databases=_available_databases(code),
+        )
+    return sorted(species.values(), key=lambda item: (item.code != "hsa", item.display_name.lower()))
+
+
+@app.get("/api/species/summary")
+async def get_species_summary() -> Dict[str, Any]:
+    try:
+        from allenricher.database.species_registry import SpeciesRegistry
+
+        registry = SpeciesRegistry.load_default(Path(os.getenv("ALLENRICHER_DATABASE_DIR", "./database")))
+        return registry.get_summary()
+    except Exception as exc:
+        logger.exception("Failed to load species registry summary")
+        raise HTTPException(status_code=503, detail="Species registry summary is unavailable") from exc
+
+
+@app.get("/api/species/{species}/databases", response_model=SpeciesDatabaseSupportResponse)
+async def get_species_databases(species: str) -> SpeciesDatabaseSupportResponse:
+    code = species.strip().lower()
+    if not SAFE_SPECIES_CODE.fullmatch(code):
+        raise HTTPException(status_code=400, detail="Invalid species code")
+    return SpeciesDatabaseSupportResponse(species=code, databases=_available_databases(code))
 
 
 @app.get("/api/databases", response_model=DatabaseInfoResponse)
-async def get_databases():
-    """
-    获取可用数据库列表 (GET /api/databases)
+async def get_databases() -> DatabaseInfoResponse:
+    return DatabaseInfoResponse(databases=[dict(item) for item in DATABASE_CATALOG])
 
-    返回系统中所有可用的富集分析数据库信息，包括数据库名称、
-    描述和支持的物种范围。当前支持的数据库包括：
-    - GO（Gene Ontology）：基因本体数据库
-    - KEGG：KEGG 通路数据库
-    - Reactome：Reactome 通路数据库
-    - WikiPathways：WikiPathways 通路数据库
-    - MSigDB：分子特征数据库（仅支持人类）
-    - DO（Disease Ontology）：疾病本体数据库（仅支持人类）
-    - DisGeNET：疾病-基因关联数据库（仅支持人类）
 
-    Returns:
-        DatabaseInfoResponse: 包含所有可用数据库信息的响应对象
-    """
-    databases = [
-        {"name": "GO", "description": "Gene Ontology", "species": "all"},
-        {"name": "KEGG", "description": "KEGG Pathways", "species": "all"},
-        {"name": "Reactome", "description": "Reactome Pathways", "species": "model_organisms"},
-        {"name": "WikiPathways", "description": "WikiPathways", "species": "all"},
-        {"name": "MSigDB", "description": "Molecular Signatures Database", "species": "hsa"},
-        {"name": "DO", "description": "Disease Ontology", "species": "hsa"},
-        {"name": "DisGeNET", "description": "Disease-Gene Associations", "species": "hsa"}
-    ]
-    
-    return DatabaseInfoResponse(databases=databases)
+@app.get("/api/ai/backends", response_model=AIBackendStatusResponse)
+async def get_ai_backends() -> AIBackendStatusResponse:
+    statuses, configuration_error = _ai_backend_statuses()
+    return AIBackendStatusResponse(backends=statuses, configuration_error=configuration_error)
 
 
 @app.post("/api/analyze", response_model=EnrichmentResponse)
-async def analyze_genes(request: EnrichmentRequest, background_tasks: BackgroundTasks):
-    """
-    提交富集分析任务 (POST /api/analyze)
-
-    接收包含基因列表和分析参数的 JSON 请求体，创建异步后台分析任务。
-    分析任务会在后台执行，本端点立即返回任务ID和状态信息。
-    客户端可使用返回的 job_id 通过 GET /api/status/{job_id} 查询任务进度。
-
-    请求体示例：
-        {
-            "genes": ["TP53", "BRCA1", "EGFR"],
-            "species": "hsa",
-            "databases": ["GO", "KEGG"],
-            "method": "fisher",
-            "correction": "BH",
-            "pvalue_cutoff": 0.05
-        }
-
-    Args:
-        request: 富集分析请求参数（EnrichmentRequest 模型）
-        background_tasks: FastAPI 后台任务管理器，用于调度异步分析任务
-
-    Returns:
-        EnrichmentResponse: 包含任务ID、状态和提示信息的响应
-    """
-    # 生成唯一的任务ID（使用 UUID v4）
-    job_id = str(uuid.uuid4())
-    
-    # 初始化任务记录，设置初始状态为 "pending"（等待中）
-    jobs[job_id] = {
-        "status": "pending",
-        "created_at": datetime.now().isoformat(),
-        "completed_at": None,
-        "progress": 0.0,
-        "request": request.model_dump(),
-        "results": None,
-        "error": None
-    }
-    
-    # 将分析任务添加到后台任务队列中异步执行
-    background_tasks.add_task(run_analysis, job_id, request)
-    
-    return EnrichmentResponse(
-        job_id=job_id,
-        status="pending",
-        message="Analysis started. Use /api/status/{job_id} to check progress."
-    )
+async def analyze_genes(request: EnrichmentRequest, background_tasks: BackgroundTasks) -> EnrichmentResponse:
+    return _submit(request, background_tasks)
 
 
 @app.post("/api/upload", response_model=EnrichmentResponse)
-async def upload_gene_list(
+async def upload_analysis(
     background_tasks: BackgroundTasks,
-    file: UploadFile = File(..., description="Gene list file (one gene per line)"),
-    species: str = Query("hsa", description="Species code"),
-    databases: str = Query("GO,KEGG", description="Comma-separated database list"),
-    method: str = Query("fisher", description="Enrichment method")
-):
-    """
-    上传基因列表文件并提交分析任务 (POST /api/upload)
-
-    接收一个基因列表文本文件（每行一个基因符号），以及通过查询参数指定的
-    分析配置（物种、数据库、分析方法等）。读取文件内容后自动创建
-    富集分析任务并在后台异步执行。
-
-    文件格式要求：纯文本文件，每行一个基因符号，支持 UTF-8 编码。
-
-    Args:
-        background_tasks: FastAPI 后台任务管理器
-        file: 上传的基因列表文件（每行一个基因符号）
-        species: 物种代码，默认为 "hsa"（人类）
-        databases: 逗号分隔的数据库名称列表，默认为 "GO,KEGG"
-        method: 富集分析方法，默认为 "fisher"
-
-    Returns:
-        EnrichmentResponse: 包含任务ID、状态和提示信息的响应
-    """
-    # 读取上传文件内容并解析基因列表（限制最大 10MB 防止内存耗尽）
-    MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10MB
-    content = await file.read(MAX_UPLOAD_SIZE + 1)
-    if len(content) > MAX_UPLOAD_SIZE:
-        raise HTTPException(status_code=413, detail="上传文件过大，最大支持 10MB")
-    genes = [g.strip() for g in content.decode('utf-8').split('\n') if g.strip()]
-    
-    # 根据解析的基因列表和查询参数构建富集分析请求对象
+    file: Optional[UploadFile] = File(None),
+    gene_file: Optional[UploadFile] = File(None),
+    background_file: Optional[UploadFile] = File(None),
+    ranked_file: Optional[UploadFile] = File(None),
+    expression_file: Optional[UploadFile] = File(None),
+    gmt_file: Optional[UploadFile] = File(None),
+    species: str = Form("hsa"),
+    databases: str = Form("GO,KEGG"),
+    method: Literal["hypergeometric", "gsea", "ssgsea", "gsva"] = Form("hypergeometric"),
+    correction: Literal["BH", "BY", "bonferroni", "holm", "none"] = Form("BH"),
+    pvalue_cutoff: float = Form(0.05),
+    qvalue_cutoff: float = Form(0.05),
+    min_genes: int = Form(3),
+    background_mode: Literal["annotated", "genome", "custom"] = Form("annotated"),
+    jobs_count: int = Form(1, alias="jobs"),
+    database_dir: Optional[str] = Form(None),
+    use_version: Optional[str] = Form(None),
+    groups: Optional[str] = Form(None),
+    plot_types: Optional[str] = Form(None),
+    plot_format: Literal["png", "pdf", "svg"] = Form("png"),
+    plot_dpi: int = Form(300),
+    style: Literal["nature", "science", "presentation", "cell", "omicshare"] = Form("nature"),
+    categorical_palette: Optional[str] = Form(None),
+    sequential_palette: Optional[str] = Form(None),
+    diverging_palette: Optional[str] = Form(None),
+    only_significant: bool = Form(False),
+    no_plot: bool = Form(False),
+    no_report: bool = Form(False),
+    methods_language: Literal["zh", "en"] = Form("en"),
+    use_r_plots: bool = Form(False),
+    ai_backend: Optional[Literal["openai", "claude", "deepseek", "glm", "minimax", "ollama", "mock"]] = Form(None),
+    ai_mode: Literal["summary", "reviewer", "caption"] = Form("summary"),
+    ai_top_n: Optional[int] = Form(None),
+    tf_database: Optional[Literal["trrust", "chea3", "animaltfdb", "htftarget", "both"]] = Form(None),
+    tf_library: Optional[str] = Form(None),
+    tf_tissue: Optional[str] = Form(None),
+    tf_regulation: Literal["all", "activation", "repression", "unknown"] = Form("all"),
+    tf_min_size: Optional[int] = Form(None),
+    tf_max_size: Optional[int] = Form(None),
+    tf_combine: Literal["none", "meanrank", "toprank"] = Form("none"),
+    tf_only: bool = Form(False),
+    emapplot_qvalue: float = Form(0.05),
+    emapplot_min_count: int = Form(3),
+    emapplot_top_n: int = Form(30),
+    gsea_enrichment_top_up: int = Form(5),
+    gsea_enrichment_top_down: int = Form(5),
+    gsea_multi_top_up: int = Form(3),
+    gsea_multi_top_down: int = Form(3),
+    verbose: bool = Form(False),
+) -> EnrichmentResponse:
     request = EnrichmentRequest(
-        genes=genes,
         species=species,
-        databases=databases.split(','),
-        method=method
+        databases=[item.strip() for item in databases.split(",") if item.strip()],
+        method=method,
+        correction=correction,
+        pvalue_cutoff=pvalue_cutoff,
+        qvalue_cutoff=qvalue_cutoff,
+        min_genes=min_genes,
+        background_mode=background_mode,
+        jobs=jobs_count,
+        database_dir=database_dir,
+        use_version=use_version,
+        groups=groups,
+        plot_types=plot_types,
+        plot_format=plot_format,
+        plot_dpi=plot_dpi,
+        style=style,
+        categorical_palette=categorical_palette,
+        sequential_palette=sequential_palette,
+        diverging_palette=diverging_palette,
+        only_significant=only_significant,
+        no_plot=no_plot,
+        no_report=no_report,
+        methods_language=methods_language,
+        use_r_plots=use_r_plots,
+        ai_backend=ai_backend,
+        ai_mode=ai_mode,
+        ai_top_n=ai_top_n,
+        tf_database=tf_database,
+        tf_library=tf_library,
+        tf_tissue=tf_tissue,
+        tf_regulation=tf_regulation,
+        tf_min_size=tf_min_size,
+        tf_max_size=tf_max_size,
+        tf_combine=tf_combine,
+        tf_only=tf_only,
+        emapplot_qvalue=emapplot_qvalue,
+        emapplot_min_count=emapplot_min_count,
+        emapplot_top_n=emapplot_top_n,
+        gsea_enrichment_top_up=gsea_enrichment_top_up,
+        gsea_enrichment_top_down=gsea_enrichment_top_down,
+        gsea_multi_top_up=gsea_multi_top_up,
+        gsea_multi_top_down=gsea_multi_top_down,
+        verbose=verbose,
     )
-    
-    # 生成唯一的任务ID
-    job_id = str(uuid.uuid4())
-    
-    # 初始化任务记录
-    jobs[job_id] = {
-        "status": "pending",
-        "created_at": datetime.now().isoformat(),
-        "completed_at": None,
-        "progress": 0.0,
-        "request": request.model_dump(),
-        "results": None,
-        "error": None
-    }
-    
-    # 将分析任务添加到后台任务队列中异步执行
+    _validate_ai_backend(request)
+    job_id, job = _create_job(request)
+    input_dir = Path(job["task_dir"]) / "input"
+    files: Dict[str, str] = {}
+    try:
+        primary_gene_file = gene_file or file
+        if primary_gene_file:
+            target = input_dir / "genes.txt"
+            content = await _save_upload(primary_gene_file, target)
+            genes = [line.strip() for line in content.decode("utf-8-sig").splitlines() if line.strip()]
+            request.genes = genes
+            files["input"] = str(target)
+        if background_file:
+            target = input_dir / "background.txt"
+            await _save_upload(background_file, target)
+            files["background"] = str(target)
+        if ranked_file:
+            raw_target = input_dir / "ranked_upload.txt"
+            await _save_upload(ranked_file, raw_target)
+            ranked = pd.read_csv(raw_target, sep=None, engine="python")
+            if not {"gene", "weight"}.issubset(ranked.columns):
+                raise HTTPException(status_code=422, detail="Ranked file requires gene and weight columns")
+            target = input_dir / "ranked_genes.tsv"
+            ranked.to_csv(target, sep="\t", index=False)
+            raw_target.unlink(missing_ok=True)
+            files["ranked"] = str(target)
+        if expression_file:
+            suffix = ".csv" if (expression_file.filename or "").lower().endswith(".csv") else ".tsv"
+            target = input_dir / f"expression{suffix}"
+            await _save_upload(expression_file, target)
+            files["expression"] = str(target)
+        if gmt_file:
+            target = input_dir / "gene_sets.gmt"
+            await _save_upload(gmt_file, target)
+            files["gmt"] = str(target)
+
+        job["request"] = request.model_dump()
+        job["input_files"] = files
+        _derive_input_genes(files, input_dir)
+        _validate_inputs(request, files)
+        _persist_job(job_id)
+    except Exception:
+        shutil.rmtree(job["task_dir"], ignore_errors=True)
+        with _jobs_lock:
+            jobs.pop(job_id, None)
+        raise
+
     background_tasks.add_task(run_analysis, job_id, request)
-    
-    return EnrichmentResponse(
-        job_id=job_id,
-        status="pending",
-        message="File uploaded and analysis started."
-    )
+    return EnrichmentResponse(job_id=job_id, status="pending", message="Files uploaded and analysis started.")
 
 
 @app.get("/api/status/{job_id}", response_model=JobStatusResponse)
-async def get_job_status(job_id: str):
-    """
-    查询任务状态 (GET /api/status/{job_id})
-
-    根据任务ID查询富集分析任务的当前状态，包括执行进度、
-    创建时间、完成时间和错误信息（如果任务失败）。
-
-    任务状态说明：
-        - pending: 任务已创建，等待执行
-        - running: 任务正在执行中
-        - completed: 任务已完成，可获取结果
-        - failed: 任务执行失败，可查看错误信息
-
-    Args:
-        job_id: 分析任务的唯一标识符（UUID 格式）
-
-    Returns:
-        JobStatusResponse: 包含任务详细状态信息的响应对象
-
-    Raises:
-        HTTPException 404: 当指定的任务ID不存在时
-    """
-    if job_id not in jobs:
+async def get_job_status(job_id: str) -> JobStatusResponse:
+    job = _get_job(job_id)
+    if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
-    
-    job = jobs[job_id]
-    
     return JobStatusResponse(
         job_id=job_id,
         status=job["status"],
         created_at=job["created_at"],
         completed_at=job.get("completed_at"),
-        progress=job["progress"],
+        progress=job.get("progress", 0.0),
         results=job.get("results_summary"),
-        error=job.get("error")
+        error=job.get("error"),
+        ai_interpretation_error=job.get("ai_interpretation_error"),
     )
 
 
 @app.get("/api/results/{job_id}")
-async def get_results(job_id: str, format: str = Query("json", description="Output format: json, tsv")):
-    """
-    获取分析结果 (GET /api/results/{job_id})
-
-    获取已完成分析任务的详细结果数据。支持两种输出格式：
-    - json: 返回 JSON 格式的完整结果数据（默认）
-    - tsv: 返回 TSV（制表符分隔值）格式的结果文件下载
-
-    注意：仅当任务状态为 "completed" 时才能获取结果。
-
-    Args:
-        job_id: 分析任务的唯一标识符
-        format: 输出格式，可选 "json" 或 "tsv"，默认为 "json"
-
-    Returns:
-        JSON 格式的结果数据或 TSV 文件的 FileResponse
-
-    Raises:
-        HTTPException 404: 任务ID不存在或 TSV 结果文件未找到
-        HTTPException 400: 任务尚未完成或格式参数无效
-    """
-    if job_id not in jobs:
+async def get_results(job_id: str, format: str = Query("json")) -> Any:
+    job = _get_job(job_id)
+    if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
-    
-    job = jobs[job_id]
-    
     if job["status"] != "completed":
         raise HTTPException(status_code=400, detail=f"Job status: {job['status']}")
-    
-    if format == "json":
-        # 返回 JSON 格式的完整结果数据
-        return JSONResponse(content=job["results"])
-    elif format == "tsv":
-        # 返回 TSV 格式的结果文件
-        if "results_file" in job:
-            return FileResponse(
-                job["results_file"],
-                media_type="text/tab-separated-values",
-                filename=f"enrichment_results_{job_id}.tsv"
-            )
-        else:
-            raise HTTPException(status_code=404, detail="Results file not found")
-    else:
+    if format not in {"json", "tsv"}:
         raise HTTPException(status_code=400, detail="Invalid format. Use 'json' or 'tsv'")
+    if format == "json":
+        return JSONResponse(content=job.get("results") or {})
+    results_file = Path(job.get("results_file", ""))
+    if not results_file.is_file():
+        raise HTTPException(status_code=404, detail="Results file not found")
+    return FileResponse(
+        results_file,
+        media_type="text/tab-separated-values",
+        filename=f"enrichment_results_{job_id}.tsv",
+    )
+
+
+@app.get("/api/results/{job_id}/ai-interpretation")
+async def get_ai_interpretation(job_id: str) -> Dict[str, Any]:
+    """Return the validated structured AI interpretation for one completed job."""
+    job = _get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job["status"] != "completed":
+        raise HTTPException(status_code=400, detail=f"Job status: {job['status']}")
+    interpretation = job.get("ai_interpretation")
+    if not isinstance(interpretation, dict):
+        raise HTTPException(status_code=404, detail="AI interpretation was not generated for this analysis")
+    return interpretation
+
+
+def _find_plot(job: Dict[str, Any], database: str, plot_type: str, file_format: Optional[str]) -> Optional[Path]:
+    if not SAFE_PLOT_TOKEN.fullmatch(database) or not SAFE_PLOT_TOKEN.fullmatch(plot_type):
+        raise HTTPException(status_code=400, detail="Invalid database or plot type")
+    extensions = [file_format] if file_format else ["png", "pdf", "svg"]
+    output_dir = Path(job.get("output_dir", ""))
+    candidates = [path for path in output_dir.rglob("*") if path.is_file()]
+    for extension in extensions:
+        expected = f"{database}_{plot_type}.{extension}".lower()
+        exact = next((path for path in candidates if path.name.lower() == expected), None)
+        if exact:
+            return exact
+    database_token = database.lower()
+    plot_token = plot_type.lower()
+    for path in candidates:
+        if path.suffix.lower().lstrip(".") not in extensions:
+            continue
+        name = path.stem.lower()
+        if database_token in name and plot_token in name:
+            return path
+    return None
 
 
 @app.get("/api/results/{job_id}/plot")
 async def get_plot(
     job_id: str,
-    database: str = Query(..., description="Database name"),
-    plot_type: str = Query("barplot", description="Plot type: barplot, bubble, dotplot")
-):
-    """
-    获取可视化图表 (GET /api/results/{job_id}/plot)
-
-    获取已完成分析任务的可视化图表文件（PDF 格式）。
-    需要指定数据库名称和图表类型。
-
-    支持的图表类型：
-        - barplot: 柱状图（默认）
-        - bubble: 气泡图
-        - dotplot: 点图
-
-    Args:
-        job_id: 分析任务的唯一标识符
-        database: 数据库名称（如 "GO"、"KEGG" 等）
-        plot_type: 图表类型，可选 "barplot"、"bubble" 或 "dotplot"
-
-    Returns:
-        FileResponse: PDF 格式的图表文件
-
-    Raises:
-        HTTPException 404: 任务ID不存在或图表文件未找到
-        HTTPException 400: 任务尚未完成
-    """
-    if job_id not in jobs:
+    database: str = Query(...),
+    plot_type: str = Query("barplot"),
+    format: Optional[Literal["png", "pdf", "svg"]] = Query(None),
+) -> FileResponse:
+    job = _get_job(job_id)
+    if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
-    
-    job = jobs[job_id]
-    
     if job["status"] != "completed":
         raise HTTPException(status_code=400, detail=f"Job status: {job['status']}")
-    
-    # 根据数据库名称和图表类型构建图表文件路径
-    # 安全措施：清理用户输入，防止路径遍历攻击
-    import re
-    safe_database = re.sub(r'[^\w\-]', '', database)
-    safe_plot_type = re.sub(r'[^\w\-]', '', plot_type)
-    plot_dir = Path(job.get("output_dir", "")) / "plots"
-    plot_file = plot_dir / f"{safe_database}_{safe_plot_type}.pdf"
-    
-    # 验证解析后的路径仍在预期的 plots 目录内，防止路径遍历
-    resolved_plot_dir = plot_dir.resolve()
-    resolved_plot_file = plot_file.resolve()
-    if not str(resolved_plot_file).startswith(str(resolved_plot_dir) + os.sep) and resolved_plot_file != resolved_plot_dir:
-        raise HTTPException(status_code=400, detail="Invalid database or plot type")
-    
-    if not plot_file.exists():
+    plot_file = _find_plot(job, database, plot_type, format)
+    if plot_file is None:
         raise HTTPException(status_code=404, detail="Plot not found")
-    
     return FileResponse(
         plot_file,
-        media_type="application/pdf",
-        filename=f"{database}_{plot_type}.pdf"
+        media_type=mimetypes.guess_type(plot_file.name)[0] or "application/octet-stream",
+        headers={"Content-Disposition": f'inline; filename="{plot_file.name}"'},
     )
 
 
 @app.get("/api/results/{job_id}/report")
-async def get_report(job_id: str):
-    """
-    获取 HTML 报告 (GET /api/results/{job_id}/report)
-
-    获取已完成分析任务的 HTML 交互式报告文件。
-    报告包含所有数据库的富集分析结果汇总、可视化图表和详细数据表格。
-
-    Args:
-        job_id: 分析任务的唯一标识符
-
-    Returns:
-        FileResponse: HTML 格式的报告文件
-
-    Raises:
-        HTTPException 404: 任务ID不存在或报告文件未找到
-        HTTPException 400: 任务尚未完成
-    """
-    if job_id not in jobs:
+async def get_report(job_id: str) -> FileResponse:
+    job = _get_job(job_id)
+    if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
-    
-    job = jobs[job_id]
-    
     if job["status"] != "completed":
         raise HTTPException(status_code=400, detail=f"Job status: {job['status']}")
-    
-    report_file = Path(job.get("output_dir", "")) / "report.html"
-    
-    if not report_file.exists():
+    report_file = Path(job.get("report_file") or Path(job.get("output_dir", "")) / "report.html")
+    if not report_file.is_file():
         raise HTTPException(status_code=404, detail="Report not found")
-    
     return FileResponse(
         report_file,
         media_type="text/html",
-        filename=f"enrichment_report_{job_id}.html"
+        headers={"Content-Disposition": f'inline; filename="{report_file.name}"'},
     )
 
 
-@app.delete("/api/jobs/{job_id}")
-async def delete_job(job_id: str):
-    """
-    删除任务 (DELETE /api/jobs/{job_id})
-
-    删除指定的分析任务及其所有相关文件（包括输出目录、
-    图表文件、报告文件等）。删除后任务ID将不再可用。
-
-    Args:
-        job_id: 要删除的分析任务的唯一标识符
-
-    Returns:
-        dict: 包含删除确认信息的字典
-
-    Raises:
-        HTTPException 404: 当指定的任务ID不存在时
-    """
-    if job_id not in jobs:
+@app.get("/api/results/{job_id}/methods-reference")
+async def get_methods_reference(job_id: str) -> Dict[str, Any]:
+    job = _get_job(job_id)
+    if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
-    
-    # 清理任务相关的输出文件和目录
-    job = jobs[job_id]
-    if "output_dir" in job:
-        output_dir = Path(job["output_dir"])
-        if output_dir.exists():
-            import shutil
-            shutil.rmtree(output_dir)  # 递归删除整个输出目录及其内容
-    
-    del jobs[job_id]
-    
+    if job["status"] != "completed":
+        raise HTTPException(status_code=400, detail=f"Job status: {job['status']}")
+    metadata_file = Path(job.get("output_dir", "")) / "analysis_metadata.json"
+    if not metadata_file.is_file():
+        raise HTTPException(status_code=404, detail="Analysis metadata not found")
+    try:
+        metadata = json.loads(metadata_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=500, detail="Analysis metadata is invalid") from exc
+    return build_methods_reference(metadata)
+
+
+@app.get("/api/results/{job_id}/artifacts")
+async def get_artifacts(job_id: str) -> Dict[str, Any]:
+    job = _get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    artifacts = _collect_artifacts(job) if job.get("task_dir") else job.get("artifacts", [])
+    return {"job_id": job_id, "status": job["status"], "artifacts": artifacts}
+
+
+def _resolve_artifact(job: Dict[str, Any], relative_path: str) -> Path:
+    task_dir = Path(job.get("task_dir", "")).resolve()
+    output_dir = Path(job.get("output_dir", "")).resolve()
+    candidate = (task_dir / relative_path).resolve()
+    allowed = candidate.name in LOG_ARTIFACTS and candidate.parent == task_dir
+    allowed = allowed or candidate == output_dir or output_dir in candidate.parents
+    if not allowed:
+        raise HTTPException(status_code=400, detail="Invalid artifact path")
+    return candidate
+
+
+@app.get("/api/results/{job_id}/files/{file_path:path}")
+async def get_artifact_file(job_id: str, file_path: str) -> FileResponse:
+    job = _get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    artifact = _resolve_artifact(job, file_path)
+    if not artifact.is_file():
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    return FileResponse(artifact, media_type=mimetypes.guess_type(artifact.name)[0] or "application/octet-stream")
+
+
+@app.delete("/api/jobs/{job_id}")
+async def delete_job(job_id: str) -> Dict[str, str]:
+    job = _get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.get("status") == "running":
+        raise HTTPException(status_code=409, detail="Running jobs cannot be deleted")
+    managed_dir = _managed_task_dir(job_id)
+    task_dir = Path(job.get("task_dir", managed_dir)).resolve()
+    if task_dir == managed_dir and task_dir.exists():
+        shutil.rmtree(task_dir)
+    with _jobs_lock:
+        jobs.pop(job_id, None)
     return {"message": "Job deleted", "job_id": job_id}
 
 
-# ===================== 后台任务函数 =====================
-
-def run_analysis(job_id: str, request: EnrichmentRequest):
-    """
-    后台执行富集分析任务
-
-    该函数作为后台任务运行（通过 BackgroundTasks），执行完整的富集分析流程。
-    注意：此函数为同步函数，因为内部调用的富集分析、数据库加载等均为同步阻塞操作。
-    FastAPI 的 BackgroundTasks 会自动在线程池中执行同步后台任务。
-    分析过程分为以下几个阶段：
-
-    1. 初始化阶段（进度 0.0 - 0.1）：
-       - 创建临时输出目录
-       - 根据请求参数构建配置对象
-
-    2. 数据加载阶段（进度 0.1 - 0.3）：
-       - 加载指定的数据库文件
-       - 准备背景基因集
-
-    3. 分析执行阶段（进度 0.3 - 0.7）：
-       - 对每个数据库执行富集分析
-       - 应用统计检验和多重检验校正
-
-    4. 可视化生成阶段（进度 0.7 - 0.85）：
-       - 为每个数据库的结果生成多种图表
-
-    5. 报告生成阶段（进度 0.85 - 0.95）：
-       - 生成 HTML 交互式报告
-
-    6. 结果保存阶段（进度 0.95 - 1.0）：
-       - 保存结果文件和摘要信息
-
-    如果任何阶段发生异常，任务状态将设置为 "failed" 并记录错误信息。
-
-    Args:
-        job_id: 分析任务的唯一标识符
-        request: 富集分析请求参数对象
-    """
-    job = jobs[job_id]
-    
-    try:
-        # ---- 阶段1：更新任务状态为"运行中" ----
-        job["status"] = "running"
-        job["progress"] = 0.1
-        
-        # 创建临时输出目录，目录名前缀包含任务ID以便识别
-        output_dir = Path(tempfile.mkdtemp(prefix=f"allenricher_{job_id}_"))
-        job["output_dir"] = str(output_dir)
-        
-        # 根据请求参数创建分析配置对象
-        config = Config(
-            species=request.species,
-            databases=request.databases,
-            method=request.method,
-            correction=request.correction,
-            pvalue_cutoff=request.pvalue_cutoff,
-            qvalue_cutoff=request.qvalue_cutoff,
-            min_genes=request.min_genes,
-            output_dir=str(output_dir)
-        )
-        
-        # ---- 阶段2：加载指定的数据库 ----
-        job["progress"] = 0.2
-        db_manager = DatabaseManager(config.database_dir, request.species)
-        db_manager.load_databases(request.databases)
-        
-        # 获取背景基因集：如果用户提供了自定义背景则使用自定义的，否则使用数据库默认背景
-        if request.background:
-            background_set = set(request.background)
-        else:
-            background_set = db_manager.get_background_genes()
-        
-        # ---- 阶段3：执行富集分析 ----
-        job["progress"] = 0.3
-        analyzer = EnrichmentAnalyzer(config)
-        
-        # 将基因列表转换为集合去重，并获取所有数据库的功能条目数据
-        gene_set = set(request.genes)
-        database_data = db_manager.get_all_term_data()
-        
-        # 运行富集分析，返回各数据库的分析结果（DataFrame 字典）
-        results = analyzer.run_analysis(gene_set, background_set, database_data)
-        
-        job["progress"] = 0.7
-        
-        # ---- 阶段4：生成可视化图表 ----
-        plotter = Plotter(str(output_dir / "plots"), config)
-        for db_name, df in results.items():
-            plotter.plot_all(df, db_name)  # 为每个数据库生成所有类型的图表
-        
-        job["progress"] = 0.85
-        
-        # ---- 阶段5：生成 HTML 报告 ----
-        report_gen = ReportGenerator(str(output_dir), config)
-        report_gen.generate(results, str(output_dir / "report.html"))
-        
-        job["progress"] = 0.95
-        
-        # ---- 阶段6：保存结果文件 ----
-        analyzer.save_results(str(output_dir))
-        
-        # 准备结果摘要信息（包含每个数据库的条目数量和前10个显著条目）
-        results_summary = {}
-        for db_name, df in results.items():
-            results_summary[db_name] = {
-                "term_count": len(df),
-                "top_terms": df.head(10).to_dict(orient="records") if len(df) > 0 else []
-            }
-        
-        # 更新任务状态为"已完成"，记录完成时间和完整结果
-        job["status"] = "completed"
-        job["completed_at"] = datetime.now().isoformat()
-        job["progress"] = 1.0
-        job["results"] = {k: v.to_dict(orient="records") for k, v in results.items()}
-        job["results_summary"] = results_summary
-        
-    except Exception as e:
-        # 捕获所有异常，记录错误日志并将任务状态设置为"失败"
-        logger.error(f"Error in job {job_id}: {e}")
-        job["status"] = "failed"
-        job["error"] = str(e)
-        job["completed_at"] = datetime.now().isoformat()
-
-
-def start_api(host: str = "0.0.0.0", port: int = 8000):
-    """
-    启动 API 服务
-
-    使用 uvicorn ASGI 服务器启动 FastAPI 应用。
-
-    Args:
-        host: 服务监听地址，默认为 "0.0.0.0"（所有网络接口）
-        port: 服务监听端口，默认为 8000
-    """
+def start_api(host: str = "127.0.0.1", port: int = 8000, reload: bool = False) -> None:
     import uvicorn
-    uvicorn.run(app, host=host, port=port)
+
+    target: Any = "allenricher.api.server:app" if reload else app
+    uvicorn.run(target, host=host, port=port, reload=reload)
 
 
 if __name__ == "__main__":
