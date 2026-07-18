@@ -1,81 +1,85 @@
-# AllEnricher v2.0 配置文件示例
-# =============================
-# 使用方式: allenricher analyze --config config.yaml -i genes.txt
+# AllEnricher v2 configuration example
+# Usage: allenricher analyze --config config.example.yaml --input genes.txt
 
-# 输入/输出设置
-input_file: null              # 基因列表文件路径（也可通过命令行 -i 指定）
-output_dir: "./results"       # 结果输出目录
-background_file: null         # 背景基因列表（可选）
+# Input and output
+input_file: null
+output_dir: "./results"
+background_file: null
+background_mode: "annotated"  # annotated, genome, or custom
 
-# 物种设置
-species: "hsa"                # KEGG物种代码: hsa(人类), mmu(小鼠), rno(大鼠)等
-
-# 分析设置
+# Analysis scope
+species: "hsa"
 databases:
   - "GO"
   - "KEGG"
-  - "Reactome"
-method: "fisher"              # 富集分析方法: fisher, hypergeometric, gsea, ssgsea
-correction: "BH"              # 多重检验校正: BH, BY, bonferroni, holm, none
+method: "hypergeometric"      # hypergeometric, gsea, ssgsea, or gsva
+correction: "BH"              # BH, BY, bonferroni, holm, or none
 pvalue_cutoff: 0.05
 qvalue_cutoff: 0.05
+min_genes: 3
+max_genes: .inf
+output_all: true
 
-# AI 解读配置
-# =============
-ai_interpretation: true       # 是否启用AI解读
-ai_backend: "deepseek"        # 默认使用的AI后端
+# GSEA, ssGSEA, and GSVA
+gsea_permutations: 1000
+gsea_min_size: null            # method default: GSEA 15; ssGSEA/GSVA 1
+gsea_max_size: null            # method default: GSEA 500; ssGSEA/GSVA unbounded
+gsva_method: "gsva"
+gsva_kcdf: "Gaussian"
+gsva_tau: 1.0
 
-# AI后端多密钥配置
-# 支持的后端: openai, claude, deepseek, glm, minimax, ollama, mock
-ai_backends:
-  # OpenAI 配置
-  openai:
-    api_key: null             # 从 https://platform.openai.com/ 获取
-    model: "gpt-4"            # 可选: gpt-4, gpt-3.5-turbo, gpt-4-turbo
-    enabled: true
-
-  # Anthropic Claude 配置
-  claude:
-    api_key: null             # 从 https://console.anthropic.com/ 获取
-    model: "claude-3-opus-20240229"  # 可选: claude-3-opus, claude-3-sonnet
-    enabled: true
-
-  # DeepSeek 配置（国产，性价比高）
-  deepseek:
-    api_key: null             # 从 https://platform.deepseek.com/ 获取
-    model: "deepseek-chat"    # 可选: deepseek-chat, deepseek-coder
-    enabled: true
-
-  # 智谱AI GLM 配置（中文能力强）
-  glm:
-    api_key: null             # 从 https://open.bigmodel.cn/ 获取
-    model: "glm-4"            # 可选: glm-4, glm-3-turbo
-    enabled: true
-
-  # MiniMax 配置
-  minimax:
-    api_key: null             # 从 https://www.minimaxi.com/ 获取
-    group_id: null            # 需要从控制台获取
-    model: "abab6.5s-chat"
-    enabled: true
-
-  # Ollama 本地模型配置（无需API密钥）
-  ollama:
-    model: "llama2"           # 需要先执行: ollama pull llama2
-    base_url: "http://localhost:11434"
-    enabled: true
-
-  # Mock 测试后端（无需任何配置，用于测试）
-  mock:
-    enabled: true
-
-# 可视化设置
+# Figures and reports
 plot_formats:
   - "pdf"
   - "png"
 plot_dpi: 300
 top_terms: 20
+activity_heatmap_top_n: 40
+plot_width: null               # adaptive when null
+plot_height: null              # adaptive when null
+plot_style: "nature"          # nature, science, or presentation
+plot_palette: null             # legacy semantic-role override
+categorical_palette: null      # for categories and groups
+sequential_palette: null       # for ordered non-negative values
+diverging_palette: null        # for values centered on zero
+generate_report: true
+report_format: "html"
 
-# 数据库设置
+# Performance
+n_jobs: 1
+
+# Database storage
 database_dir: "./database"
 auto_update: false
+
+# Optional AI interpretation
+ai_interpretation: false
+ai_backend: "openai"
+ai_backends:
+  openai:
+    api_key: null
+    model: "gpt-4"
+    enabled: true
+  claude:
+    api_key: null
+    model: "claude-3-opus-20240229"
+    enabled: true
+  deepseek:
+    api_key: null
+    model: "deepseek-chat"
+    enabled: true
+  glm:
+    api_key: null
+    model: "glm-4"
+    enabled: true
+  minimax:
+    api_key: null
+    group_id: null
+    model: "abab6.5s-chat"
+    enabled: true
+  ollama:
+    model: "llama2"
+    base_url: "http://localhost:11434"
+    enabled: true
+  mock:
+    enabled: true

@@ -2,11 +2,11 @@ import pandas as pd
 import json
 from pathlib import Path
 
-# 加载结果
+# Loading results
 go_df = pd.read_csv('results/GO_enrichment.tsv', sep='\t')
 kegg_df = pd.read_csv('results/KEGG_enrichment.tsv', sep='\t')
 
-# 读取 AI 解读
+# Read AI Interpretation
 with open('results/ai_interpretation.json', 'r', encoding='utf-8') as f:
     ai_interpretation = json.load(f)
 
@@ -23,4 +23,4 @@ html = generator.generate(
     gene_list=gene_list,
     ai_interpretation=ai_interpretation
 )
-print('HTML 已重新生成')
+print('HTML regenerated')

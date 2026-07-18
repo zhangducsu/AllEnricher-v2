@@ -1,609 +1,2484 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AllEnricher - 基因富集分析</title>
+    <title>AllEnricher Gene Function Enrichment Workbench</title>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
+        :root {
+            --ink: #1a1a1a;
+            --muted: #626b74;
+            --line: #d4d9df;
+            --line-strong: #aeb7c1;
+            --paper: #ffffff;
+            --canvas: #f4f6f8;
+            --accent: #2c5282;
+            --accent-dark: #1e3f66;
+            --accent-soft: #eaf0f6;
+            --success: #276749;
+            --success-soft: #e9f5ef;
+            --warning: #8a5a12;
+            --warning-soft: #fff6df;
+            --danger: #9b2c2c;
+            --danger-soft: #fff0f0;
+            --radius: 4px;
         }
-        
+
+        * { box-sizing: border-box; }
+        [hidden] { display: none !important; }
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            padding: 20px;
-        }
-        
-        .container {
-            max-width: 900px;
-            margin: 0 auto;
-        }
-        
-        .header {
-            text-align: center;
-            color: white;
-            margin-bottom: 30px;
-        }
-        
-        .header h1 {
-            font-size: 2.5em;
-            margin-bottom: 10px;
-        }
-        
-        .header p {
-            font-size: 1.1em;
-            opacity: 0.9;
-        }
-        
-        .card {
-            background: white;
-            border-radius: 12px;
-            padding: 30px;
-            margin-bottom: 20px;
-            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
-        }
-        
-        .card h2 {
-            color: #333;
-            margin-bottom: 20px;
-            font-size: 1.3em;
-        }
-        
-        .form-group {
-            margin-bottom: 20px;
-        }
-        
-        label {
-            display: block;
-            margin-bottom: 8px;
-            color: #555;
-            font-weight: 500;
-        }
-        
-        textarea, select, input[type="number"], input[type="text"] {
-            width: 100%;
-            padding: 12px;
-            border: 2px solid #e0e0e0;
-            border-radius: 8px;
+            margin: 0;
+            min-width: 320px;
+            color: var(--ink);
+            background: var(--canvas);
+            font-family: "Segoe UI", Arial, sans-serif;
             font-size: 14px;
-            transition: border-color 0.3s;
+            line-height: 1.5;
         }
-        
-        textarea:focus, select:focus, input:focus {
-            outline: none;
-            border-color: #667eea;
-        }
-        
-        textarea {
-            min-height: 150px;
-            resize: vertical;
-            font-family: monospace;
-        }
-        
-        .row {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 20px;
-        }
-        
-        @media (max-width: 600px) {
-            .row {
-                grid-template-columns: 1fr;
-            }
-        }
-        
-        .checkbox-group {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 15px;
-        }
-        
-        .checkbox-item {
+        button, input, select, textarea { font: inherit; }
+        button, a, input, select, textarea { letter-spacing: 0; }
+
+        .app-header {
             display: flex;
             align-items: center;
-            gap: 8px;
+            justify-content: space-between;
+            min-height: 58px;
+            padding: 9px 24px;
+            background: var(--paper);
+            border-bottom: 1px solid var(--line);
         }
-        
-        .checkbox-item input[type="checkbox"] {
-            width: auto;
+        .brand h1 {
+            margin: 0;
+            color: var(--accent-dark);
+            font-family: Georgia, "Times New Roman", serif;
+            font-size: 22px;
+            font-weight: 700;
         }
-        
-        .btn {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            border: none;
-            padding: 15px 40px;
-            border-radius: 8px;
-            font-size: 16px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: transform 0.2s, box-shadow 0.2s;
-            display: inline-block;
+        .brand h1 small { font: 600 11px "Segoe UI", Arial, sans-serif; }
+        .brand span { color: var(--muted); font-size: 12px; }
+        .header-link { color: var(--accent); text-decoration: none; }
+        .header-link:hover { text-decoration: underline; }
+
+        .workspace {
+            display: grid;
+            grid-template-columns: minmax(360px, 410px) minmax(0, 1fr);
+            align-items: start;
+            gap: 16px;
+            width: min(1560px, calc(100% - 32px));
+            margin: 16px auto 32px;
+            min-width: 0;
         }
-        
-        .btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
-        }
-        
-        .btn:disabled {
-            opacity: 0.6;
-            cursor: not-allowed;
-            transform: none;
-        }
-        
-        .btn-container {
-            text-align: center;
-            margin-top: 30px;
-        }
-        
-        .status {
-            margin-top: 20px;
-            padding: 15px;
-            border-radius: 8px;
-            display: none;
-        }
-        
-        .status.pending {
-            display: block;
-            background: #fff3cd;
-            color: #856404;
-            border: 1px solid #ffeaa7;
-        }
-        
-        .status.running {
-            display: block;
-            background: #d1ecf1;
-            color: #0c5460;
-            border: 1px solid #bee5eb;
-        }
-        
-        .status.completed {
-            display: block;
-            background: #d4edda;
-            color: #155724;
-            border: 1px solid #c3e6cb;
-        }
-        
-        .status.error {
-            display: block;
-            background: #f8d7da;
-            color: #721c24;
-            border: 1px solid #f5c6cb;
-        }
-        
-        .progress-bar {
-            width: 100%;
-            height: 8px;
-            background: #e0e0e0;
-            border-radius: 4px;
-            overflow: hidden;
-            margin-top: 10px;
-        }
-        
-        .progress-fill {
-            height: 100%;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            transition: width 0.3s;
-            width: 0%;
-        }
-        
-        .results {
-            margin-top: 30px;
-            display: none;
-        }
-        
-        .results.show {
-            display: block;
-        }
-        
-        .database-tabs {
+        .site-footer {
             display: flex;
-            gap: 10px;
-            margin-bottom: 20px;
-            border-bottom: 2px solid #e0e0e0;
-        }
-        
-        .tab-btn {
-            padding: 10px 20px;
-            border: none;
-            background: none;
-            cursor: pointer;
-            font-size: 14px;
-            color: #666;
-            border-bottom: 2px solid transparent;
-            margin-bottom: -2px;
-        }
-        
-        .tab-btn.active {
-            color: #667eea;
-            border-bottom-color: #667eea;
-            font-weight: 600;
-        }
-        
-        .tab-content {
-            display: none;
-        }
-        
-        .tab-content.active {
-            display: block;
-        }
-        
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 13px;
-        }
-        
-        th, td {
-            padding: 12px;
-            text-align: left;
-            border-bottom: 1px solid #e0e0e0;
-        }
-        
-        th {
-            background: #f8f9fa;
-            font-weight: 600;
-            color: #555;
-        }
-        
-        tr:hover {
-            background: #f8f9fa;
-        }
-        
-        .download-links {
-            margin-top: 20px;
-            display: flex;
-            gap: 15px;
             flex-wrap: wrap;
+            gap: 6px 18px;
+            width: min(1560px, calc(100% - 32px));
+            margin: 0 auto 24px;
+            padding-top: 12px;
+            color: var(--muted);
+            border-top: 1px solid var(--line);
+            font-size: 12px;
         }
-        
-        .download-links a {
-            color: #667eea;
+        .site-footer p { margin: 0; }
+        .site-footer a { color: var(--accent); text-decoration: none; }
+        .site-footer a:hover { text-decoration: underline; }
+        .site-footer cite { font-style: normal; }
+        .panel {
+            min-width: 0;
+            background: var(--paper);
+            border: 1px solid var(--line);
+            border-radius: var(--radius);
+        }
+        .controls {
+            position: sticky;
+            top: 12px;
+            max-height: calc(100vh - 24px);
+            overflow: auto;
+        }
+        .output { min-width: 0; width: 100%; }
+        .panel-heading {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            min-height: 49px;
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--line);
+        }
+        .panel-heading h2 {
+            margin: 0;
+            font-family: Georgia, "Times New Roman", serif;
+            font-size: 17px;
+        }
+        .status-meta { color: var(--muted); font-size: 12px; }
+
+        .workflow-step {
+            display: grid;
+            grid-template-columns: 27px minmax(0, 1fr);
+            gap: 10px;
+            padding: 15px 16px;
+            border-bottom: 1px solid var(--line);
+        }
+        .step-number {
+            width: 24px;
+            height: 24px;
+            color: var(--accent-dark);
+            border: 1px solid #9bb7d5;
+            border-radius: 50%;
+            text-align: center;
+            font-size: 12px;
+            font-weight: 700;
+            line-height: 22px;
+        }
+        .step-content { min-width: 0; }
+        .step-title {
+            margin: 1px 0 11px;
+            font-family: Georgia, "Times New Roman", serif;
+            font-size: 15px;
+        }
+
+        .segmented {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            overflow: hidden;
+            border: 1px solid var(--line-strong);
+            border-radius: var(--radius);
+        }
+        .segmented.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .segmented input { position: absolute; opacity: 0; pointer-events: none; }
+        .segmented label {
+            padding: 8px 5px;
+            background: #fff;
+            border-right: 1px solid var(--line-strong);
+            text-align: center;
+            cursor: pointer;
+        }
+        .segmented label:last-of-type { border-right: 0; }
+        .segmented input:checked + label { color: #fff; background: var(--accent); }
+        .segmented input:focus-visible + label { outline: 2px solid var(--accent-dark); outline-offset: -2px; }
+        .method-summary {
+            margin-top: 10px;
+            padding-top: 9px;
+            border-top: 1px solid #edf0f2;
+            color: var(--muted);
+            font-size: 12px;
+            line-height: 1.55;
+        }
+        .method-summary p { margin: 0 0 4px; }
+        .method-summary p:last-child { margin-bottom: 0; }
+        .method-summary strong { color: var(--ink); }
+        .method-facts {
+            display: grid;
+            grid-template-columns: max-content minmax(0, 1fr);
+            gap: 2px 9px;
+            margin: 6px 0;
+        }
+        .method-facts dt { color: var(--ink); font-weight: 600; }
+        .method-facts dd { margin: 0; overflow-wrap: anywhere; }
+        .method-contact { color: var(--accent-dark); }
+
+        .field { margin-bottom: 12px; }
+        .field:last-child { margin-bottom: 0; }
+        .field-row {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+        }
+        .field-row.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+        .field > label, .field > .field-label, .palette-role > label, fieldset > legend {
+            display: block;
+            margin-bottom: 5px;
+            color: #30363d;
+            font-weight: 600;
+        }
+        input[type="text"], input[type="number"], select, textarea {
+            width: 100%;
+            min-height: 36px;
+            padding: 7px 9px;
+            color: var(--ink);
+            background: #fff;
+            border: 1px solid var(--line-strong);
+            border-radius: var(--radius);
+        }
+        .file-picker {
+            display: flex;
+            align-items: center;
+            gap: 9px;
+            min-height: 36px;
+            padding: 4px;
+            background: #fff;
+            border: 1px solid var(--line-strong);
+            border-radius: var(--radius);
+        }
+        .file-picker:focus-within {
+            outline: 2px solid #9bb7d5;
+            border-color: var(--accent);
+        }
+        .native-file-input {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+            border: 0;
+        }
+        .file-choose { flex: 0 0 auto; min-height: 28px; padding: 4px 10px; }
+        .file-name {
+            min-width: 0;
+            overflow: hidden;
+            color: var(--muted);
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        textarea {
+            min-height: 112px;
+            resize: vertical;
+            font-family: Consolas, monospace;
+        }
+        input:focus, select:focus, textarea:focus {
+            outline: 2px solid #9bb7d5;
+            border-color: var(--accent);
+        }
+        .input-mode { margin-bottom: 11px; }
+        .field-hint {
+            display: block;
+            margin-top: 5px;
+            color: var(--muted);
+            font-size: 11px;
+            line-height: 1.4;
+        }
+        .group-actions {
+            display: grid;
+            grid-template-columns: minmax(120px, 1fr) auto auto;
+            gap: 6px;
+            align-items: center;
+        }
+        .group-actions input { min-width: 0; }
+        .sample-group-list { display: grid; gap: 8px; margin-top: 10px; }
+        .sample-group { padding-top: 7px; border-top: 1px solid #edf0f2; }
+        .sample-group h4 { margin: 0 0 5px; color: var(--muted); font-size: 11px; }
+        .sample-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+        .sample-chip {
+            padding: 5px 7px;
+            color: var(--ink);
+            background: #fff;
+            border: 1px solid var(--line-strong);
+            border-radius: var(--radius);
+            cursor: pointer;
+        }
+        .sample-chip[aria-pressed="true"] { color: var(--accent-dark); background: var(--accent-soft); border-color: var(--accent); }
+
+        .database-groups { border-top: 1px solid #edf0f2; }
+        .database-group { padding: 9px 0; border-bottom: 1px solid #edf0f2; }
+        .database-group:last-child { border-bottom: 0; padding-bottom: 0; }
+        .database-group h4 {
+            margin: 0 0 6px;
+            color: var(--muted);
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .database-options {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 5px 10px;
+        }
+        .check-option {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            min-height: 27px;
+        }
+        .check-option input { flex: 0 0 auto; }
+        .check-option label { overflow-wrap: anywhere; }
+        .check-option.unavailable { color: #9299a1; }
+        .check-option.unavailable label { cursor: not-allowed; }
+        .selection-summary { margin-top: 8px; color: var(--muted); font-size: 12px; }
+
+        .form-actions {
+            position: sticky;
+            bottom: 0;
+            z-index: 2;
+            display: flex;
+            justify-content: flex-end;
+            gap: 8px;
+            padding: 12px 16px;
+            background: #fff;
+            border-top: 1px solid var(--line);
+        }
+        .button {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 36px;
+            padding: 7px 14px;
+            color: var(--accent);
+            background: #fff;
+            border: 1px solid var(--accent);
+            border-radius: var(--radius);
             text-decoration: none;
-            font-weight: 500;
+            cursor: pointer;
         }
-        
-        .download-links a:hover {
-            text-decoration: underline;
+        .button:hover { color: var(--accent-dark); border-color: var(--accent-dark); }
+        .button.primary { color: #fff; background: var(--accent); }
+        .button.primary:hover { color: #fff; background: var(--accent-dark); }
+        .button.danger { color: var(--danger); border-color: #cf9b9b; }
+        .button:disabled { opacity: .55; cursor: default; }
+
+        .settings-drawer {
+            width: min(520px, 100%);
+            height: 100%;
+            max-height: 100%;
+            margin: 0 0 0 auto;
+            padding: 0;
+            color: var(--ink);
+            background: #fff;
+            border: 0;
+            border-left: 1px solid var(--line);
         }
-        
-        .info-box {
-            background: #f8f9fa;
-            border-left: 4px solid #667eea;
-            padding: 15px;
-            margin-bottom: 20px;
-            border-radius: 0 8px 8px 0;
+        .settings-drawer::backdrop { background: rgba(26, 32, 39, .34); }
+        .drawer-shell { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; height: 100%; }
+        .drawer-header, .drawer-footer {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 14px 18px;
+            background: #fff;
         }
-        
-        .info-box h4 {
-            color: #333;
-            margin-bottom: 8px;
+        .drawer-header { border-bottom: 1px solid var(--line); }
+        .drawer-footer { justify-content: flex-end; border-top: 1px solid var(--line); }
+        .drawer-header h2 {
+            margin: 0;
+            font-family: Georgia, "Times New Roman", serif;
+            font-size: 18px;
         }
-        
-        .info-box p {
-            color: #666;
-            font-size: 13px;
-            line-height: 1.6;
+        .drawer-body { overflow: auto; }
+        .settings-section { padding: 16px 18px; border-bottom: 1px solid var(--line); }
+        .settings-section h3 {
+            margin: 0 0 12px;
+            font-family: Georgia, "Times New Roman", serif;
+            font-size: 15px;
+        }
+        .settings-section details { margin-top: 12px; border-top: 1px solid #edf0f2; }
+        .settings-section summary { padding: 10px 0 2px; color: var(--accent-dark); cursor: pointer; }
+        fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
+        .plot-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 10px; }
+        .palette-role { margin-top: 10px; }
+        .palette-control {
+            display: block;
+        }
+        .palette-picker { position: relative; min-width: 0; }
+        .palette-value {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            border: 0;
+            opacity: 0;
+            pointer-events: none;
+        }
+        .palette-trigger {
+            display: flex;
+            width: 100%;
+            min-height: 38px;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            padding: 8px 10px;
+            color: var(--text);
+            background: #fff;
+            border: 1px solid var(--line-strong);
+            border-radius: var(--radius);
+            cursor: pointer;
+            font: inherit;
+            text-align: left;
+        }
+        .palette-trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+        .palette-trigger-preview { margin-left: auto; }
+        .palette-trigger::after { content: "▾"; color: var(--muted); margin-left: 8px; }
+        .palette-trigger-preview, .palette-option-preview {
+            display: flex;
+            flex: 0 0 auto;
+            width: 92px;
+            height: 20px;
+            overflow: hidden;
+            border: 1px solid rgba(0, 0, 0, .12);
+            border-radius: 3px;
+        }
+        .palette-trigger-preview span, .palette-option-preview span { flex: 1 1 0; min-width: 0; }
+        .palette-menu {
+            position: absolute;
+            z-index: 30;
+            top: calc(100% + 4px);
+            right: 0;
+            left: 0;
+            max-height: 260px;
+            overflow-y: auto;
+            padding: 4px;
+            background: #fff;
+            border: 1px solid var(--line-strong);
+            border-radius: var(--radius);
+            box-shadow: 0 8px 22px rgba(26, 32, 39, .16);
+        }
+        .palette-menu[hidden] { display: none; }
+        .palette-option {
+            display: grid;
+            width: 100%;
+            grid-template-columns: minmax(0, 1fr) 92px;
+            align-items: center;
+            gap: 10px;
+            padding: 8px;
+            color: var(--text);
+            background: #fff;
+            border: 0;
+            border-radius: 3px;
+            cursor: pointer;
+            font: inherit;
+            text-align: left;
+        }
+        .palette-option:hover, .palette-option[aria-selected="true"] { background: var(--accent-soft); }
+        .palette-option:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+        .status-band {
+            display: none;
+            padding: 11px 16px;
+            border-bottom: 1px solid var(--line);
+        }
+        .status-band.show { display: block; }
+        .status-band.pending, .status-band.running { color: var(--warning); background: var(--warning-soft); }
+        .status-band.completed { color: var(--success); background: var(--success-soft); }
+        .status-band.failed { color: var(--danger); background: var(--danger-soft); }
+        .status-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+        .progress-track { height: 4px; margin-top: 7px; overflow: hidden; background: #dfe4e9; }
+        .progress-fill { width: 0; height: 100%; background: var(--accent); transition: width .2s; }
+        .error-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+        .empty-state {
+            display: grid;
+            min-height: 430px;
+            place-items: center;
+            padding: 32px;
+            color: var(--muted);
+            text-align: center;
+        }
+        .empty-state[hidden] { display: none; }
+        .result-shell[hidden] { display: none; }
+        .view-tabs {
+            display: flex;
+            overflow-x: auto;
+            padding: 0 16px;
+            background: #fff;
+            border-bottom: 1px solid var(--line);
+        }
+        .view-tab {
+            flex: 0 0 auto;
+            padding: 11px 14px 9px;
+            color: var(--muted);
+            background: #fff;
+            border: 0;
+            border-bottom: 3px solid transparent;
+            cursor: pointer;
+        }
+        .view-tab.active { color: var(--accent-dark); border-bottom-color: var(--accent); font-weight: 700; }
+        .result-view { padding: 16px; }
+        .result-view.table-view { padding: 0; }
+
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            padding: 6px 0 20px;
+        }
+        .summary-item { min-width: 0; padding: 5px 16px; border-right: 1px solid var(--line); }
+        .summary-item:first-child { padding-left: 0; }
+        .summary-item:last-child { border-right: 0; }
+        .summary-value {
+            display: block;
+            overflow: hidden;
+            color: var(--ink);
+            font-size: 20px;
+            font-weight: 650;
+            line-height: 1.25;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .summary-label { display: block; margin-top: 3px; color: var(--muted); font-size: 12px; }
+        .overview-actions { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 16px; border-top: 1px solid var(--line); }
+        .methods-reference {
+            margin-top: 20px;
+            padding-top: 18px;
+            border-top: 1px solid var(--line);
+        }
+        .methods-reference h3 {
+            margin: 0 0 12px;
+            font-family: Georgia, "Times New Roman", serif;
+            font-size: 18px;
+        }
+        .methods-reference h4 { margin: 14px 0 6px; font-size: 14px; }
+        .methods-reference p { margin: 0 0 8px; color: var(--text); line-height: 1.75; }
+        .methods-reference ol { margin: 0 0 0 20px; padding: 0; color: var(--muted); }
+        .methods-reference li { margin-bottom: 7px; line-height: 1.55; }
+        .methods-reference a { color: var(--accent-dark); }
+        .ai-interpretation {
+            margin-top: 20px;
+            padding-top: 18px;
+            border-top: 1px solid var(--line);
+        }
+        .ai-interpretation h3 {
+            margin: 0 0 5px;
+            font-family: Georgia, "Times New Roman", serif;
+            font-size: 18px;
+        }
+        .ai-interpretation h4 { margin: 14px 0 5px; font-size: 14px; }
+        .ai-interpretation ul { margin: 0; padding-left: 20px; }
+        .ai-interpretation li { margin-bottom: 7px; line-height: 1.55; }
+        .ai-evidence-links { display: inline-flex; flex-wrap: wrap; gap: 4px; margin-left: 5px; }
+        .ai-evidence-links a { color: var(--accent-dark); font-size: 12px; white-space: nowrap; }
+        .ai-disclaimer { margin-top: 14px; color: var(--muted); font-size: 12px; line-height: 1.55; }
+
+        .result-toolbar {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--line);
+        }
+        .result-toolbar input { width: min(340px, 100%); }
+        .database-tabs { display: flex; overflow-x: auto; border-bottom: 1px solid var(--line); }
+        .database-tab {
+            flex: 0 0 auto;
+            padding: 9px 14px;
+            color: var(--muted);
+            background: #fff;
+            border: 0;
+            border-right: 1px solid var(--line);
+            border-bottom: 3px solid transparent;
+            cursor: pointer;
+        }
+        .database-tab.active { color: var(--accent-dark); border-bottom-color: var(--accent); font-weight: 700; }
+        .table-wrap { width: 100%; max-width: 100%; overflow: auto; }
+        table { min-width: 920px; width: 100%; border-collapse: collapse; font-size: 13px; }
+        th, td { padding: 8px 10px; border-bottom: 1px solid #e6e9ed; text-align: left; vertical-align: top; }
+        th { position: sticky; top: 0; z-index: 1; color: #30363d; background: #f2f4f6; white-space: nowrap; }
+        td { max-width: 360px; overflow-wrap: anywhere; }
+        tbody tr:hover { background: #f7f9fb; }
+        .pagination {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 8px;
+            padding: 10px 16px;
+            color: var(--muted);
+            border-top: 1px solid var(--line);
+        }
+
+        .figure-browser {
+            display: grid;
+            grid-template-columns: 210px minmax(0, 1fr);
+            gap: 16px;
+            min-height: 500px;
+        }
+        .figure-list { overflow: auto; max-height: 660px; border-right: 1px solid var(--line); padding-right: 12px; }
+        .figure-thumb {
+            display: block;
+            width: 100%;
+            margin: 0 0 8px;
+            padding: 7px;
+            color: var(--ink);
+            background: #fff;
+            border: 1px solid var(--line);
+            border-radius: var(--radius);
+            text-align: left;
+            cursor: pointer;
+        }
+        .figure-thumb.active { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
+        .figure-thumb img { display: block; width: 100%; height: 92px; object-fit: contain; background: #fff; }
+        .figure-thumb span { display: block; margin-top: 5px; overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+        .figure-preview {
+            display: grid;
+            min-width: 0;
+            min-height: 480px;
+            place-items: center;
+        }
+        .figure-preview img { display: block; max-width: 100%; max-height: 680px; object-fit: contain; background: #fff; }
+        .figure-preview a { color: var(--accent); }
+        .figure-caption { margin-top: 10px; color: var(--muted); font-size: 12px; text-align: center; }
+
+        .artifact-groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+        .artifact-group h3 { margin: 0 0 7px; color: var(--muted); font-size: 12px; }
+        .artifact-list { margin: 0; padding: 0; list-style: none; }
+        .artifact-list li { display: flex; justify-content: space-between; gap: 10px; padding: 7px 0; border-bottom: 1px solid #edf0f2; }
+        .artifact-list a { color: var(--accent); overflow-wrap: anywhere; }
+        .artifact-size { flex: 0 0 auto; color: var(--muted); font-size: 12px; }
+        .danger-zone { display: flex; justify-content: flex-end; margin-top: 22px; padding-top: 16px; border-top: 1px solid var(--line); }
+
+        @media (max-width: 980px) {
+            .workspace { grid-template-columns: minmax(0, 1fr); }
+            .controls { position: static; max-height: none; }
+            .form-actions { position: static; }
+        }
+        @media (max-width: 720px) {
+            .app-header { padding: 9px 14px; }
+            .workspace { width: calc(100% - 16px); margin-top: 8px; }
+            .segmented { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .segmented label:nth-of-type(2) { border-right: 0; }
+            .field-row, .field-row.three, .database-options, .plot-options, .artifact-groups { grid-template-columns: 1fr; }
+            .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .summary-item { border-bottom: 1px solid var(--line); }
+            .summary-item:nth-child(2) { border-right: 0; }
+            .summary-item:nth-child(n+3) { padding-top: 12px; border-bottom: 0; }
+            .summary-item:nth-child(3) { padding-left: 0; }
+            .figure-browser { grid-template-columns: minmax(0, 1fr); min-height: 0; }
+            .figure-list { display: flex; gap: 8px; max-height: none; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line); padding: 0 0 10px; }
+            .figure-thumb { flex: 0 0 150px; margin: 0; }
+            .figure-preview { min-height: 320px; }
+            .result-toolbar { align-items: stretch; }
+            .result-toolbar input { width: 100%; }
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="header">
-            <h1>AllEnricher</h1>
-            <p>基因集富集分析工具</p>
+    <header class="app-header">
+        <div class="brand">
+            <h1>AllEnricher <small>v{{ ALLENRICHER_VERSION }}</small></h1>
+            <span>Gene Function Enrichment Workbench</span>
         </div>
-        
-        <div class="card">
-            <div class="info-box">
-                <h4>使用说明</h4>
-                <p>输入基因符号列表（每行一个），选择物种和数据库，点击"开始分析"。分析完成后可查看结果表格、下载报告和图表。</p>
+        <a class="header-link" href="/docs" target="_blank" rel="noopener">API Documentation</a>
+    </header>
+
+    <main class="workspace">
+        <aside class="panel controls" aria-label="Analysis settings">
+            <div class="panel-heading">
+                <h2>New analysis</h2>
+                <span id="resourceStatus" class="status-meta">Loading resources</span>
             </div>
-            
-            <form id="analyzeForm">
-                <div class="form-group">
-                    <label for="genes">基因列表 *</label>
-                    <textarea id="genes" name="genes" placeholder="BRCA1&#10;TP53&#10;EGFR&#10;MYC&#10;KRAS" required></textarea>
-                </div>
-                
-                <div class="row">
-                    <div class="form-group">
-                        <label for="species">物种</label>
-                        <select id="species" name="species">
-                            <option value="hsa">人类 (Homo sapiens)</option>
-                            <option value="mmu">小鼠 (Mus musculus)</option>
-                            <option value="rno">大鼠 (Rattus norvegicus)</option>
-                            <option value="dre">斑马鱼 (Danio rerio)</option>
-                            <option value="dme">果蝇 (Drosophila melanogaster)</option>
-                            <option value="cel">线虫 (Caenorhabditis elegans)</option>
-                            <option value="sce">酿酒酵母 (Saccharomyces cerevisiae)</option>
-                        </select>
+            <form id="analysisForm">
+                <section class="workflow-step">
+                    <span class="step-number" aria-hidden="true">1</span>
+                    <div class="step-content">
+                        <h3 class="step-title">Choose an analysis method</h3>
+                        <div class="segmented" role="radiogroup" aria-label="Analysis method">
+                            <input id="methodOra" type="radio" name="method" value="hypergeometric" checked>
+                            <label for="methodOra">ORA</label>
+                            <input id="methodGsea" type="radio" name="method" value="gsea">
+                            <label for="methodGsea">GSEA</label>
+                            <input id="methodSsgsea" type="radio" name="method" value="ssgsea">
+                            <label for="methodSsgsea">ssGSEA</label>
+                            <input id="methodGsva" type="radio" name="method" value="gsva">
+                            <label for="methodGsva">GSVA</label>
+                        </div>
+                        <div id="methodSummary" class="method-summary" aria-live="polite"></div>
                     </div>
-                    
-                    <div class="form-group">
-                        <label>分析数据库</label>
-                        <div class="checkbox-group">
-                            <div class="checkbox-item">
-                                <input type="checkbox" id="db_go" name="databases" value="GO" checked>
-                                <label for="db_go">GO</label>
+                </section>
+
+                <section class="workflow-step">
+                    <span class="step-number" aria-hidden="true">2</span>
+                    <div class="step-content">
+                        <h3 class="step-title">Provide input data</h3>
+                        <div id="oraInputs" class="method-input">
+                            <div class="segmented two input-mode" role="radiogroup" aria-label="ORA Input method">
+                                <input id="oraPasteMode" type="radio" name="oraMode" value="paste" checked>
+                                <label for="oraPasteMode">Paste genes</label>
+                                <input id="oraFileMode" type="radio" name="oraMode" value="file">
+                                <label for="oraFileMode">Upload file</label>
                             </div>
-                            <div class="checkbox-item">
-                                <input type="checkbox" id="db_kegg" name="databases" value="KEGG" checked>
-                                <label for="db_kegg">KEGG</label>
+                            <div id="oraPasteField" class="field">
+                                <label for="geneText">Gene list</label>
+                                <textarea id="geneText" spellcheck="false" aria-describedby="geneTextHint" placeholder="TP53&#10;BRCA1&#10;EGFR"></textarea>
+                                <small id="geneTextHint" class="field-hint">Enter one gene ID per line. The identifier type must match the selected database.</small>
                             </div>
-                            <div class="checkbox-item">
-                                <input type="checkbox" id="db_reactome" name="databases" value="Reactome">
-                                <label for="db_reactome">Reactome</label>
+                            <div id="oraFileField" class="field" hidden>
+                                <label for="geneFile">Gene-list file</label>
+                                <div class="file-picker">
+                                    <input id="geneFile" class="native-file-input" type="file" accept=".txt,text/plain" aria-describedby="geneFileHint geneFileName">
+                                    <button class="button file-choose" type="button" data-file-input="geneFile">Choose file</button>
+                                    <span id="geneFileName" class="file-name" aria-live="polite">No file selected</span>
+                                </div>
+                                <small id="geneFileHint" class="field-hint">Plain-text file with one gene ID per line and no header.</small>
+                            </div>
+                        </div>
+                        <div id="gseaInputs" class="method-input" hidden>
+                            <div class="segmented two input-mode" role="radiogroup" aria-label="GSEA Input method">
+                                <input id="gseaRankedMode" type="radio" name="gseaMode" value="ranked" checked>
+                                <label for="gseaRankedMode">Ranked list</label>
+                                <input id="gseaDifferentialMode" type="radio" name="gseaMode" value="differential">
+                                <label for="gseaDifferentialMode">Differential analysis table</label>
+                            </div>
+                            <div id="gseaRankedField" class="field">
+                                <label for="rankedFile">Ranked gene table</label>
+                                <div class="file-picker">
+                                    <input id="rankedFile" class="native-file-input" type="file" accept=".tsv,.csv,text/tab-separated-values,text/csv" aria-describedby="rankedFileHint rankedFileName">
+                                    <button class="button file-choose" type="button" data-file-input="rankedFile">Choose file</button>
+                                    <span id="rankedFileName" class="file-name" aria-live="polite">No file selected</span>
+                                </div>
+                                <small id="rankedFileHint" class="field-hint">TSV/CSV with <code>gene</code> and numeric <code>weight</code> columns.</small>
+                            </div>
+                            <div id="gseaDifferentialField" hidden>
+                                <div class="field">
+                                    <label for="differentialFile">Differential analysis results</label>
+                                    <div class="file-picker">
+                                        <input id="differentialFile" class="native-file-input" type="file" accept=".tsv,.csv,text/tab-separated-values,text/csv" aria-describedby="differentialFileHint differentialFileName">
+                                        <button class="button file-choose" type="button" data-file-input="differentialFile">Choose file</button>
+                                        <span id="differentialFileName" class="file-name" aria-live="polite">No file selected</span>
+                                    </div>
+                                    <small id="differentialFileHint" class="field-hint" aria-live="polite">TSV/CSV with a header, a gene column, and at least one numeric ranking statistic.</small>
+                                </div>
+                                <div id="differentialColumnSettings" hidden>
+                                    <div class="field-row">
+                                        <div class="field">
+                                            <label for="differentialGeneColumn">Gene column</label>
+                                            <select id="differentialGeneColumn"></select>
+                                        </div>
+                                        <div class="field">
+                                            <label for="differentialMetricColumn">Ranking-statistic column</label>
+                                            <select id="differentialMetricColumn"></select>
+                                        </div>
+                                    </div>
+                                    <div class="field">
+                                        <label for="differentialDirection">Ranking direction</label>
+                                        <select id="differentialDirection">
+                                            <option value="descending">Rank higher values first</option>
+                                            <option value="ascending">Rank lower values first and reverse the sign</option>
+                                        </select>
+                                        <small class="field-hint">Use a signed statistic when possible, such as Wald statistic, t statistic or log2FC; do not use P values.</small>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div id="activityInputs" class="method-input" hidden>
+                            <div class="field">
+                                <label for="expressionFile">Expression matrix</label>
+                                <div class="file-picker">
+                                    <input id="expressionFile" class="native-file-input" type="file" accept=".tsv,.csv,text/tab-separated-values,text/csv" aria-describedby="expressionFileHint expressionFileName">
+                                    <button class="button file-choose" type="button" data-file-input="expressionFile">Choose file</button>
+                                    <span id="expressionFileName" class="file-name" aria-live="polite">No file selected</span>
+                                </div>
+                                <small id="expressionFileHint" class="field-hint">TSV/CSV with gene IDs in the first column, sample names in the header, and numeric expression values.</small>
+                            </div>
+                            <div class="field">
+                                <span class="field-label">Sample groups (optional)</span>
+                                <input id="groups" type="hidden" aria-describedby="groupsHint">
+                                <div id="groupEditor" hidden>
+                                    <div class="group-actions">
+                                        <input id="sampleGroupName" type="text" list="sampleGroupOptions" aria-label="Group name" placeholder="Enter a group name">
+                                        <datalist id="sampleGroupOptions"></datalist>
+                                        <button id="assignSampleGroup" class="button" type="button">Assign selected</button>
+                                        <button id="clearSampleGroup" class="button" type="button">Clear</button>
+                                    </div>
+                                    <div id="sampleGroupList" class="sample-group-list" aria-label="Sample groups"></div>
+                                </div>
+                                <small id="groupsHint" class="field-hint" aria-live="polite">Samples are read from the matrix header. Common replicate suffixes can be used to infer groups automatically.</small>
                             </div>
                         </div>
                     </div>
-                </div>
-                
-                <div class="row">
-                    <div class="form-group">
-                        <label for="method">分析方法</label>
-                        <select id="method" name="method">
-                            <option value="fisher">Fisher 精确检验</option>
-                            <option value="hypergeometric">超几何检验</option>
-                        </select>
+                </section>
+
+                <section class="workflow-step">
+                    <span class="step-number" aria-hidden="true">3</span>
+                    <div class="step-content">
+                        <h3 class="step-title">Define the analysis scope</h3>
+                        <div class="field">
+                            <label for="species">Species</label>
+                            <input id="species" type="text" list="speciesOptions" autocomplete="off" value="Human (Homo sapiens) - 9606">
+                            <datalist id="speciesOptions"></datalist>
+                        </div>
+                        <fieldset>
+                            <legend>Databases</legend>
+                            <div id="databaseGrid" class="database-groups"></div>
+                            <div id="databaseSummary" class="selection-summary" aria-live="polite"></div>
+                        </fieldset>
                     </div>
-                    
-                    <div class="form-group">
-                        <label for="correction">多重检验校正</label>
-                        <select id="correction" name="correction">
-                            <option value="BH">BH (Benjamini-Hochberg)</option>
-                            <option value="BY">BY (Benjamini-Yekutieli)</option>
-                            <option value="bonferroni">Bonferroni</option>
-                            <option value="holm">Holm</option>
-                        </select>
-                    </div>
-                </div>
-                
-                <div class="row">
-                    <div class="form-group">
-                        <label for="pvalue_cutoff">P 值阈值</label>
-                        <input type="number" id="pvalue_cutoff" name="pvalue_cutoff" value="0.05" min="0" max="1" step="0.01">
-                    </div>
-                    
-                    <div class="form-group">
-                        <label for="qvalue_cutoff">Q 值阈值</label>
-                        <input type="number" id="qvalue_cutoff" name="qvalue_cutoff" value="0.05" min="0" max="1" step="0.01">
-                    </div>
-                </div>
-                
-                <div class="btn-container">
-                    <button type="submit" class="btn" id="submitBtn">开始分析</button>
+                </section>
+
+                <div class="form-actions">
+                    <button id="resetButton" class="button" type="reset">Reset</button>
+                    <button id="openAdvanced" class="button" type="button">Advanced settings</button>
+                    <button id="submitButton" class="button primary" type="submit">Start analysis</button>
                 </div>
             </form>
-            
-            <div id="status" class="status">
-                <div id="statusText"></div>
-                <div class="progress-bar">
-                    <div id="progressFill" class="progress-fill"></div>
-                </div>
+        </aside>
+
+        <section class="panel output" aria-live="polite">
+            <div class="panel-heading">
+                <h2>Analysis results</h2>
+                <span id="jobLabel" class="status-meta"></span>
             </div>
+            <div id="statusBand" class="status-band">
+                <div class="status-row">
+                    <strong id="statusText"></strong>
+                    <span id="statusDetail" class="status-meta"></span>
+                </div>
+                <div class="progress-track"><div id="progressFill" class="progress-fill"></div></div>
+                <div id="errorText" class="error-text"></div>
+            </div>
+            <div id="emptyState" class="empty-state">No analysis has been submitted</div>
+            <div id="resultShell" class="result-shell" hidden>
+                <nav class="view-tabs" aria-label="Result views" role="tablist">
+                    <button id="overviewViewTab" class="view-tab active" type="button" data-view="overview" role="tab" aria-controls="overviewView" aria-selected="true">Overview</button>
+                    <button id="tableViewTab" class="view-tab" type="button" data-view="table" role="tab" aria-controls="tableView" aria-selected="false" tabindex="-1">Results</button>
+                    <button id="figuresViewTab" class="view-tab" type="button" data-view="figures" role="tab" aria-controls="figuresView" aria-selected="false" tabindex="-1">Figures</button>
+                    <button id="filesViewTab" class="view-tab" type="button" data-view="files" role="tab" aria-controls="filesView" aria-selected="false" tabindex="-1">Files and logs</button>
+                </nav>
+
+                <section id="overviewView" class="result-view" data-result-view="overview" role="tabpanel" aria-labelledby="overviewViewTab">
+                    <div class="summary-grid">
+                        <div class="summary-item"><span id="summaryMethod" class="summary-value"> - </span><span class="summary-label">Analysis method</span></div>
+                        <div class="summary-item"><span id="summarySpecies" class="summary-value"> - </span><span class="summary-label">Species</span></div>
+                        <div class="summary-item"><span id="summaryDatabases" class="summary-value"> - </span><span class="summary-label">Databases</span></div>
+                        <div class="summary-item"><span id="summaryResults" class="summary-value"> - </span><span class="summary-label">Result entries</span></div>
+                    </div>
+                    <div class="overview-actions">
+                        <a id="tsvLink" class="button" href="#" hidden>Download results TSV</a>
+                        <a id="reportLink" class="button" href="#" target="_blank" rel="noopener" hidden>Open HTML report</a>
+                    </div>
+                    <section id="methodsReference" class="methods-reference" hidden>
+                        <h3 id="methodsReferenceTitle"></h3>
+                        <h4 id="methodsAnalysisHeading"></h4>
+                        <div id="methodsParagraphs"></div>
+                        <h4 id="methodsReferencesHeading"></h4>
+                        <ol id="methodsReferences"></ol>
+                    </section>
+                    <section id="aiInterpretation" class="ai-interpretation" hidden>
+                        <h3>AI interpretation</h3>
+                        <p id="aiInterpretationMeta" class="field-hint"></p>
+                        <div id="aiInterpretationContent"></div>
+                        <p class="ai-disclaimer">AI text is restricted to the linked evidence and should be reviewed against the source results before use.</p>
+                    </section>
+                </section>
+
+                <section id="tableView" class="result-view table-view" data-result-view="table" role="tabpanel" aria-labelledby="tableViewTab" hidden>
+                    <div class="result-toolbar">
+                        <input id="resultSearch" type="text" placeholder="Search results in the selected database">
+                    </div>
+                    <div id="resultTabs" class="database-tabs" role="tablist"></div>
+                    <div class="table-wrap">
+                        <table><thead id="resultHead"></thead><tbody id="resultBody"></tbody></table>
+                    </div>
+                    <div class="pagination">
+                        <button id="previousPage" class="button" type="button">Previous</button>
+                        <span id="pageLabel"></span>
+                        <button id="nextPage" class="button" type="button">Next</button>
+                    </div>
+                </section>
+
+                <section id="figuresView" class="result-view" data-result-view="figures" role="tabpanel" aria-labelledby="figuresViewTab" hidden>
+                    <div id="figureEmpty" class="empty-state">This analysis has no previewable figures</div>
+                    <div id="figureBrowser" class="figure-browser" hidden>
+                        <div id="figureList" class="figure-list" aria-label="Figure list"></div>
+                        <div>
+                            <div id="figurePreview" class="figure-preview"></div>
+                            <div id="figureCaption" class="figure-caption"></div>
+                        </div>
+                    </div>
+                </section>
+
+                <section id="filesView" class="result-view" data-result-view="files" role="tabpanel" aria-labelledby="filesViewTab" hidden>
+                    <div id="artifactGroups" class="artifact-groups"></div>
+                    <div class="danger-zone">
+                        <button id="deleteButton" class="button danger" type="button">Delete analysis</button>
+                    </div>
+                </section>
+            </div>
+        </section>
+    </main>
+
+    <footer class="site-footer">
+        <p>GitHub: <a href="https://github.com/zhangducsu/AllEnricher-v2" target="_blank" rel="noopener noreferrer">https://github.com/zhangducsu/AllEnricher-v2</a></p>
+        <p><strong>Please cite: </strong> <cite>Zhang D, Hu Q, Liu X, et al. AllEnricher: a comprehensive gene set function enrichment tool for both model and non-model species. BMC Bioinformatics. 2020;21:106.</cite></p>
+    </footer>
+
+    <dialog id="advancedDialog" class="settings-drawer" aria-labelledby="advancedTitle">
+        <div class="drawer-shell">
+            <header class="drawer-header">
+                <h2 id="advancedTitle">Advanced settings</h2>
+                <button id="closeAdvancedTop" class="button" type="button">Close</button>
+            </header>
+            <form id="advancedForm" class="drawer-body">
+                <section id="significanceSettings" class="settings-section">
+                    <h3>Statistics and background</h3>
+                    <div class="field-row">
+                        <div class="field">
+                            <label for="correction">Multiple-testing correction</label>
+                            <select id="correction"><option>BH</option><option>BY</option><option>bonferroni</option><option>holm</option><option>none</option></select>
+                        </div>
+                        <div id="minGenesField" class="field">
+                            <label for="minGenes">Minimum ORA gene hits</label>
+                            <input id="minGenes" type="number" value="3" min="1">
+                        </div>
+                    </div>
+                    <div class="field-row">
+                        <div class="field"><label for="pvalue">P value cutoff</label><input id="pvalue" type="number" value="0.05" min="0.000001" max="1" step="any"></div>
+                        <div class="field"><label for="qvalue">Q value cutoff</label><input id="qvalue" type="number" value="0.05" min="0.000001" max="1" step="any"></div>
+                    </div>
+                    <div id="oraBackgroundSettings">
+                        <div class="field">
+                            <label for="backgroundMode">Background mode</label>
+                            <select id="backgroundMode"><option value="annotated">Annotated genes</option><option value="genome">Whole genome</option><option value="custom">Custom</option></select>
+                        </div>
+                        <div id="backgroundFileField" class="field" hidden>
+                            <label for="backgroundFile">Background gene file</label>
+                            <div class="file-picker">
+                                <input id="backgroundFile" class="native-file-input" type="file" accept=".txt,text/plain" aria-describedby="backgroundFileHint backgroundFileName">
+                                <button class="button file-choose" type="button" data-file-input="backgroundFile">Choose file</button>
+                                <span id="backgroundFileName" class="file-name" aria-live="polite">No file selected</span>
+                            </div>
+                            <small id="backgroundFileHint" class="field-hint">Plain-text file with one background gene ID per line and no header.</small>
+                        </div>
+                    </div>
+                    <div class="check-option"><input id="onlySignificant" type="checkbox"><label for="onlySignificant">Keep only significant entries in result tables</label></div>
+                </section>
+
+                <section class="settings-section">
+                    <h3>Output and figures</h3>
+                    <div class="check-option"><input id="generatePlots" type="checkbox" checked><label for="generatePlots">Generate figures</label></div>
+                    <div class="check-option"><input id="generateReport" type="checkbox" checked><label for="generateReport">Generate HTML report</label></div>
+                    <input id="methodsLanguage" type="hidden" value="en">
+                    <div id="plotOutputSettings">
+                        <fieldset id="plotSettings">
+                            <legend>Figure types</legend>
+                            <div id="plotTypeOptions" class="plot-options"></div>
+                        </fieldset>
+                        <div class="field-row three" style="margin-top: 12px;">
+                            <div class="field"><label for="plotFormat">Format</label><select id="plotFormat"><option>png</option><option>pdf</option><option>svg</option></select></div>
+                            <div class="field"><label for="plotDpi">DPI</label><input id="plotDpi" type="number" value="300" min="72" max="1200"></div>
+                            <div class="field"><label for="style">Figure style</label><select id="style"><option value="nature">Nature</option><option value="science">Science</option><option value="presentation">Presentation</option></select></div>
+                        </div>
+                        <input id="useRPlots" type="hidden" value="true">
+                        <details id="paletteSettings">
+                            <summary>Color palettes</summary>
+                            <div id="categoricalPaletteField" class="palette-role">
+                                <label for="categoricalPaletteTrigger">Categorical palette</label>
+                                <div class="palette-control">
+                                    <div class="palette-picker" data-palette-role="categorical">
+                                        <select id="categoricalPalette" class="palette-value" tabindex="-1" aria-hidden="true"><option value="">Automatic (Tol Bright)</option><option value="okabe_ito">Okabe-Ito</option><option value="tol_bright">Tol Bright</option><option value="tol_muted">Tol Muted</option><option value="nature">Nature</option><option value="science">Science</option><option value="nejm">NEJM</option><option value="lancet">Lancet</option><option value="jama">JAMA</option></select>
+                                        <button id="categoricalPaletteTrigger" class="palette-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="categoricalPaletteMenu"></button>
+                                        <div id="categoricalPaletteMenu" class="palette-menu" role="listbox" hidden></div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div id="sequentialPaletteField" class="palette-role">
+                                <label for="sequentialPaletteTrigger">Sequential palette</label>
+                                <div class="palette-control">
+                                    <div class="palette-picker" data-palette-role="sequential">
+                                        <select id="sequentialPalette" class="palette-value" tabindex="-1" aria-hidden="true"><option value="">Automatic (ColorBrewer Blues)</option><option value="viridis">Viridis</option><option value="cividis">Cividis</option><option value="colorbrewer_blues">ColorBrewer Blues</option><option value="colorbrewer_purd">ColorBrewer PuRd</option></select>
+                                        <button id="sequentialPaletteTrigger" class="palette-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="sequentialPaletteMenu"></button>
+                                        <div id="sequentialPaletteMenu" class="palette-menu" role="listbox" hidden></div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div id="divergingPaletteField" class="palette-role">
+                                <label for="divergingPaletteTrigger">Diverging palette</label>
+                                <div class="palette-control">
+                                    <div class="palette-picker" data-palette-role="diverging">
+                                        <select id="divergingPalette" class="palette-value" tabindex="-1" aria-hidden="true"><option value="">Automatic (ColorBrewer RdBu)</option><option value="colorbrewer_rdbu">ColorBrewer RdBu</option><option value="colorbrewer_brbg">ColorBrewer BrBG</option><option value="colorbrewer_prgn">ColorBrewer PRGn</option><option value="tol_sunset">Tol Sunset</option></select>
+                                        <button id="divergingPaletteTrigger" class="palette-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="divergingPaletteMenu"></button>
+                                        <div id="divergingPaletteMenu" class="palette-menu" role="listbox" hidden></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </details>
+                    </div>
+                </section>
+
+                <section id="gseaSettings" class="settings-section" hidden>
+                    <h3>GSEA settings</h3>
+                    <div id="gseaEnrichmentSettings">
+                        <div class="field">
+                            <label for="gmtFile">Running-ES gene sets GMT (optional)</label>
+                            <div class="file-picker">
+                                <input id="gmtFile" class="native-file-input" type="file" accept=".gmt" aria-describedby="gmtFileHint gmtFileName">
+                                <button class="button file-choose" type="button" data-file-input="gmtFile">Choose file</button>
+                                <span id="gmtFileName" class="file-name" aria-live="polite">No file selected</span>
+                            </div>
+                            <small id="gmtFileHint" class="field-hint">GMT file with a gene-set ID, description, and tab-delimited gene list on each row.</small>
+                        </div>
+                        <div class="field-row">
+                            <div class="field"><label for="gseaTopUp">Top positive pathways</label><input id="gseaTopUp" type="number" value="5" min="0"></div>
+                            <div class="field"><label for="gseaTopDown">Top negative pathways</label><input id="gseaTopDown" type="number" value="5" min="0"></div>
+                        </div>
+                    </div>
+                    <div id="gseaMultiSettings">
+                        <div class="field-row">
+                            <div class="field"><label for="gseaMultiTopUp">Positive pathways per figure</label><input id="gseaMultiTopUp" type="number" value="3" min="0"></div>
+                            <div class="field"><label for="gseaMultiTopDown">Negative pathways per figure</label><input id="gseaMultiTopDown" type="number" value="3" min="0"></div>
+                        </div>
+                    </div>
+                    <div id="gseaEmapplotSettings">
+                        <div class="field-row three">
+                            <div class="field"><label for="emapplotQvalue">Network FDR</label><input id="emapplotQvalue" type="number" value="0.05" min="0.000001" max="1" step="any"></div>
+                            <div class="field"><label for="emapplotMinCount">Minimum gene count</label><input id="emapplotMinCount" type="number" value="3" min="1"></div>
+                            <div class="field"><label for="emapplotTopN">Maximum pathways</label><input id="emapplotTopN" type="number" value="30" min="1"></div>
+                        </div>
+                    </div>
+                </section>
+
+                <section id="tfSizeSettings" class="settings-section" hidden>
+                    <h3>Transcription factor gene sets</h3>
+                    <div class="field-row">
+                        <div class="field"><label for="tfMinSize">Minimum size</label><input id="tfMinSize" type="number" min="1"></div>
+                        <div class="field"><label for="tfMaxSize">Maximum size</label><input id="tfMaxSize" type="number" min="1"></div>
+                    </div>
+                </section>
+
+                <section class="settings-section">
+                    <h3>AI interpretation</h3>
+                    <div class="check-option"><input id="generateAi" type="checkbox"><label for="generateAi">Generate an evidence-linked AI interpretation</label></div>
+                    <div id="aiSettings" hidden>
+                        <div class="field-row">
+                            <div class="field">
+                                <label for="aiBackend">Configured backend</label>
+                                <select id="aiBackend">
+                                    <option value="deepseek">DeepSeek</option>
+                                    <option value="openai">OpenAI</option>
+                                    <option value="claude">Claude</option>
+                                    <option value="glm">GLM</option>
+                                    <option value="minimax">MiniMax</option>
+                                    <option value="ollama">Ollama</option>
+                                    <option value="mock">Mock (validation only)</option>
+                                </select>
+                                <small id="aiBackendHint" class="field-hint" aria-live="polite">Checking server-side AI configuration...</small>
+                            </div>
+                            <div class="field">
+                                <label for="aiMode">Interpretation profile</label>
+                                <select id="aiMode"><option value="summary">Summary</option><option value="reviewer">Reviewer</option><option value="caption">Figure caption</option></select>
+                            </div>
+                        </div>
+                        <div class="field">
+                            <label for="aiTopN">Evidence entries per database (optional)</label>
+                            <input id="aiTopN" type="number" min="1" placeholder="Method default: ORA 15; GSEA 10 per direction; ssGSEA/GSVA 10">
+                            <small class="field-hint">Credentials and model settings are read from the server configuration; this form never stores API keys.</small>
+                        </div>
+                    </div>
+                </section>
+
+            </form>
+            <footer class="drawer-footer">
+                <button id="closeAdvanced" class="button primary" type="button">Done</button>
+            </footer>
         </div>
-        
-        <div id="results" class="card results">
-            <h2>分析结果</h2>
-            <div class="database-tabs" id="dbTabs"></div>
-            <div id="tabContents"></div>
-            <div class="download-links" id="downloadLinks"></div>
-        </div>
-    </div>
-    
+    </dialog>
+
     <script>
-        let currentJobId = null;
-        let statusInterval = null;
-        
-        document.getElementById('analyzeForm').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            
-            const submitBtn = document.getElementById('submitBtn');
-            submitBtn.disabled = true;
-            submitBtn.textContent = '提交中...';
-            
-            // 收集表单数据
-            const genes = document.getElementById('genes').value
-                .split('\n')
-                .map(g => g.trim())
-                .filter(g => g.length > 0);
-            
-            const databases = Array.from(document.querySelectorAll('input[name="databases"]:checked'))
-                .map(cb => cb.value);
-            
-            if (databases.length === 0) {
-                alert('请至少选择一个数据库');
-                submitBtn.disabled = false;
-                submitBtn.textContent = '开始分析';
+        "use strict";
+
+        const METHOD_PLOTS = {
+            hypergeometric: [
+                ["barplot", "Bar plot", true],
+                ["lollipop", "Lollipop plot", true]
+            ],
+            gsea: [
+                ["enrichment", "Single-pathway enrichment plot", true],
+                ["enrichment2", "Multi-pathway enrichment plot", true],
+                ["barplot", "Bar plot", true],
+                ["lollipop", "Lollipop plot", true],
+                ["ridgeplot", "Ridge plot", true],
+                ["emapplot", "Pathway network", false]
+            ],
+            ssgsea: [
+                ["heatmap", "Activity heatmap", true],
+                ["group_comparison", "Group comparison", true],
+                ["correlation", "Sample correlation", true]
+            ],
+            gsva: [
+                ["heatmap", "Activity heatmap", true],
+                ["group_comparison", "Group comparison", true],
+                ["correlation", "Sample correlation", true]
+            ]
+        };
+        const DATABASE_GROUPS = [
+            ["Functions and pathways", ["GO", "KEGG", "Reactome", "WikiPathways"]],
+            ["Diseases", ["DO", "DisGeNET"]],
+            ["Transcription factors", ["TRRUST", "ChEA3", "AnimalTFDB", "hTFtarget"]],
+            ["Custom databases", ["CUSTOM"]]
+        ];
+        const TF_DATABASES = new Set(["TRRUST", "ChEA3", "AnimalTFDB", "hTFtarget"]);
+        const METHOD_DESCRIPTIONS = {
+            hypergeometric: ["ORA", "Tests whether genes of interest occur more often than expected in each annotated gene set. Suitable for differential or candidate gene lists."],
+            gsea: ["GSEA", "Tests enrichment at either end of a signed, genome-wide ranked list. No differential-gene cutoff is required."],
+            ssgsea: ["ssGSEA", "Calculates one enrichment score per gene set and sample from an expression matrix. Suitable for comparing pathway activity across samples."],
+            gsva: ["GSVA", "Estimates continuous gene-set activity across samples from an expression matrix. Suitable for unsupervised activity profiling and group comparisons."]
+        };
+        const PLOT_PALETTE_ROLES = {
+            hypergeometric: {
+                barplot: ["categorical", "sequential"],
+                lollipop: ["sequential"]
+            },
+            gsea: {
+                enrichment: ["diverging"],
+                enrichment2: ["categorical", "diverging"],
+                barplot: ["categorical", "sequential"],
+                lollipop: ["sequential"],
+                ridgeplot: ["sequential"],
+                emapplot: ["diverging"]
+            },
+            ssgsea: {
+                heatmap: ["categorical", "diverging"],
+                group_comparison: ["categorical"],
+                correlation: ["categorical", "diverging"]
+            },
+            gsva: {
+                heatmap: ["categorical", "diverging"],
+                group_comparison: ["categorical"],
+                correlation: ["categorical", "diverging"]
+            }
+        };
+        const DEFAULT_PALETTES = {
+            categorical: "tol_bright",
+            sequential: "colorbrewer_blues",
+            diverging: "colorbrewer_rdbu"
+        };
+        const PALETTE_COLORS = {
+            okabe_ito: ["#000000", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7"],
+            tol_bright: ["#4477AA", "#66CCEE", "#228833", "#CCBB44", "#EE6677", "#AA3377", "#BBBBBB"],
+            tol_muted: ["#332288", "#88CCEE", "#44AA99", "#117733", "#999933", "#DDCC77", "#CC6677", "#882255", "#AA4499", "#DDDDDD"],
+            nature: ["#0C5DA5", "#FF9500", "#00B945", "#FF2C00", "#845B97", "#474747", "#9E9E9E"],
+            science: ["#1F77B4", "#FF7F0E", "#2CA02C", "#D62728", "#9467BD", "#8C564B", "#E377C2", "#7F7F7F", "#BCBD22", "#17BECF"],
+            nejm: ["#BC3C29", "#0072B5", "#E18727", "#20854E", "#7876B1", "#6F99AD", "#FFDC91", "#EE4C97"],
+            lancet: ["#00468B", "#ED0000", "#42B540", "#0099B4", "#925E9F", "#FDAF91", "#AD002A", "#ADB6B6"],
+            jama: ["#374E55", "#DF8F44", "#00A1D5", "#B24745", "#79AF97", "#6A6599", "#80796B"],
+            viridis: ["#365C8D", "#1FA187"],
+            cividis: ["#00204C", "#575D6D"],
+            colorbrewer_blues: ["#9ECAE1", "#08519C"],
+            colorbrewer_purd: ["#DF65B0", "#980043"],
+            colorbrewer_rdbu: ["#053061", "#2166AC", "#4393C3", "#92C5DE", "#D1E5F0", "#F7F7F7", "#FDDBC7", "#F4A582", "#D6604D", "#B2182B", "#67001F"],
+            colorbrewer_brbg: ["#543005", "#8C510A", "#BF812D", "#DFC27D", "#F6E8C3", "#F5F5F5", "#C7EAE5", "#80CDC1", "#35978F", "#01665E", "#003C30"],
+            colorbrewer_prgn: ["#762A83", "#9970AB", "#C2A5CF", "#E7D4E8", "#F7F7F7", "#D9F0D3", "#ACD39E", "#5AAE61", "#1B7837"],
+            tol_sunset: ["#364B9A", "#4A7BB7", "#6EA6CD", "#98CAE1", "#C2E4EF", "#EAECCC", "#FEDA8B", "#FDB366", "#F67E4B", "#DD3D2D", "#A50026"]
+        };
+        const state = {
+            databases: [],
+            species: [],
+            jobId: null,
+            pollTimer: null,
+            results: {},
+            artifacts: [],
+            methodsReference: null,
+            aiInterpretation: null,
+            aiInterpretationError: "",
+            activeDatabase: null,
+            activeView: "overview",
+            activeFigure: null,
+            page: 1,
+            pageSize: 50,
+            query: "",
+            runSummary: null,
+            speciesSupportRequest: 0,
+            registrySummary: null,
+            aiBackends: [],
+            sampleGroups: new Map(),
+            selectedSamples: new Set(),
+            groupsAutoDetected: false
+        };
+
+        const byId = (id) => document.getElementById(id);
+        const selectedMethod = () => document.querySelector('input[name="method"]:checked').value;
+        const setText = (element, value) => { element.textContent = value == null ? "" : String(value); };
+
+        function updateFilePicker(input) {
+            const name = byId(`${input.id}Name`);
+            if (name) setText(name, input.files[0]?.name || "No file selected");
+        }
+
+        function initializeFilePickers() {
+            document.querySelectorAll("[data-file-input]").forEach((button) => {
+                button.addEventListener("click", () => byId(button.dataset.fileInput).click());
+            });
+            document.querySelectorAll(".native-file-input").forEach((input) => {
+                input.addEventListener("change", () => updateFilePicker(input));
+                updateFilePicker(input);
+            });
+        }
+
+        function speciesLabel(item) {
+            const commonName = item.display_name || item.name || item.code;
+            const scientificName = item.name && item.name !== commonName ? ` (${item.name})` : "";
+            const taxonomy = Number(item.taxonomy_id) > 0 ? ` - ${item.taxonomy_id}` : "";
+            return `${commonName}${scientificName}${taxonomy}`;
+        }
+
+        function selectedSpeciesCode() {
+            const value = byId("species").value.trim();
+            const normalized = value.toLowerCase();
+            const selected = state.species.find((item) =>
+                speciesLabel(item).toLowerCase() === normalized
+                || item.code.toLowerCase() === normalized
+                || String(item.taxonomy_id) === value
+            );
+            return selected?.code || normalized;
+        }
+
+        function currentDatabases() {
+            return Array.from(document.querySelectorAll('input[name="database"]:checked')).map((item) => item.value);
+        }
+
+        function databaseDisplayName(name) {
+            const target = String(name ?? "").toLowerCase();
+            const database = state.databases.find((item) => item.name.toLowerCase() === target);
+            return database?.display_name || database?.name || String(name ?? "");
+        }
+
+        function databaseAllowed(database, species) {
+            const selected = state.species.find((item) => item.code === species);
+            return Boolean(selected?.databases?.includes(database.name));
+        }
+
+        function updateDatabaseSummary() {
+            const selected = currentDatabases();
+            setText(
+                byId("databaseSummary"),
+                selected.length
+                    ? `Selected ${selected.length} database${selected.length === 1 ? "" : "s"}: ${selected.map(databaseDisplayName).join(", ")}`
+                    : "No databases selected"
+            );
+            byId("tfSizeSettings").hidden = !selected.some((name) => TF_DATABASES.has(name));
+        }
+
+        function renderDatabases() {
+            const container = byId("databaseGrid");
+            const previous = new Set(currentDatabases());
+            const species = selectedSpeciesCode();
+            const catalog = new Map(state.databases.map((database) => [database.name, database]));
+            container.replaceChildren();
+            DATABASE_GROUPS.forEach(([groupName, names]) => {
+                const databases = names.map((name) => catalog.get(name)).filter(Boolean);
+                if (!databases.length) return;
+                const group = document.createElement("section");
+                group.className = "database-group";
+                const heading = document.createElement("h4");
+                heading.textContent = groupName;
+                const options = document.createElement("div");
+                options.className = "database-options";
+                databases.forEach((database) => {
+                    const supported = databaseAllowed(database, species);
+                    const wrapper = document.createElement("div");
+                    wrapper.className = "check-option";
+                    wrapper.classList.toggle("unavailable", !supported);
+                    const input = document.createElement("input");
+                    input.type = "checkbox";
+                    input.name = "database";
+                    input.value = database.name;
+                    input.id = `database-${database.name.toLowerCase()}`;
+                    input.disabled = !supported;
+                    input.checked = supported && (previous.has(database.name) || (!previous.size && ["GO", "KEGG"].includes(database.name)));
+                    input.addEventListener("change", updateDatabaseSummary);
+                    const label = document.createElement("label");
+                    label.htmlFor = input.id;
+                    label.textContent = databaseDisplayName(database.name);
+                    label.title = supported ? database.description : `${database.description} (Unavailable for the selected species)`;
+                    wrapper.append(input, label);
+                    options.append(wrapper);
+                });
+                group.append(heading, options);
+                container.append(group);
+            });
+            if (!currentDatabases().length) {
+                const fallback = container.querySelector('input[name="database"]:not(:disabled)');
+                if (fallback) fallback.checked = true;
+            }
+            if (!container.querySelector('input[name="database"]:not(:disabled)')) {
+                const message = document.createElement("p");
+                message.className = "selection-summary";
+                message.textContent = "No installed databases are available for the selected species";
+                container.append(message);
+            }
+            updateDatabaseSummary();
+        }
+
+        async function refreshSpeciesDatabases() {
+            const species = selectedSpeciesCode();
+            const request = ++state.speciesSupportRequest;
+            if (!species) {
+                renderDatabases();
                 return;
             }
-            
-            const requestData = {
-                genes: genes,
-                species: document.getElementById('species').value,
-                databases: databases,
-                method: document.getElementById('method').value,
-                correction: document.getElementById('correction').value,
-                pvalue_cutoff: parseFloat(document.getElementById('pvalue_cutoff').value),
-                qvalue_cutoff: parseFloat(document.getElementById('qvalue_cutoff').value),
-                min_genes: 2
-            };
-            
+            setText(byId("resourceStatus"), `Checking ${species}`);
             try {
-                const response = await fetch('/api/analyze', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify(requestData)
-                });
-                
-                const data = await response.json();
-                currentJobId = data.job_id;
-                
-                showStatus('pending', '分析已提交，任务ID: ' + currentJobId);
-                startStatusPolling();
-                
+                const response = await fetch(`/api/species/${encodeURIComponent(species)}/databases`);
+                const payload = await response.json();
+                if (!response.ok) throw new Error(payload.detail || "Could not check database support");
+                if (request !== state.speciesSupportRequest) return;
+                const current = state.species.find((item) => item.code === species);
+                if (current) current.databases = payload.databases;
+                else state.species.push({code: species, databases: payload.databases});
+                renderDatabases();
+                setText(byId("resourceStatus"), `${species}: ${payload.databases.length} available databases`);
             } catch (error) {
-                showStatus('error', '提交失败: ' + error.message);
-                submitBtn.disabled = false;
-                submitBtn.textContent = '开始分析';
+                if (request !== state.speciesSupportRequest) return;
+                const current = state.species.find((item) => item.code === species);
+                if (current) current.databases = [];
+                renderDatabases();
+                setText(byId("resourceStatus"), error.message);
             }
-        });
-        
-        function showStatus(status, message, progress = 0) {
-            const statusDiv = document.getElementById('status');
-            const statusText = document.getElementById('statusText');
-            const progressFill = document.getElementById('progressFill');
-            
-            statusDiv.className = 'status ' + status;
-            statusText.textContent = message;
-            progressFill.style.width = (progress * 100) + '%';
         }
-        
-        function startStatusPolling() {
-            if (statusInterval) {
-                clearInterval(statusInterval);
+
+        async function loadResources() {
+            try {
+                const [speciesResponse, databaseResponse, registryResponse, aiResponse] = await Promise.all([
+                    fetch("/api/species"), fetch("/api/databases"), fetch("/api/species/summary"), fetch("/api/ai/backends")
+                ]);
+                if (!speciesResponse.ok || !databaseResponse.ok) throw new Error("Could not load resources");
+                state.species = await speciesResponse.json();
+                const databasePayload = await databaseResponse.json();
+                state.databases = databasePayload.databases || [];
+                state.registrySummary = registryResponse.ok ? await registryResponse.json() : null;
+                if (aiResponse.ok) renderAiBackends(await aiResponse.json());
+                const speciesOptions = byId("speciesOptions");
+                speciesOptions.replaceChildren();
+                state.species.forEach((item) => {
+                    const option = document.createElement("option");
+                    option.value = speciesLabel(item);
+                    option.label = item.code;
+                    speciesOptions.append(option);
+                });
+                const initialSpecies = state.species.find((item) => item.code === "hsa") || state.species[0];
+                byId("species").value = initialSpecies ? speciesLabel(initialSpecies) : "";
+                renderDatabases();
+                updateMethodSummary();
+                setText(byId("resourceStatus"), "Resources loaded");
+            } catch (error) {
+                setText(byId("resourceStatus"), error.message);
             }
-            
-            statusInterval = setInterval(async () => {
-                if (!currentJobId) return;
-                
-                try {
-                    const response = await fetch(`/api/status/${currentJobId}`);
-                    const data = await response.json();
-                    
-                    showStatus(data.status, getStatusMessage(data.status), data.progress);
-                    
-                    if (data.status === 'completed') {
-                        clearInterval(statusInterval);
-                        document.getElementById('submitBtn').disabled = false;
-                        document.getElementById('submitBtn').textContent = '开始分析';
-                        loadResults(currentJobId);
-                    } else if (data.status === 'failed') {
-                        clearInterval(statusInterval);
-                        showStatus('error', '分析失败: ' + (data.error || '未知错误'));
-                        document.getElementById('submitBtn').disabled = false;
-                        document.getElementById('submitBtn').textContent = '开始分析';
+        }
+
+        function renderPlotOptions() {
+            const container = byId("plotTypeOptions");
+            container.replaceChildren();
+            METHOD_PLOTS[selectedMethod()].forEach(([value, labelText, checked]) => {
+                const wrapper = document.createElement("div");
+                wrapper.className = "check-option";
+                const input = document.createElement("input");
+                input.type = "checkbox";
+                input.name = "plotType";
+                input.value = value;
+                input.id = `plot-${value}`;
+                input.checked = checked;
+                input.addEventListener("change", updatePlotSettings);
+                const label = document.createElement("label");
+                label.htmlFor = input.id;
+                label.textContent = labelText;
+                wrapper.append(input, label);
+                container.append(wrapper);
+            });
+        }
+
+        function updateOraMode() {
+            const mode = document.querySelector('input[name="oraMode"]:checked').value;
+            byId("oraPasteField").hidden = mode !== "paste";
+            byId("oraFileField").hidden = mode !== "file";
+        }
+
+        function updateAiSettings() {
+            byId("aiSettings").hidden = !byId("generateAi").checked;
+        }
+
+        function renderAiBackends(payload) {
+            const select = byId("aiBackend");
+            const backends = payload?.backends || [];
+            state.aiBackends = backends;
+            if (!backends.length) return;
+            select.replaceChildren();
+            backends.forEach((backend) => {
+                const option = document.createElement("option");
+                option.value = backend.name;
+                option.textContent = backend.label + (backend.configured ? "" : " (not configured)");
+                option.disabled = !backend.configured;
+                select.append(option);
+            });
+            const configured = backends.find((backend) => backend.configured);
+            if (configured) select.value = configured.name;
+            const hint = payload.configuration_error
+                ? payload.configuration_error
+                : configured?.name === "mock"
+                    ? "No external AI backend is configured. Mock is available for offline validation."
+                    : "Only configured backends can be submitted.";
+            setText(byId("aiBackendHint"), hint);
+        }
+
+        function updateMethodSummary() {
+            const [name, description] = METHOD_DESCRIPTIONS[selectedMethod()];
+            const supported = state.species.filter((item) => item.databases?.length);
+            const databases = Array.from(new Set(supported.flatMap((item) => item.databases))).sort();
+            const registry = state.registrySummary;
+            const summary = byId("methodSummary");
+            summary.replaceChildren();
+            const methodText = document.createElement("p");
+            const methodName = document.createElement("strong");
+            methodName.textContent = `${name}: `;
+            methodText.append(methodName, description);
+            const registryCoverage = registry
+                ? Object.entries(registry)
+                    .filter(([key, value]) => key !== "total_species" && value?.count)
+                    .map(([key, value]) => `${databaseDisplayName(key)} ${value.count.toLocaleString("en-US")} species`)
+                    .join(", ")
+                : "";
+            const facts = document.createElement("dl");
+            facts.className = "method-facts";
+            [
+                ["Registered species", registry ? registry.total_species.toLocaleString("en-US") : "Unavailable"],
+                ["Coverage by database", registryCoverage || "Unavailable"],
+                ["Installed locally", state.species.length ? `${supported.length} species; ${databases.map(databaseDisplayName).join(", ") || "no databases"}` : "Loading"]
+            ].forEach(([label, value]) => {
+                const term = document.createElement("dt");
+                const detail = document.createElement("dd");
+                term.textContent = label;
+                detail.textContent = value;
+                facts.append(term, detail);
+            });
+            const contactText = document.createElement("p");
+            contactText.className = "method-contact";
+            contactText.textContent = "If the required database is unavailable for your species, contact the administrator to build it.";
+            summary.append(methodText, facts, contactText);
+        }
+
+        function updateGseaMode() {
+            const mode = document.querySelector('input[name="gseaMode"]:checked').value;
+            byId("gseaRankedField").hidden = mode !== "ranked";
+            byId("gseaDifferentialField").hidden = mode !== "differential";
+        }
+
+        function parseDelimitedText(text, separator) {
+            const rows = [];
+            let row = [];
+            let value = "";
+            let quoted = false;
+            for (let index = 0; index < text.length; index += 1) {
+                const character = text[index];
+                if (character === '"') {
+                    if (quoted && text[index + 1] === '"') {
+                        value += '"';
+                        index += 1;
+                    } else {
+                        quoted = !quoted;
                     }
-                } catch (error) {
-                    console.error('状态查询失败:', error);
+                } else if (character === separator && !quoted) {
+                    row.push(value);
+                    value = "";
+                } else if ((character === "\n" || character === "\r") && !quoted) {
+                    if (character === "\r" && text[index + 1] === "\n") index += 1;
+                    row.push(value);
+                    if (row.some((cell) => cell.trim())) rows.push(row);
+                    row = [];
+                    value = "";
+                } else {
+                    value += character;
                 }
-            }, 1000);
-        }
-        
-        function getStatusMessage(status) {
-            const messages = {
-                'pending': '等待执行...',
-                'running': '正在分析...',
-                'completed': '分析完成',
-                'failed': '分析失败'
-            };
-            return messages[status] || status;
-        }
-        
-        async function loadResults(jobId) {
-            try {
-                const response = await fetch(`/api/results/${jobId}?format=json`);
-                const data = await response.json();
-                
-                displayResults(data, jobId);
-            } catch (error) {
-                console.error('加载结果失败:', error);
             }
+            if (quoted) throw new Error("The file contains an unclosed quote");
+            row.push(value);
+            if (row.some((cell) => cell.trim())) rows.push(row);
+            return rows;
         }
-        
-        function displayResults(data, jobId) {
-            const resultsDiv = document.getElementById('results');
-            const tabsDiv = document.getElementById('dbTabs');
-            const contentsDiv = document.getElementById('tabContents');
-            const downloadDiv = document.getElementById('downloadLinks');
-            
-            resultsDiv.classList.add('show');
-            
-            // 创建数据库标签页
-            const databases = Object.keys(data);
-            tabsDiv.innerHTML = '';
-            contentsDiv.innerHTML = '';
-            
-            databases.forEach((db, index) => {
-                // 创建标签按钮
-                const tabBtn = document.createElement('button');
-                tabBtn.className = 'tab-btn' + (index === 0 ? ' active' : '');
-                tabBtn.textContent = db;
-                tabBtn.onclick = () => switchTab(db);
-                tabsDiv.appendChild(tabBtn);
-                
-                // 创建内容区域
-                const contentDiv = document.createElement('div');
-                contentDiv.className = 'tab-content' + (index === 0 ? ' active' : '');
-                contentDiv.id = 'tab-' + db;
-                contentDiv.innerHTML = createResultsTable(data[db]);
-                contentsDiv.appendChild(contentDiv);
-            });
-            
-            // 下载链接
-            downloadDiv.innerHTML = `
-                <a href="/api/results/${jobId}?format=tsv" download>下载 TSV 结果</a>
-                <a href="/api/results/${jobId}/report" download>下载 HTML 报告</a>
-            `;
-            
-            // 滚动到结果区域
-            resultsDiv.scrollIntoView({ behavior: 'smooth' });
-        }
-        
-        function switchTab(db) {
-            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
-            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
-            
-            event.target.classList.add('active');
-            document.getElementById('tab-' + db).classList.add('active');
-        }
-        
-        function createResultsTable(results) {
-            if (!results || results.length === 0) {
-                return '<p style="text-align:center;color:#666;padding:40px;">无显著富集结果</p>';
-            }
-            
-            const columns = Object.keys(results[0]);
-            const displayColumns = columns.filter(c => c !== 'Term_URL' && c !== 'Genes');
-            
-            let html = '<div style="overflow-x:auto;"><table><thead><tr>';
-            displayColumns.forEach(col => {
-                html += `<th>${col.replace(/_/g, ' ')}</th>`;
-            });
-            html += '</tr></thead><tbody>';
-            
-            results.slice(0, 50).forEach(row => {
-                html += '<tr>';
-                displayColumns.forEach(col => {
-                    let value = row[col];
-                    if (typeof value === 'number') {
-                        if (col.includes('P_Value') || col.includes('Q_Value')) {
-                            value = value.toExponential(2);
-                        } else {
-                            value = value.toFixed(3);
-                        }
-                    }
-                    html += `<td>${value !== null && value !== undefined ? value : ''}</td>`;
+
+        function setDifferentialColumnOptions(columns) {
+            const geneSelect = byId("differentialGeneColumn");
+            const metricSelect = byId("differentialMetricColumn");
+            geneSelect.replaceChildren();
+            metricSelect.replaceChildren();
+            const metricPlaceholder = document.createElement("option");
+            metricPlaceholder.value = "";
+            metricPlaceholder.textContent = "Select";
+            metricSelect.append(metricPlaceholder);
+            columns.forEach((column, index) => {
+                const label = column || `column ${index + 1}  (Unnamed column)`;
+                [geneSelect, metricSelect].forEach((select) => {
+                    const option = document.createElement("option");
+                    option.value = String(index);
+                    option.textContent = label;
+                    select.append(option);
                 });
-                html += '</tr>';
             });
-            
-            html += '</tbody></table></div>';
-            
-            if (results.length > 50) {
-                html += `<p style="text-align:center;color:#666;margin-top:15px;">显示前 50 条，共 ${results.length} 条结果</p>`;
-            }
-            
-            return html;
+            const normalized = columns.map((column) => column.toLowerCase().replace(/[^a-z0-9]/g, ""));
+            const geneNames = ["gene", "geneid", "genesymbol", "symbol", "ensemblgeneid", "id"];
+            const metricNames = ["stat", "waldstatistic", "t", "tvalue", "score", "signedscore", "log2foldchange", "logfc"];
+            const geneIndex = normalized.findIndex((name) => geneNames.includes(name));
+            const metricIndex = normalized.findIndex((name) => metricNames.includes(name));
+            geneSelect.value = String(geneIndex >= 0 ? geneIndex : 0);
+            metricSelect.value = metricIndex >= 0 ? String(metricIndex) : "";
         }
+
+        async function readDifferentialColumns() {
+            const file = byId("differentialFile").files[0];
+            byId("differentialColumnSettings").hidden = true;
+            if (!file) {
+                setText(byId("differentialFileHint"), "TSV/CSV with a header, a gene column, and at least one numeric ranking statistic.");
+                return;
+            }
+            try {
+                const separator = file.name.toLowerCase().endsWith(".csv") ? "," : "\t";
+                const rows = parseDelimitedText(await file.text(), separator);
+                if (rows.length < 2 || rows[0].length < 2) throw new Error("A header and at least two data columns are required");
+                rows[0][0] = rows[0][0].replace(/^\uFEFF/, "").trim();
+                const columns = rows[0].map((column) => column.trim());
+                if (new Set(columns.filter(Boolean)).size !== columns.filter(Boolean).length) throw new Error("Column names must be unique");
+                setDifferentialColumnOptions(columns);
+                byId("differentialColumnSettings").hidden = false;
+                setText(byId("differentialFileHint"), `Loaded ${columns.length} columns. Confirm the gene column, ranking statistic, and direction.`);
+            } catch (error) {
+                setText(byId("differentialFileHint"), `Could not read the differential analysis table: ${error.message}`);
+            }
+        }
+
+        async function buildRankedFileFromDifferential() {
+            const file = byId("differentialFile").files[0];
+            if (!file) throw new Error("Select a differential analysis table");
+            const geneIndex = Number(byId("differentialGeneColumn").value);
+            const metricValue = byId("differentialMetricColumn").value;
+            if (!metricValue) throw new Error("Select a ranking-statistic column");
+            const metricIndex = Number(metricValue);
+            const separator = file.name.toLowerCase().endsWith(".csv") ? "," : "\t";
+            const rows = parseDelimitedText(await file.text(), separator);
+            const direction = byId("differentialDirection").value === "ascending" ? -1 : 1;
+            const ranked = [];
+            const genes = new Set();
+            let dropped = 0;
+            rows.slice(1).forEach((row) => {
+                const gene = (row[geneIndex] || "").trim();
+                const rawMetric = Number((row[metricIndex] || "").trim());
+                if (!gene || /[\t\r\n]/.test(gene) || !Number.isFinite(rawMetric)) {
+                    dropped += 1;
+                    return;
+                }
+                if (genes.has(gene)) throw new Error(`The gene column contains duplicate values: ${gene}`);
+                genes.add(gene);
+                ranked.push({gene, weight: rawMetric * direction});
+            });
+            if (ranked.length < 2) throw new Error("At least two valid gene-and-value rows are required");
+            ranked.sort((left, right) => right.weight - left.weight || left.gene.localeCompare(right.gene));
+            const content = `gene\tweight\n${ranked.map((row) => `${row.gene}\t${row.weight}`).join("\n")}\n`;
+            setText(byId("differentialFileHint"), `Converted ${ranked.length} unique genes${dropped ? `, skipped ${dropped} empty or non-numeric records` : ""}.`);
+            return new Blob([content], {type: "text/tab-separated-values"});
+        }
+
+        function updateBackgroundField() {
+            byId("backgroundFileField").hidden = byId("backgroundMode").value !== "custom";
+        }
+
+        function updatePlotSettings() {
+            const enabled = byId("generatePlots").checked;
+            byId("plotOutputSettings").hidden = !enabled;
+            const selected = new Set(
+                Array.from(document.querySelectorAll('input[name="plotType"]:checked')).map((item) => item.value)
+            );
+            const roles = new Set();
+            selected.forEach((plotType) => {
+                (PLOT_PALETTE_ROLES[selectedMethod()][plotType] || []).forEach((role) => roles.add(role));
+            });
+            byId("paletteSettings").hidden = !enabled || roles.size === 0;
+            ["categorical", "sequential", "diverging"].forEach((role) => {
+                byId(`${role}PaletteField`).hidden = !roles.has(role);
+                updatePalettePicker(role);
+            });
+
+            const isGsea = selectedMethod() === "gsea" && enabled;
+            byId("gseaEnrichmentSettings").hidden = !isGsea || !selected.has("enrichment");
+            byId("gseaMultiSettings").hidden = !isGsea || !selected.has("enrichment2");
+            byId("gseaEmapplotSettings").hidden = !isGsea || !selected.has("emapplot");
+            byId("gseaSettings").hidden = !isGsea || !["enrichment", "enrichment2", "emapplot"].some((type) => selected.has(type));
+        }
+
+        function setPaletteStrip(element, colors, role) {
+            element.replaceChildren();
+            element.style.background = "#fff";
+            if (role === "categorical") {
+                colors.forEach((color) => {
+                    const swatch = document.createElement("span");
+                    swatch.style.backgroundColor = color;
+                    element.append(swatch);
+                });
+            } else {
+                element.style.background = `linear-gradient(to right, ${colors.join(", ")})`;
+            }
+        }
+
+        function closePalettePickers(except = null) {
+            document.querySelectorAll(".palette-picker").forEach((picker) => {
+                if (picker === except) return;
+                const menu = picker.querySelector(".palette-menu");
+                const trigger = picker.querySelector(".palette-trigger");
+                if (menu) menu.hidden = true;
+                if (trigger) trigger.setAttribute("aria-expanded", "false");
+            });
+        }
+
+        function updatePalettePicker(role) {
+            const select = byId(`${role}Palette`);
+            const trigger = byId(`${role}PaletteTrigger`);
+            const menu = byId(`${role}PaletteMenu`);
+            if (!select || !trigger || !menu) return;
+            const selected = select.selectedOptions[0];
+            const selectedLabel = document.createElement("span");
+            selectedLabel.textContent = selected?.textContent || "Automatic";
+            const selectedPreview = document.createElement("span");
+            selectedPreview.className = "palette-trigger-preview";
+            setPaletteStrip(selectedPreview, PALETTE_COLORS[select.value || DEFAULT_PALETTES[role]], role);
+            trigger.replaceChildren(selectedLabel, selectedPreview);
+            trigger.setAttribute("aria-label", `${selectedLabel.textContent} palette`);
+            menu.querySelectorAll(".palette-option").forEach((option) => {
+                option.setAttribute("aria-selected", String(option.dataset.value === select.value));
+            });
+        }
+
+        function initializePalettePickers() {
+            document.querySelectorAll(".palette-picker").forEach((picker) => {
+                const role = picker.dataset.paletteRole;
+                const select = byId(`${role}Palette`);
+                const trigger = byId(`${role}PaletteTrigger`);
+                const menu = byId(`${role}PaletteMenu`);
+                if (!select || !trigger || !menu) return;
+                menu.replaceChildren();
+                Array.from(select.options).forEach((option) => {
+                    const item = document.createElement("button");
+                    item.type = "button";
+                    item.className = "palette-option";
+                    item.dataset.value = option.value;
+                    item.setAttribute("role", "option");
+                    const label = document.createElement("span");
+                    label.className = "palette-option-label";
+                    label.textContent = option.textContent;
+                    const preview = document.createElement("span");
+                    preview.className = "palette-option-preview";
+                    setPaletteStrip(preview, PALETTE_COLORS[option.value || DEFAULT_PALETTES[role]], role);
+                    item.append(label, preview);
+                    item.addEventListener("click", () => {
+                        select.value = option.value;
+                        select.dispatchEvent(new Event("change", {bubbles: true}));
+                        closePalettePickers();
+                        trigger.focus();
+                    });
+                    menu.append(item);
+                });
+                trigger.addEventListener("click", () => {
+                    const open = menu.hidden;
+                    closePalettePickers(picker);
+                    menu.hidden = !open;
+                    trigger.setAttribute("aria-expanded", String(open));
+                });
+                trigger.addEventListener("keydown", (event) => {
+                    if (event.key === "ArrowDown" || event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        trigger.click();
+                    } else if (event.key === "Escape") {
+                        closePalettePickers();
+                    }
+                });
+                updatePalettePicker(role);
+            });
+            document.addEventListener("click", (event) => {
+                if (!event.target.closest(".palette-picker")) closePalettePickers();
+            });
+        }
+
+        function updateMethodInputs() {
+            const method = selectedMethod();
+            byId("oraInputs").hidden = method !== "hypergeometric";
+            byId("gseaInputs").hidden = method !== "gsea";
+            byId("activityInputs").hidden = method !== "ssgsea" && method !== "gsva";
+            byId("significanceSettings").hidden = method === "ssgsea" || method === "gsva";
+            byId("minGenesField").hidden = method !== "hypergeometric";
+            byId("oraBackgroundSettings").hidden = method !== "hypergeometric";
+            updateMethodSummary();
+            renderPlotOptions();
+            updatePlotSettings();
+        }
+
+        function inferredGroupName(sample) {
+            const inferred = sample
+                .replace(/(?:[._-]?(?:rep(?:licate)?|sample|[rs])?[._-]?\d+)$/i, "")
+                .replace(/[._-]+$/, "")
+                .trim();
+            return inferred && inferred !== sample ? inferred : "";
+        }
+
+        function syncSampleGroups() {
+            const grouped = new Map();
+            state.sampleGroups.forEach((group, sample) => {
+                if (!group) return;
+                if (!grouped.has(group)) grouped.set(group, []);
+                grouped.get(group).push(sample);
+            });
+            byId("groups").value = Array.from(grouped, ([group, samples]) => `${group}:${samples.join(",")}`).join(";");
+            const assigned = Array.from(state.sampleGroups.values()).filter(Boolean).length;
+            const selected = state.selectedSamples.size;
+            const auto = state.groupsAutoDetected && assigned ? "Automatically assigned" : "Assigned";
+            setText(
+                byId("groupsHint"),
+                assigned
+                    ? `${auto} ${assigned} of ${state.sampleGroups.size} samples to ${grouped.size} groups${selected ? `; ${selected} selected` : ""}.`
+                    : `Loaded ${state.sampleGroups.size} samples. Select samples, enter a group name, and assign them together${selected ? `; ${selected} selected` : ""}.`
+            );
+        }
+
+        function renderSampleGroups() {
+            const list = byId("sampleGroupList");
+            const options = byId("sampleGroupOptions");
+            list.replaceChildren();
+            options.replaceChildren();
+            const sections = new Map();
+            state.sampleGroups.forEach((group, sample) => {
+                const key = group || "";
+                if (!sections.has(key)) sections.set(key, []);
+                sections.get(key).push(sample);
+            });
+            Array.from(sections.keys()).filter(Boolean).sort().forEach((group) => {
+                const option = document.createElement("option");
+                option.value = group;
+                options.append(option);
+            });
+            Array.from(sections.entries())
+                .sort(([left], [right]) => (!left ? 1 : !right ? -1 : left.localeCompare(right)))
+                .forEach(([group, samples]) => {
+                    const section = document.createElement("section");
+                    section.className = "sample-group";
+                    const heading = document.createElement("h4");
+                    heading.textContent = `${group || "Unassigned"} (${samples.length})`;
+                    const chips = document.createElement("div");
+                    chips.className = "sample-chips";
+                    samples.forEach((sample) => {
+                        const chip = document.createElement("button");
+                        chip.type = "button";
+                        chip.className = "sample-chip";
+                        chip.textContent = sample;
+                        chip.setAttribute("aria-pressed", state.selectedSamples.has(sample));
+                        chip.addEventListener("click", () => {
+                            if (state.selectedSamples.has(sample)) state.selectedSamples.delete(sample);
+                            else state.selectedSamples.add(sample);
+                            renderSampleGroups();
+                        });
+                        chips.append(chip);
+                    });
+                    section.append(heading, chips);
+                    list.append(section);
+                });
+            syncSampleGroups();
+        }
+
+        function clearSampleGroupEditor() {
+            state.sampleGroups.clear();
+            state.selectedSamples.clear();
+            state.groupsAutoDetected = false;
+            byId("groups").value = "";
+            byId("groupEditor").hidden = true;
+            byId("sampleGroupList").replaceChildren();
+            setText(byId("groupsHint"), "Sample names are read from the matrix header. Names ending in replicate numbers can be grouped automatically.");
+        }
+
+        function setExpressionSamples(samples) {
+            const inferred = samples.map(inferredGroupName);
+            const counts = new Map();
+            inferred.forEach((group) => { if (group) counts.set(group, (counts.get(group) || 0) + 1); });
+            const reliable = inferred.every(Boolean) && counts.size >= 2 && Array.from(counts.values()).every((count) => count >= 2);
+            state.sampleGroups = new Map(samples.map((sample, index) => [sample, reliable ? inferred[index] : ""]));
+            state.selectedSamples.clear();
+            state.groupsAutoDetected = reliable;
+            byId("groupEditor").hidden = false;
+            renderSampleGroups();
+        }
+
+        async function readExpressionSamples() {
+            const file = byId("expressionFile").files[0];
+            if (!file) {
+                clearSampleGroupEditor();
+                return;
+            }
+            try {
+                const text = await file.slice(0, 1024 * 1024).text();
+                const header = text.replace(/^\uFEFF/, "").split(/\r?\n/).find((line) => line.trim());
+                if (!header) throw new Error("The file is empty");
+                const separator = file.name.toLowerCase().endsWith(".csv") ? "," : "\t";
+                const columns = header.split(separator).map((value) => value.trim().replace(/^"|"$/g, "").replace(/""/g, '"'));
+                const samples = columns.slice(1).filter(Boolean);
+                if (!samples.length) throw new Error("The header contains no sample columns");
+                if (new Set(samples).size !== samples.length) throw new Error("Sample names must be unique");
+                if (samples.some((sample) => /[:,;]/.test(sample))) throw new Error("Sample names cannot contain colons, commas, or semicolons");
+                setExpressionSamples(samples);
+            } catch (error) {
+                clearSampleGroupEditor();
+                setText(byId("groupsHint"), `Could not read samples: ${error.message}`);
+            }
+        }
+
+        function assignSelectedSamples(clear = false) {
+            if (!state.selectedSamples.size) {
+                setText(byId("groupsHint"), "Select one or more samples first.");
+                return;
+            }
+            const group = clear ? "" : byId("sampleGroupName").value.trim();
+            if (!clear && !group) {
+                setText(byId("groupsHint"), "Enter a group name.");
+                return;
+            }
+            if (/[:,;]/.test(group)) {
+                setText(byId("groupsHint"), "Group names cannot contain colons, commas, or semicolons.");
+                return;
+            }
+            state.selectedSamples.forEach((sample) => state.sampleGroups.set(sample, group));
+            state.selectedSamples.clear();
+            state.groupsAutoDetected = false;
+            if (!clear) byId("sampleGroupName").value = "";
+            renderSampleGroups();
+        }
+
+        function appendValue(form, key, elementId) {
+            const value = byId(elementId).value.trim();
+            if (value) form.append(key, value);
+        }
+
+        function appendFile(form, key, elementId) {
+            const file = byId(elementId).files[0];
+            if (file) form.append(key, file);
+            return Boolean(file);
+        }
+
+        async function buildRequestForm() {
+            const method = selectedMethod();
+            const databases = currentDatabases();
+            if (!databases.length) throw new Error("Select at least one database");
+            const species = selectedSpeciesCode();
+            if (!species) throw new Error("Select a species");
+            const form = new FormData();
+            form.append("method", method);
+            form.append("species", species);
+            form.append("databases", databases.join(","));
+            const generatePlots = byId("generatePlots").checked;
+            form.append("no_plot", !generatePlots);
+            form.append("no_report", !byId("generateReport").checked);
+            form.append("methods_language", "en");
+            if (generatePlots) {
+                form.append("plot_format", byId("plotFormat").value);
+                form.append("plot_dpi", byId("plotDpi").value);
+                form.append("style", byId("style").value);
+            }
+            if (method === "hypergeometric" || method === "gsea") {
+                form.append("correction", byId("correction").value);
+                form.append("pvalue_cutoff", byId("pvalue").value);
+                form.append("qvalue_cutoff", byId("qvalue").value);
+                form.append("only_significant", byId("onlySignificant").checked);
+            }
+            if (method === "hypergeometric") {
+                form.append("min_genes", byId("minGenes").value);
+                form.append("background_mode", byId("backgroundMode").value);
+            } else if (generatePlots) {
+                form.append("use_r_plots", true);
+            }
+            const plotTypes = Array.from(document.querySelectorAll('input[name="plotType"]:checked')).map((item) => item.value);
+            if (generatePlots && !plotTypes.length) throw new Error("Select at least one figure type");
+            if (generatePlots) form.append("plot_types", plotTypes.join(","));
+            if (method === "gsea" && generatePlots) {
+                if (plotTypes.includes("emapplot")) {
+                    form.append("emapplot_qvalue", byId("emapplotQvalue").value);
+                    form.append("emapplot_min_count", byId("emapplotMinCount").value);
+                    form.append("emapplot_top_n", byId("emapplotTopN").value);
+                }
+                if (plotTypes.includes("enrichment")) {
+                    form.append("gsea_enrichment_top_up", byId("gseaTopUp").value);
+                    form.append("gsea_enrichment_top_down", byId("gseaTopDown").value);
+                }
+                if (plotTypes.includes("enrichment2")) {
+                    form.append("gsea_multi_top_up", byId("gseaMultiTopUp").value);
+                    form.append("gsea_multi_top_down", byId("gseaMultiTopDown").value);
+                }
+            }
+            if (method === "ssgsea" || method === "gsva") {
+                if (generatePlots && plotTypes.includes("group_comparison") && byId("expressionFile").files[0]) {
+                    const assigned = Array.from(state.sampleGroups.values()).filter(Boolean);
+                    if (assigned.length !== state.sampleGroups.size) throw new Error("Group-comparison figures require a group for every sample");
+                    if (new Set(assigned).size < 2) throw new Error("Group-comparison figures require at least two groups");
+                }
+                appendValue(form, "groups", "groups");
+            }
+            if (generatePlots) {
+                ["categorical", "sequential", "diverging"].forEach((role) => {
+                    if (!byId(`${role}PaletteField`).hidden) {
+                        appendValue(form, `${role}_palette`, `${role}Palette`);
+                    }
+                });
+            }
+            if (databases.some((name) => TF_DATABASES.has(name))) {
+                appendValue(form, "tf_min_size", "tfMinSize");
+                appendValue(form, "tf_max_size", "tfMaxSize");
+            }
+            if (byId("generateAi").checked) {
+                form.append("ai_backend", byId("aiBackend").value);
+                form.append("ai_mode", byId("aiMode").value);
+                appendValue(form, "ai_top_n", "aiTopN");
+            }
+            if (method === "hypergeometric" && byId("backgroundMode").value === "custom") {
+                if (!appendFile(form, "background_file", "backgroundFile")) throw new Error("A custom background requires a background gene file");
+            }
+            if (method === "gsea" && generatePlots && plotTypes.includes("enrichment")) {
+                appendFile(form, "gmt_file", "gmtFile");
+            }
+
+            if (method === "hypergeometric") {
+                const mode = document.querySelector('input[name="oraMode"]:checked').value;
+                if (mode === "file") {
+                    if (!appendFile(form, "gene_file", "geneFile")) throw new Error("Select a gene-list file");
+                } else {
+                    const genes = byId("geneText").value.split(/\r?\n/).map((value) => value.trim()).filter(Boolean);
+                    if (!genes.length) throw new Error("Enter a gene list");
+                    form.append("gene_file", new Blob([`${genes.join("\n")}\n`], {type: "text/plain"}), "genes.txt");
+                }
+            } else if (method === "gsea") {
+                const mode = document.querySelector('input[name="gseaMode"]:checked').value;
+                if (mode === "ranked") {
+                    if (!appendFile(form, "ranked_file", "rankedFile")) throw new Error("Select a ranked gene table");
+                } else {
+                    const rankedFile = await buildRankedFileFromDifferential();
+                    form.append("ranked_file", rankedFile, "ranked_from_differential.tsv");
+                }
+            } else if (!appendFile(form, "expression_file", "expressionFile")) {
+                throw new Error(`${method} requires an expression matrix`);
+            }
+            state.runSummary = {method, species, databases};
+            return form;
+        }
+
+        function showStatus(status, detail, progress, error) {
+            const band = byId("statusBand");
+            band.className = `status-band show ${status}`;
+            const labels = {completed: "Analysis complete", failed: "Analysis failed", running: "Analysis running", pending: "Waiting to run"};
+            setText(byId("statusText"), labels[status] || status);
+            setText(byId("statusDetail"), detail);
+            byId("progressFill").style.width = `${Math.max(0, Math.min(100, Math.round((progress || 0) * 100)))}%`;
+            setText(byId("errorText"), error || "");
+        }
+
+        async function submitAnalysis(event) {
+            event.preventDefault();
+            const submit = byId("submitButton");
+            try {
+                submit.disabled = true;
+                setText(submit, "Submitting");
+                const form = await buildRequestForm();
+                const response = await fetch("/api/upload", {method: "POST", body: form});
+                const payload = await response.json();
+                if (!response.ok) throw new Error(payload.detail || "Submission failed");
+                state.jobId = payload.job_id;
+                state.results = {};
+                state.artifacts = [];
+                state.methodsReference = null;
+                state.aiInterpretation = null;
+                state.aiInterpretationError = "";
+                setText(byId("jobLabel"), `Analysis ${state.jobId.slice(0, 8)}`);
+                byId("emptyState").hidden = true;
+                byId("resultShell").hidden = true;
+                showStatus("pending", "Analysis submitted", 0, "");
+                clearInterval(state.pollTimer);
+                state.pollTimer = setInterval(pollStatus, 1200);
+                await pollStatus();
+            } catch (error) {
+                showStatus("failed", "Submission incomplete", 0, error.message);
+                submit.disabled = false;
+                setText(submit, "Start analysis");
+            }
+        }
+
+        async function pollStatus() {
+            if (!state.jobId) return;
+            try {
+                const response = await fetch(`/api/status/${encodeURIComponent(state.jobId)}`);
+                const payload = await response.json();
+                if (!response.ok) throw new Error(payload.detail || "Could not retrieve status");
+                if (payload.ai_interpretation_error) {
+                    const aiError = payload.ai_interpretation_error;
+                    state.aiInterpretationError = `${aiError.error_code || "AI_INTERPRETATION_FAILED"}: ${aiError.message || "Unknown AI interpretation error"}`;
+                }
+                showStatus(payload.status, `${Math.round((payload.progress || 0) * 100)}%`, payload.progress, payload.error);
+                if (payload.status === "completed") {
+                    clearInterval(state.pollTimer);
+                    byId("submitButton").disabled = false;
+                    setText(byId("submitButton"), "Start analysis");
+                    await loadResults();
+                } else if (payload.status === "failed") {
+                    clearInterval(state.pollTimer);
+                    byId("submitButton").disabled = false;
+                    setText(byId("submitButton"), "Start analysis");
+                    byId("resultShell").hidden = false;
+                    byId("tableViewTab").hidden = true;
+                    byId("figuresViewTab").hidden = true;
+                    await loadArtifacts();
+                    activateResultView("files");
+                }
+            } catch (error) {
+                clearInterval(state.pollTimer);
+                showStatus("failed", "Status polling stopped", 0, error.message);
+                byId("submitButton").disabled = false;
+                setText(byId("submitButton"), "Start analysis");
+            }
+        }
+
+        function activateResultView(view) {
+            state.activeView = view;
+            document.querySelectorAll(".view-tab").forEach((button) => {
+                const active = button.dataset.view === view;
+                button.classList.toggle("active", active);
+                button.setAttribute("aria-selected", active);
+                button.tabIndex = active ? 0 : -1;
+            });
+            document.querySelectorAll("[data-result-view]").forEach((section) => {
+                section.hidden = section.dataset.resultView !== view;
+            });
+        }
+
+        function renderOverview() {
+            const totalResults = Object.values(state.results).reduce((sum, rows) => sum + rows.length, 0);
+            const summary = state.runSummary || {};
+            const methodLabels = {hypergeometric: "ORA", gsea: "GSEA", ssgsea: "ssGSEA", gsva: "GSVA"};
+            setText(byId("summaryMethod"), methodLabels[summary.method] || " - ");
+            setText(byId("summarySpecies"), summary.species || " - ");
+            setText(byId("summaryDatabases"), summary.databases?.length ?? Object.keys(state.results).length);
+            setText(byId("summaryResults"), totalResults);
+        }
+
+        function renderMethodsReference() {
+            const content = state.methodsReference;
+            const section = byId("methodsReference");
+            section.hidden = !content;
+            if (!content) return;
+            setText(byId("methodsReferenceTitle"), content.title);
+            setText(byId("methodsAnalysisHeading"), content.analysis_heading);
+            setText(byId("methodsReferencesHeading"), content.references_heading);
+            const paragraphs = byId("methodsParagraphs");
+            paragraphs.replaceChildren();
+            (content.paragraphs || []).forEach((text) => {
+                const paragraph = document.createElement("p");
+                paragraph.textContent = text;
+                paragraphs.append(paragraph);
+            });
+            const references = byId("methodsReferences");
+            references.replaceChildren();
+            (content.references || []).forEach((item) => {
+                const row = document.createElement("li");
+                row.append(document.createTextNode(item.citation || "To be added"));
+                if (item.url) {
+                    const link = document.createElement("a");
+                    link.href = item.url;
+                    link.target = "_blank";
+                    link.rel = "noopener noreferrer";
+                    link.textContent = " DOI";
+                    row.append(link);
+                }
+                references.append(row);
+            });
+        }
+
+        async function loadMethodsReference() {
+            const response = await fetch(`/api/results/${encodeURIComponent(state.jobId)}/methods-reference`);
+            const payload = await response.json();
+            if (!response.ok) throw new Error(payload.detail || "Could not load the Materials and Methods writing reference");
+            state.methodsReference = payload;
+            renderMethodsReference();
+        }
+
+        function evidenceElementId(evidenceId) {
+            const value = String(evidenceId).replace(/[^A-Za-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
+            return `evidence-${value || "results"}`;
+        }
+
+        function evidenceForResultRow(database, position) {
+            const evidence = state.aiInterpretation?.evidence || {};
+            return Object.entries(evidence).find(([, record]) =>
+                String(record?.database) === String(database) && Number(record?.row_position) === position
+            );
+        }
+
+        function showEvidence(evidenceId) {
+            const record = state.aiInterpretation?.evidence?.[evidenceId];
+            if (!record) return;
+            state.activeDatabase = record.database;
+            state.query = "";
+            state.page = Math.floor(Number(record.row_position) / state.pageSize) + 1;
+            byId("resultSearch").value = "";
+            renderDatabaseTabs();
+            renderTable();
+            activateResultView("table");
+            requestAnimationFrame(() => byId(evidenceElementId(evidenceId))?.scrollIntoView({behavior: "smooth", block: "center"}));
+        }
+
+        function renderAiInterpretation() {
+            const interpretation = state.aiInterpretation;
+            const section = byId("aiInterpretation");
+            section.hidden = !interpretation && !state.aiInterpretationError;
+            if (!interpretation) {
+                if (state.aiInterpretationError) {
+                    setText(byId("aiInterpretationMeta"), `Unavailable: ${state.aiInterpretationError}`);
+                    byId("aiInterpretationContent").replaceChildren();
+                }
+                return;
+            }
+            const backendLabels = {
+                openai: "OpenAI",
+                claude: "Claude",
+                deepseek: "DeepSeek",
+                glm: "GLM",
+                minimax: "MiniMax",
+                ollama: "Ollama",
+                mock: "Mock"
+            };
+            const backendName = String(interpretation.backend || "").toLowerCase();
+            const backend = backendLabels[backendName]
+                || interpretation.backend
+                || "Unknown";
+            setText(byId("aiInterpretationMeta"), `Model: ${backend} | Profile: ${interpretation.profile || "summary"}`);
+            const content = byId("aiInterpretationContent");
+            content.replaceChildren();
+            const labels = {
+                core_themes: "Core themes",
+                key_evidence: "Key evidence",
+                limitations: "Contradictions and limitations",
+                computational_checks: "Computational checks"
+            };
+            Object.entries(interpretation.databases || {}).forEach(([database, sections]) => {
+                const block = document.createElement("section");
+                const heading = document.createElement("h4");
+                heading.textContent = databaseDisplayName(database);
+                block.append(heading);
+                Object.entries(labels).forEach(([key, label]) => {
+                    const subsection = document.createElement("section");
+                    const subtitle = document.createElement("h4");
+                    subtitle.textContent = label;
+                    const list = document.createElement("ul");
+                    const items = sections?.[key] || [];
+                    if (!items.length) {
+                        const empty = document.createElement("li");
+                        empty.textContent = "None recorded.";
+                        list.append(empty);
+                    }
+                    items.forEach((item) => {
+                        const entry = document.createElement("li");
+                        entry.append(document.createTextNode(item.text || ""));
+                        const links = document.createElement("span");
+                        links.className = "ai-evidence-links";
+                        (item.evidence_ids || []).forEach((evidenceId) => {
+                            const link = document.createElement("a");
+                            link.href = `#${evidenceElementId(evidenceId)}`;
+                            link.textContent = evidenceId;
+                            link.addEventListener("click", () => showEvidence(evidenceId));
+                            links.append(link);
+                        });
+                        entry.append(links);
+                        list.append(entry);
+                    });
+                    subsection.append(subtitle, list);
+                    block.append(subsection);
+                });
+                content.append(block);
+            });
+        }
+
+        async function loadAiInterpretation() {
+            const response = await fetch(`/api/results/${encodeURIComponent(state.jobId)}/ai-interpretation`);
+            if (response.status === 404) {
+                state.aiInterpretation = null;
+                renderAiInterpretation();
+                return;
+            }
+            const payload = await response.json();
+            if (!response.ok) throw new Error(payload.detail || "Could not load the AI interpretation");
+            state.aiInterpretation = payload;
+            state.aiInterpretationError = "";
+            renderAiInterpretation();
+        }
+
+        async function loadResults() {
+            const response = await fetch(`/api/results/${encodeURIComponent(state.jobId)}?format=json`);
+            const payload = await response.json();
+            if (!response.ok) throw new Error(payload.detail || "Could not load results");
+            state.results = payload;
+            state.activeDatabase = Object.keys(payload)[0] || null;
+            state.page = 1;
+            state.query = "";
+            byId("resultSearch").value = "";
+            byId("resultShell").hidden = false;
+            byId("tableViewTab").hidden = !state.activeDatabase;
+            byId("tsvLink").href = `/api/results/${encodeURIComponent(state.jobId)}?format=tsv`;
+            byId("reportLink").href = `/api/results/${encodeURIComponent(state.jobId)}/report`;
+            renderOverview();
+            renderDatabaseTabs();
+            try {
+                await loadMethodsReference();
+            } catch (error) {
+                state.methodsReference = {
+                    title: "Materials and Methods Writing Reference",
+                    analysis_heading: "",
+                    references_heading: "",
+                    paragraphs: [`Unavailable: ${error.message}`],
+                    references: [],
+                };
+                renderMethodsReference();
+            }
+            try {
+                await loadAiInterpretation();
+            } catch (error) {
+                state.aiInterpretation = null;
+                state.aiInterpretationError = error.message;
+                renderAiInterpretation();
+            }
+            renderTable();
+            await loadArtifacts();
+            activateResultView("overview");
+        }
+
+        function renderDatabaseTabs() {
+            const tabs = byId("resultTabs");
+            tabs.replaceChildren();
+            Object.keys(state.results).forEach((database) => {
+                const button = document.createElement("button");
+                button.type = "button";
+                button.className = `database-tab${database === state.activeDatabase ? " active" : ""}`;
+                button.setAttribute("role", "tab");
+                button.textContent = `${databaseDisplayName(database)} (${state.results[database].length})`;
+                button.addEventListener("click", () => {
+                    state.activeDatabase = database;
+                    state.page = 1;
+                    renderDatabaseTabs();
+                    renderTable();
+                });
+                tabs.append(button);
+            });
+        }
+
+        function filteredRows() {
+            const rows = state.results[state.activeDatabase] || [];
+            if (!state.query) return rows;
+            const query = state.query.toLowerCase();
+            return rows.filter((row) => Object.values(row).some((value) => String(value ?? "").toLowerCase().includes(query)));
+        }
+
+        function formatCell(value) {
+            if (value == null) return "";
+            if (typeof value === "number") {
+                if (value !== 0 && Math.abs(value) < 0.001) return value.toExponential(3);
+                return Number.isInteger(value) ? String(value) : value.toPrecision(5).replace(/0+$/, "").replace(/\.$/, "");
+            }
+            if (Array.isArray(value)) return value.join("; ");
+            return String(value);
+        }
+
+        function renderTable() {
+            const head = byId("resultHead");
+            const body = byId("resultBody");
+            head.replaceChildren();
+            body.replaceChildren();
+            const rows = filteredRows();
+            const columns = rows.length ? Object.keys(rows[0]) : [];
+            const headerRow = document.createElement("tr");
+            columns.forEach((column) => {
+                const cell = document.createElement("th");
+                cell.scope = "col";
+                cell.textContent = column;
+                headerRow.append(cell);
+            });
+            head.append(headerRow);
+            const totalPages = Math.max(1, Math.ceil(rows.length / state.pageSize));
+            state.page = Math.min(state.page, totalPages);
+            rows.slice((state.page - 1) * state.pageSize, state.page * state.pageSize).forEach((row) => {
+                const tableRow = document.createElement("tr");
+                const sourcePosition = (state.results[state.activeDatabase] || []).indexOf(row);
+                const evidence = evidenceForResultRow(state.activeDatabase, sourcePosition);
+                if (evidence) tableRow.id = evidenceElementId(evidence[0]);
+                columns.forEach((column) => {
+                    const cell = document.createElement("td");
+                    cell.textContent = formatCell(row[column]);
+                    tableRow.append(cell);
+                });
+                body.append(tableRow);
+            });
+            setText(byId("pageLabel"), `${state.page} / ${totalPages}, ${rows.length} records`);
+            byId("previousPage").disabled = state.page <= 1;
+            byId("nextPage").disabled = state.page >= totalPages;
+        }
+
+        function formatSize(bytes) {
+            if (bytes < 1024) return `${bytes} B`;
+            if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+            return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+        }
+
+        function artifactUrl(path) {
+            return `/api/results/${encodeURIComponent(state.jobId)}/files/${path.split("/").map(encodeURIComponent).join("/")}`;
+        }
+
+        function selectFigure(artifact) {
+            state.activeFigure = artifact.path;
+            document.querySelectorAll(".figure-thumb").forEach((button) => {
+                button.classList.toggle("active", button.dataset.path === artifact.path);
+            });
+            const preview = byId("figurePreview");
+            preview.replaceChildren();
+            const extension = artifact.name.split(".").pop().toLowerCase();
+            const url = artifactUrl(artifact.path);
+            if (["png", "svg"].includes(extension)) {
+                const link = document.createElement("a");
+                link.href = url;
+                link.target = "_blank";
+                link.rel = "noopener";
+                const image = document.createElement("img");
+                image.src = url;
+                image.alt = artifact.name;
+                link.append(image);
+                preview.append(link);
+            } else {
+                const link = document.createElement("a");
+                link.className = "button";
+                link.href = url;
+                link.target = "_blank";
+                link.rel = "noopener";
+                link.textContent = "Open PDF Figures";
+                preview.append(link);
+            }
+            setText(byId("figureCaption"), artifact.name);
+        }
+
+        function renderFigures(figures) {
+            const list = byId("figureList");
+            list.replaceChildren();
+            byId("figureEmpty").hidden = Boolean(figures.length);
+            byId("figureBrowser").hidden = !figures.length;
+            byId("figuresViewTab").hidden = !figures.length;
+            figures.forEach((artifact, index) => {
+                const button = document.createElement("button");
+                button.type = "button";
+                button.className = "figure-thumb";
+                button.dataset.path = artifact.path;
+                const extension = artifact.name.split(".").pop().toLowerCase();
+                if (["png", "svg"].includes(extension)) {
+                    const image = document.createElement("img");
+                    image.src = artifactUrl(artifact.path);
+                    image.alt = "";
+                    image.loading = "lazy";
+                    button.append(image);
+                }
+                const label = document.createElement("span");
+                label.textContent = artifact.name;
+                button.append(label);
+                button.addEventListener("click", () => selectFigure(artifact));
+                list.append(button);
+                if (index === 0) selectFigure(artifact);
+            });
+        }
+
+        async function loadArtifacts() {
+            if (!state.jobId) return;
+            const response = await fetch(`/api/results/${encodeURIComponent(state.jobId)}/artifacts`);
+            const payload = await response.json();
+            if (!response.ok) return;
+            state.artifacts = payload.artifacts || [];
+            const groups = byId("artifactGroups");
+            groups.replaceChildren();
+            const categorized = new Map();
+            state.artifacts.forEach((artifact) => {
+                if (!categorized.has(artifact.category)) categorized.set(artifact.category, []);
+                categorized.get(artifact.category).push(artifact);
+            });
+            byId("tsvLink").hidden = !state.artifacts.some((artifact) => artifact.category === "table");
+            byId("reportLink").hidden = !state.artifacts.some((artifact) => artifact.category === "report");
+            const labels = {table: "Results", report: "Reports", figure: "Figures", log: "Logs", other: "Other"};
+            ["table", "report", "figure", "log", "other"].forEach((category) => {
+                const artifacts = categorized.get(category);
+                if (!artifacts?.length) return;
+                const section = document.createElement("section");
+                section.className = "artifact-group";
+                const heading = document.createElement("h3");
+                heading.textContent = labels[category];
+                const list = document.createElement("ul");
+                list.className = "artifact-list";
+                artifacts.forEach((artifact) => {
+                    const item = document.createElement("li");
+                    const link = document.createElement("a");
+                    link.href = artifactUrl(artifact.path);
+                    link.textContent = artifact.name;
+                    const size = document.createElement("span");
+                    size.className = "artifact-size";
+                    size.textContent = formatSize(artifact.size);
+                    item.append(link, size);
+                    list.append(item);
+                });
+                section.append(heading, list);
+                groups.append(section);
+            });
+            renderFigures(state.artifacts.filter((artifact) => artifact.category === "figure"));
+        }
+
+        async function deleteCurrentJob() {
+            if (!state.jobId || !window.confirm("Delete this analysis and all of its output files?")) return;
+            const response = await fetch(`/api/jobs/${encodeURIComponent(state.jobId)}`, {method: "DELETE"});
+            const payload = await response.json();
+            if (!response.ok) {
+                showStatus("failed", "Deletion failed", 0, payload.detail || "The analysis was not deleted");
+                return;
+            }
+            state.jobId = null;
+            state.results = {};
+            state.artifacts = [];
+            state.methodsReference = null;
+            state.aiInterpretation = null;
+            state.aiInterpretationError = "";
+            byId("resultShell").hidden = true;
+            byId("statusBand").className = "status-band";
+            byId("emptyState").hidden = false;
+            setText(byId("emptyState"), "No analysis has been submitted");
+            setText(byId("jobLabel"), "");
+        }
+
+        function resetWorkbench() {
+            byId("advancedForm").reset();
+            setTimeout(() => {
+                clearSampleGroupEditor();
+                document.querySelectorAll(".native-file-input").forEach(updateFilePicker);
+                updateOraMode();
+                updateGseaMode();
+                byId("differentialColumnSettings").hidden = true;
+                setText(byId("differentialFileHint"), "TSV/CSV with a header, a gene column, and at least one numeric ranking statistic.");
+                updateBackgroundField();
+                updatePlotSettings();
+                updateAiSettings();
+                updateMethodInputs();
+                renderDatabases();
+            }, 0);
+        }
+
+        document.querySelectorAll('input[name="method"]').forEach((input) => input.addEventListener("change", updateMethodInputs));
+        document.querySelectorAll('input[name="oraMode"]').forEach((input) => input.addEventListener("change", updateOraMode));
+        document.querySelectorAll('input[name="gseaMode"]').forEach((input) => input.addEventListener("change", updateGseaMode));
+        document.querySelectorAll(".view-tab").forEach((button) => button.addEventListener("click", () => activateResultView(button.dataset.view)));
+        byId("species").addEventListener("input", refreshSpeciesDatabases);
+        byId("expressionFile").addEventListener("change", readExpressionSamples);
+        byId("differentialFile").addEventListener("change", readDifferentialColumns);
+        byId("assignSampleGroup").addEventListener("click", () => assignSelectedSamples());
+        byId("clearSampleGroup").addEventListener("click", () => assignSelectedSamples(true));
+        byId("backgroundMode").addEventListener("change", updateBackgroundField);
+        byId("generatePlots").addEventListener("change", updatePlotSettings);
+        byId("generateAi").addEventListener("change", updateAiSettings);
+        byId("categoricalPalette").addEventListener("change", () => updatePalettePicker("categorical"));
+        byId("sequentialPalette").addEventListener("change", () => updatePalettePicker("sequential"));
+        byId("divergingPalette").addEventListener("change", () => updatePalettePicker("diverging"));
+        byId("analysisForm").addEventListener("submit", submitAnalysis);
+        byId("analysisForm").addEventListener("reset", resetWorkbench);
+        byId("openAdvanced").addEventListener("click", () => byId("advancedDialog").showModal());
+        byId("closeAdvanced").addEventListener("click", () => byId("advancedDialog").close());
+        byId("closeAdvancedTop").addEventListener("click", () => byId("advancedDialog").close());
+        byId("resultSearch").addEventListener("input", (event) => {
+            state.query = event.target.value.trim();
+            state.page = 1;
+            renderTable();
+        });
+        byId("previousPage").addEventListener("click", () => { state.page -= 1; renderTable(); });
+        byId("nextPage").addEventListener("click", () => { state.page += 1; renderTable(); });
+        byId("deleteButton").addEventListener("click", deleteCurrentJob);
+
+        initializeFilePickers();
+        initializePalettePickers();
+        updateOraMode();
+        updateGseaMode();
+        updateBackgroundField();
+        updatePlotSettings();
+        updateAiSettings();
+        updateMethodInputs();
+        loadResources();
     </script>
 </body>
 </html>

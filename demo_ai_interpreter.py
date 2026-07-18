@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """
-AI 解释功能演示脚本
+AI Explain function demonstration script
 
-展示 AllEnricher 的 AI 解释功能，支持多种后端：
-- MockInterpreter: 测试用模拟后端（无需 API 密钥）
-- OpenAI: GPT-4/3.5（需要 API 密钥）
-- Claude: Anthropic Claude（需要 API 密钥）
-- DeepSeek: 国产大模型（需要 API 密钥）
-- GLM: 智谱 AI（需要 API 密钥）
-- MiniMax: MiniMax（需要 API 密钥）
-- Ollama: 本地部署（需要本地 Ollama 服务）
+Show AllEnricher It's... AI Explain function, Support multiple backends: 
+- MockInterpreter: Test with Simulation Backend (No need API Key)
+- OpenAI: GPT-4/3.5 (Yes. API Key)
+- Claude: Anthropic Claude (Yes. API Key)
+- DeepSeek: Large national model (Yes. API Key)
+- GLM: Brain spectrum AI (Yes. API Key)
+- MiniMax: MiniMax (Yes. API Key)
+- Ollama: Local deployment (Local Ollama Services)
 
-使用方法:
+Use of methods:
     python demo_ai_interpreter.py
 """
 
@@ -19,7 +19,7 @@ import json
 import pandas as pd
 from pathlib import Path
 
-# 添加项目路径
+# Add Item Path
 import sys
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
@@ -32,8 +32,8 @@ from allenricher.ai.interpreter import (
 
 
 def create_sample_results():
-    """创建示例富集分析结果"""
-    # GO 富集结果
+    """Creates the example of the enrichment analysis"""
+    # GO Fuzzy Results
     go_data = {
         "Term_ID": ["GO:0008150", "GO:0009987", "GO:0009653", "GO:0044237", "GO:0005615"],
         "Term_Name": [
@@ -49,7 +49,7 @@ def create_sample_results():
     }
     go_df = pd.DataFrame(go_data)
 
-    # KEGG 富集结果
+    # KEGM Report
     kegg_data = {
         "Term_ID": ["hsa04110", "hsa04115", "hsa04210", "hsa04010", "hsa04012"],
         "Term_Name": [
@@ -72,81 +72,81 @@ def create_sample_results():
 
 
 def demo_mock_interpreter():
-    """演示 MockInterpreter（无需 API 密钥）"""
+    """Mocter (no API key required)"""
     print("=" * 70)
-    print("演示 1: MockInterpreter（测试用模拟后端）")
+    print("Presentation 1: MockInterpreter (test with simulation backend)")
     print("=" * 70)
     print()
 
-    # 创建解释器
+    # Create interpreter
     interpreter = create_interpreter("mock")
-    print(f"✓ 创建成功: {interpreter.backend_name}")
+    print(f"* Created successfully: {interpreter.backend_name}")
     print()
 
-    # 准备示例数据
+    # Prepare for illustrative data
     results = create_sample_results()
-    print(f"✓ 加载示例数据: {len(results)} 个数据库")
+    print(f"* Load example data: {len(results)} database")
     for db_name, df in results.items():
-        print(f"  - {db_name}: {len(df)} 条富集条目")
+        print(f"- {db_name}: {len(df)}Rich Entry")
     print()
 
-    # 生成解读
-    print("生成 AI 解读...")
+    # Generate interpretation
+    print("Generate AI read...")
     interpretations = interpreter.interpret_results(results)
     print()
 
-    # 显示结果
+    # Show results
     for db_name, interpretation in interpretations.items():
-        print(f"\n--- {db_name} AI 解读 ---")
+        print(f"\n--- {db_name}AI Interpretation---")
         print(interpretation)
         print()
 
-    # 生成 HTML 报告段落
-    print("\n--- HTML 报告段落预览 ---")
+    # Generate HTML Report Paragraph
+    print("\n---Preview of HTML report paragraph---")
     html = interpreter.generate_report_section(results)
     print(html[:500] + "..." if len(html) > 500 else html)
     print()
 
-    # 保存为 JSON
+    # Save as JSON
     output_dir = project_root / "demo_output"
     output_dir.mkdir(exist_ok=True)
 
     json_path = output_dir / "mock_interpretation.json"
     with open(json_path, 'w', encoding='utf-8') as f:
         json.dump(interpretations, f, indent=2, ensure_ascii=False)
-    print(f"✓ 解读结果已保存: {json_path}")
+    print(f"* The results of the reading have been kept: {json_path}")
 
-    # 保存 HTML
+    # Save HTML
     html_path = output_dir / "mock_interpretation.html"
     with open(html_path, 'w', encoding='utf-8') as f:
         f.write(html)
-    print(f"✓ HTML 报告已保存: {html_path}")
+    print(f"* HTML report saved: {html_path}")
     print()
 
     return interpretations
 
 
 def demo_all_backends():
-    """演示所有可用后端"""
+    """Show all available backends"""
     print("\n" + "=" * 70)
-    print("演示 2: 所有可用的 AI 后端")
+    print("Presentation 2: All available AI backends")
     print("=" * 70)
     print()
 
     backends = get_available_backends()
-    print(f"支持的后端 ({len(backends)} 个):")
+    print(f"Backend supported ({len(backends)}):")
     for backend in backends:
         print(f"  - {backend}")
     print()
 
-    # 演示创建不同后端
+    # Demonstration to create different backends
     results = create_sample_results()
 
-    print("创建各后端解释器实例...")
+    print("Create examples of backend interpreters...")
     for backend in backends:
         try:
             kwargs = {}
-            # MiniMax 需要 group_id
+            # MiniMax needs group_id
             if backend == "minimax":
                 kwargs["group_id"] = "demo-group-id"
 
@@ -157,28 +157,28 @@ def demo_all_backends():
 
 
 def demo_term_summaries():
-    """演示生成单个条目的总结"""
+    """Shows the summary of the creation of single entries"""
     print("\n" + "=" * 70)
-    print("演示 3: 生成单个条目的总结")
+    print("Presentation 3: Generate summary of single entries")
     print("=" * 70)
     print()
 
     interpreter = create_interpreter("mock")
     results = create_sample_results()
 
-    # 生成包含条目总结的解读
-    print("生成包含条目总结的解读...")
+    # Generate an interpretation that includes the summary of entries
+    print("Generate an interpretation that includes the summary of entries...")
     interpretations = interpreter.interpret_results(
         results,
         include_term_summaries=True
     )
     print()
 
-    # 显示条目总结
+    # Show entry summary
     for db_name, interpretation in interpretations.items():
         if f"{db_name}_term_summaries" in interpretations:
             term_summaries = interpretations[f"{db_name}_term_summaries"]
-            print(f"\n--- {db_name} 条目总结 (前 3 个) ---")
+            print(f"\n--- {db_name}Summary of Entry (previous 3)---")
             for i, (term_name, summary) in enumerate(term_summaries.items()):
                 if i >= 3:
                     break
@@ -188,24 +188,24 @@ def demo_term_summaries():
 
 
 def demo_multiple_results_scenarios():
-    """演示不同结果数量的场景"""
+    """Showing different numbers of results"""
     print("\n" + "=" * 70)
-    print("演示 4: 不同结果数量的场景")
+    print("Presentation 4: Number of different outcomes")
     print("=" * 70)
     print()
 
     interpreter = create_interpreter("mock")
 
-    # 场景 1: 空结果
-    print("场景 1: 空结果")
+    # Scene 1: Empty result
+    print("Scene 1: Empty result")
     print("-" * 40)
     empty_results = {"GO": pd.DataFrame()}
     interpretations = interpreter.interpret_results(empty_results)
-    print(f"解读结果: {interpretations}")
+    print(f"Results of the reading: {interpretations}")
     print()
 
-    # 场景 2: 少量结果
-    print("场景 2: 3 条结果")
+    # Scenario 2: a small result table.
+    print("Scenario 2: 3 results")
     print("-" * 40)
     small_results = {
         "GO": pd.DataFrame({
@@ -215,11 +215,11 @@ def demo_multiple_results_scenarios():
         })
     }
     interpretations = interpreter.interpret_results(small_results)
-    print(f"解读包含 {len(small_results['GO'])} 个条目")
+    print(f"Interpreted {len(small_results['GO'])} terms")
     print()
 
-    # 场景 3: 超过 20 条（只展示前 20）
-    print("场景 3: 25 条结果（只展示前 20）")
+    # Scenario 3: more than 20 terms; interpretation is capped at 20.
+    print("Scenario 3: 25 results (first 20 interpreted)")
     print("-" * 40)
     many_results = {
         "GO": pd.DataFrame({
@@ -230,46 +230,46 @@ def demo_multiple_results_scenarios():
     }
     interpretations = interpreter.interpret_results(many_results)
     text = interpretations["GO"]
-    # 检查是否只展示了前 20 条
+    # Check if only 20 prior ones are displayed
     has_term_0 = "term_0" in text
     has_term_19 = "term_19" in text
     has_term_20 = "term_20" in text
-    print(f"包含 term_0: {has_term_0}")
-    print(f"包含 term_19: {has_term_19}")
-    print(f"包含 term_20 (不应该): {has_term_20}")
+    print(f"Includes term_0: {has_term_0}")
+    print(f"Contains term_19: {has_term_19}")
+    print(f"Include term_20 (should not): {has_term_20}")
     print()
 
 
 def main():
-    """主函数"""
+    """Main Function"""
     print("\n" + "=" * 70)
-    print("AllEnricher AI 解释功能演示")
+    print("AllEnricher AI Explain function demo")
     print("=" * 70)
     print()
 
-    # 演示 1: MockInterpreter
+    # Demo 1: MockInterpreter
     demo_mock_interpreter()
 
-    # 演示 2: 所有后端
+    # Presentation 2: All Backends
     demo_all_backends()
 
-    # 演示 3: 条目总结
+    # Presentation 3: Summary of Entry
     demo_term_summaries()
 
-    # 演示 4: 不同结果场景
+    # Presentation 4: Different Results Scene
     demo_multiple_results_scenarios()
 
-    # 总结
+    # Summary
     print("\n" + "=" * 70)
-    print("演示完成！")
+    print("Show's done!")
     print("=" * 70)
     print()
-    print("下一步:")
-    print("1. 使用真实 API 密钥测试其他后端")
-    print("2. 查看 demo_output/ 目录下的输出文件")
-    print("3. 集成到富集分析流程中")
+    print("Next:")
+    print("1. Test other backends with real API keys")
+    print("View output files under demo_output/ directory")
+    print("3. Integration into the enrichment analysis process")
     print()
-    print("环境变量配置:")
+    print("Environment variable configuration:")
     print("  export OPENAI_API_KEY=sk-xxx")
     print("  export ANTHROPIC_API_KEY=sk-ant-xxx")
     print("  export DEEPSEEK_API_KEY=sk-xxx")

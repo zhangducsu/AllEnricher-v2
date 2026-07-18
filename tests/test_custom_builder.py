@@ -1,7 +1,7 @@
 """
-CustomDatabaseBuilder 单元测试
+CustomDatabaseBuilder Unit Test
 
-测试从不同格式的注释文件构建自定义数据库的完整流程。
+Test the complete process of building a custom database from different format of the annotation file.
 """
 
 import gzip
@@ -18,13 +18,13 @@ from allenricher.database.custom_builder import CustomDatabaseBuilder
 
 @pytest.fixture
 def tmp_root(tmp_path):
-    """创建临时数据库根目录"""
+    """Create a temporary database root directory"""
     return str(tmp_path / "database")
 
 
 @pytest.fixture
 def four_col_annotation(tmp_path):
-    """创建四列注释文件: gene<TAB>term_id<TAB>term_name<TAB>hierarchy"""
+    """Create four column annotation file: gene<TAB>term_id<TAB>term_name<TAB>hierarchy"""
     fpath = tmp_path / "four_col.txt"
     fpath.write_text(
         "GENE1\tTERM001\tCell Cycle\tBiology|Cell Biology|Cell Cycle\n"
@@ -40,7 +40,7 @@ def four_col_annotation(tmp_path):
 
 @pytest.fixture
 def three_col_annotation(tmp_path):
-    """创建三列注释文件: gene<TAB>term_id<TAB>term_name"""
+    """Create three row annotation files: gene<TAB>term_id<TAB>term_name"""
     fpath = tmp_path / "three_col.txt"
     fpath.write_text(
         "GENEA\tPATH_A\tPathway A\n"
@@ -53,7 +53,7 @@ def three_col_annotation(tmp_path):
 
 @pytest.fixture
 def two_col_annotation(tmp_path):
-    """创建两列注释文件: gene<TAB>term_id"""
+    """Create two rows of annotation files: gene<TAB>term_id"""
     fpath = tmp_path / "two_col.txt"
     fpath.write_text(
         "G1\tT1\n"
@@ -66,19 +66,19 @@ def two_col_annotation(tmp_path):
 
 @pytest.fixture
 def empty_annotation(tmp_path):
-    """创建空注释文件"""
+    """Create empty annotation file"""
     fpath = tmp_path / "empty.txt"
     fpath.write_text("")
     return str(fpath)
 
 
 class TestBuildFromAnnotation:
-    """build_from_annotation 核心流程测试"""
+    """%1 core process test"""
 
     def test_build_from_four_column_annotation(
         self, tmp_root, four_col_annotation
     ):
-        """四列注释构建完整数据库"""
+        """Four column notes to build a complete database"""
         builder = CustomDatabaseBuilder(root_dir=tmp_root)
         outdir = builder.build_from_annotation(
             annotation_file=four_col_annotation,
@@ -87,11 +87,11 @@ class TestBuildFromAnnotation:
             db_name="CustomDB"
         )
 
-        # 验证返回路径
+        # Validate Return Path
         assert Path(outdir).exists()
         assert outdir.endswith("hsa")
 
-        # 验证三个输出文件都存在
+        # Verify that all three output files exist
         assert os.path.exists(os.path.join(outdir, "hsa.CustomDB2gene.tab.gz"))
         assert os.path.exists(os.path.join(outdir, "CustomDB2disc.gz"))
         assert os.path.exists(os.path.join(outdir, "hsa.CustomDB.gmt.gz"))
@@ -99,7 +99,7 @@ class TestBuildFromAnnotation:
     def test_build_from_three_column_annotation(
         self, tmp_root, three_col_annotation
     ):
-        """三列注释构建"""
+        """Three column notes to build"""
         builder = CustomDatabaseBuilder(root_dir=tmp_root)
         outdir = builder.build_from_annotation(
             annotation_file=three_col_annotation,
@@ -116,7 +116,7 @@ class TestBuildFromAnnotation:
     def test_build_from_two_column_annotation(
         self, tmp_root, two_col_annotation
     ):
-        """两列注释构建"""
+        """Two rows of comments to build"""
         builder = CustomDatabaseBuilder(root_dir=tmp_root)
         outdir = builder.build_from_annotation(
             annotation_file=two_col_annotation,
@@ -131,9 +131,9 @@ class TestBuildFromAnnotation:
         assert os.path.exists(os.path.join(outdir, "hsa.SimpleDB.gmt.gz"))
 
     def test_empty_annotation_file(self, tmp_root, empty_annotation):
-        """空注释文件处理"""
+        """Reject an annotation file with no valid associations."""
         builder = CustomDatabaseBuilder(root_dir=tmp_root)
-        with pytest.raises(ValueError, match="没有有效的基因-条目映射"):
+        with pytest.raises(ValueError, match="No valid gene-to-term associations"):
             builder.build_from_annotation(
                 annotation_file=empty_annotation,
                 species="hsa",
@@ -143,10 +143,10 @@ class TestBuildFromAnnotation:
 
 
 class TestGeneMatrix:
-    """基因矩阵格式验证"""
+    """Validation for the gene-by-term membership matrix."""
 
     def test_gene_matrix_format(self, tmp_root, four_col_annotation):
-        """验证矩阵格式（Gene列+0/1值）"""
+        """Write a Gene column followed by binary membership values."""
         builder = CustomDatabaseBuilder(root_dir=tmp_root)
         outdir = builder.build_from_annotation(
             annotation_file=four_col_annotation,
@@ -158,20 +158,20 @@ class TestGeneMatrix:
         matrix_path = os.path.join(outdir, "hsa.MatrixTest2gene.tab.gz")
         df = pd.read_csv(matrix_path, sep='\t', compression='gzip')
 
-        # 验证列: Gene + 各 term 列
+        # Validation column: Gene + term rows
         assert "Gene" in df.columns
         term_cols = [c for c in df.columns if c != "Gene"]
         assert sorted(term_cols) == ["TERM001", "TERM002", "TERM003"]
 
-        # 验证基因列表（去重有序，按出现顺序）
+        # Validate the gene list (to be ordered, in order of appearance)
         assert sorted(df["Gene"].tolist()) == ["GENE1", "GENE2", "GENE3", "GENE4", "GENE5"]
 
-        # 验证 0/1 值
+        # Validation 0/1Value
         assert set(df["TERM001"].unique()).issubset({0, 1})
         assert set(df["TERM002"].unique()).issubset({0, 1})
         assert set(df["TERM003"].unique()).issubset({0, 1})
 
-        # 验证具体映射正确性
+        # Verify specific map correctness
         # TERM001: GENE1, GENE2, GENE3
         assert df.loc[df["Gene"] == "GENE1", "TERM001"].values[0] == 1
         assert df.loc[df["Gene"] == "GENE2", "TERM001"].values[0] == 1
@@ -186,10 +186,10 @@ class TestGeneMatrix:
 
 
 class TestGMTFile:
-    """GMT 文件内容验证"""
+    """GMT Document Content Validation"""
 
     def test_gmt_auto_generated_content(self, tmp_root, four_col_annotation):
-        """验证GMT内容正确"""
+        """Verify GMT content is correct"""
         builder = CustomDatabaseBuilder(root_dir=tmp_root)
         outdir = builder.build_from_annotation(
             annotation_file=four_col_annotation,
@@ -202,10 +202,10 @@ class TestGMTFile:
         with gzip.open(gmt_path, 'rt', encoding='utf-8') as f:
             lines = [l.strip() for l in f if l.strip()]
 
-        # 应该有 3 个基因集（TERM001, TERM002, TERM003）
+        # There should be 3 genomes (TERM001, TERM002, TERM003)
         assert len(lines) == 3
 
-        # 解析每行
+        # Parsing each line
         gmt_data = {}
         for line in lines:
             parts = line.split('\t')
@@ -228,10 +228,10 @@ class TestGMTFile:
 
 
 class TestDescriptionFile:
-    """描述文件验证"""
+    """Description Document Validation"""
 
     def test_description_with_hierarchy(self, tmp_root, four_col_annotation):
-        """验证描述文件含层级"""
+        """Validation description file including layers"""
         builder = CustomDatabaseBuilder(root_dir=tmp_root)
         outdir = builder.build_from_annotation(
             annotation_file=four_col_annotation,
@@ -251,13 +251,13 @@ class TestDescriptionFile:
             parts = line.split('\t')
             disc_data[parts[0]] = (parts[1], parts[2] if len(parts) > 2 else "")
 
-        # 验证层级信息
+        # Validation level information
         assert disc_data["TERM001"][1] == "Biology|Cell Biology|Cell Cycle"
         assert disc_data["TERM002"][1] == "Biology|Cell Biology|Apoptosis"
         assert disc_data["TERM003"][1] == "Biology|Metabolism"
 
     def test_description_without_hierarchy(self, tmp_root, two_col_annotation):
-        """无层级时使用term_name"""
+        """Use term_name when no hierarchy exists"""
         builder = CustomDatabaseBuilder(root_dir=tmp_root)
         outdir = builder.build_from_annotation(
             annotation_file=two_col_annotation,
@@ -277,16 +277,16 @@ class TestDescriptionFile:
             term_id = parts[0]
             term_name = parts[1]
             hierarchy = parts[2] if len(parts) > 2 else ""
-            # 两列格式没有 term_name，所以 term_name == term_id
-            # 层级应该回退为 term_name（即 term_id）
+            # No term_name in two column formats, so term_name=term_id
+            # The hierarchy should revert to the term_name (i. e. term_id)
             assert hierarchy == term_id
 
 
 class TestOutputStructure:
-    """输出目录结构验证"""
+    """Output Directory Structure Validation"""
 
     def test_output_directory_structure(self, tmp_root, four_col_annotation):
-        """验证输出目录结构"""
+        """Validate Output Directory Structure"""
         builder = CustomDatabaseBuilder(root_dir=tmp_root)
         outdir = builder.build_from_annotation(
             annotation_file=four_col_annotation,
@@ -297,11 +297,11 @@ class TestOutputStructure:
 
         outdir_path = Path(outdir)
 
-        # 验证目录层级: database/organism/v{YYYYMMDD}/hsa/
+        # Validation directory hierarchy: database/organism/v{YYYYMMDD}/hsa/
         assert outdir_path.parent.name.startswith("v")
         assert outdir_path.name == "hsa"
         assert outdir_path.parent.parent.name == "organism"
 
-        # 验证日期格式
-        date_str = outdir_path.parent.name[1:]  # 去掉 'v' 前缀
-        datetime.strptime(date_str, "%Y%m%d")  # 不抛异常即通过
+        # Validation date format
+        date_str = outdir_path.parent.name[1:]  # Remove the prefix from the 'v'
+        datetime.strptime(date_str, "%Y%m%d")  # "Access without exception."

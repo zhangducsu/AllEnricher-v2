@@ -1,8 +1,8 @@
 """
-端到端集成测试 - 自定义数据库构建 + GSEA/ssGSEA 分析
+End-to-end integration test - Custom Database Build + GSEA/ssGSEA Analysis
 
-验证从注释文件构建自定义数据库、自动生成GMT文件、
-并使用 GSEA/ssGSEA 进行分析的完整流程。
+Authenticate build a custom database from a annotation file, Auto GenerateGMTDocumentation, 
+And use GSEA/ssGSEAComplete process for analysis.
 """
 
 import gzip
@@ -24,18 +24,18 @@ from allenricher.database.custom_builder import CustomDatabaseBuilder
 
 
 # ============================================================
-# 测试数据 fixtures
+# Test Data
 # ============================================================
 
 @pytest.fixture
 def tmp_db_root(tmp_path):
-    """临时数据库根目录"""
+    """Temporary database root directory"""
     return str(tmp_path / "test_database")
 
 
 @pytest.fixture
 def four_col_annotation(tmp_path):
-    """四列注释文件: gene<TAB>term_id<TAB>term_name<TAB>hierarchy"""
+    """Four Column Annotation File: gene<TAB>term_id<TAB>term_name<TAB>hierarchy"""
     fpath = tmp_path / "four_col.tsv"
     fpath.write_text(
         "GENE1\tTERM001\tCell Cycle\tBiology|Cell Biology|Cell Cycle\n"
@@ -52,7 +52,7 @@ def four_col_annotation(tmp_path):
 
 @pytest.fixture
 def three_col_annotation(tmp_path):
-    """三列注释文件: gene<TAB>term_id<TAB>term_name"""
+    """Three Column Annotation File: gene<TAB>term_id<TAB>term_name"""
     fpath = tmp_path / "three_col.tsv"
     fpath.write_text(
         "GENEA\tPATH_A\tPathway A\n"
@@ -66,7 +66,7 @@ def three_col_annotation(tmp_path):
 
 @pytest.fixture
 def two_col_annotation(tmp_path):
-    """两列注释文件: gene<TAB>term"""
+    """Two rows of annotation files: gene<TAB>term"""
     fpath = tmp_path / "two_col.tsv"
     fpath.write_text(
         "G1\tT1\n"
@@ -80,15 +80,15 @@ def two_col_annotation(tmp_path):
 
 @pytest.fixture
 def large_four_col_annotation(tmp_path):
-    """较大的四列注释文件，用于 GSEA/ssGSEA 分析（足够多的基因）"""
+    """Four larger column annotation files for GSEA/ssGSEA analysis (sufficient genes)"""
     lines = []
-    # TERM_A: 20 个基因
+    # TERM_A: 20 genes
     for i in range(1, 21):
         lines.append(f"GENE{i:03d}\tTERM_A\tPathway A\tBiology|PathA")
-    # TERM_B: 20 个基因（部分与 TERM_A 重叠）
+    # TERM_B: 20 genes (partly overlapping with TERM_A)
     for i in range(15, 35):
         lines.append(f"GENE{i:03d}\tTERM_B\tPathway B\tBiology|PathB")
-    # TERM_C: 15 个基因
+    # TERM_C: 15 genes
     for i in range(30, 45):
         lines.append(f"GENE{i:03d}\tTERM_C\tPathway C\tBiology|PathC")
 
@@ -98,11 +98,11 @@ def large_four_col_annotation(tmp_path):
 
 
 # ============================================================
-# 辅助函数
+# Help Functions
 # ============================================================
 
 def _read_gmt_gz(gmt_path: str) -> dict:
-    """读取 gzip 压缩的 GMT 文件
+    """Read gzip Compressed GMT Documentation
 
     Returns:
         {term_id: (term_name, [gene1, gene2, ...])}
@@ -122,7 +122,7 @@ def _read_gmt_gz(gmt_path: str) -> dict:
 
 
 def _build_db(builder, annotation_file, species, taxid, db_name):
-    """构建自定义数据库并返回输出目录"""
+    """Build a custom database and return the output directory"""
     outdir = builder.build_from_annotation(
         annotation_file=annotation_file,
         species=species,
@@ -137,50 +137,50 @@ def _build_db(builder, annotation_file, species, taxid, db_name):
 # ============================================================
 
 class TestE2EFourColumnHierarchy:
-    """四列层级注释文件端到端测试"""
+    """Four-column level annotation file end-to-end test"""
 
     def test_e2e_four_column_hierarchy(self, tmp_db_root, four_col_annotation):
-        """四列层级注释 -> 构建数据库 -> 验证输出 -> GSEA 分析"""
-        # Step 1: 构建数据库
+        """Four-column tier comment -> Build Database -> Authenticate Output -> GSEA Analysis"""
+        # Step 1: Build database
         builder = CustomDatabaseBuilder(root_dir=tmp_db_root)
         outdir = _build_db(builder, four_col_annotation, "hsa", 9606, "E2E4Col")
 
-        # Step 2: 验证 3 个输出文件存在
+        # Step 2: Verify 3 output files exist
         matrix_path = os.path.join(outdir, "hsa.E2E4Col2gene.tab.gz")
         desc_path = os.path.join(outdir, "E2E4Col2disc.gz")
         gmt_path = os.path.join(outdir, "hsa.E2E4Col.gmt.gz")
 
-        assert os.path.exists(matrix_path), f"矩阵文件不存在: {matrix_path}"
-        assert os.path.exists(desc_path), f"描述文件不存在: {desc_path}"
-        assert os.path.exists(gmt_path), f"GMT文件不存在: {gmt_path}"
+        assert os.path.exists(matrix_path), f"Matrix file does not exist: {matrix_path}"
+        assert os.path.exists(desc_path), f"Description file does not exist: {desc_path}"
+        assert os.path.exists(gmt_path), f"The GMT file does not exist: {gmt_path}"
 
-        # Step 3: 读取并验证 GMT 文件格式
+        # Step 3: Read and authenticate GMT file format
         gmt_data = _read_gmt_gz(gmt_path)
-        assert len(gmt_data) == 3, f"期望 3 个基因集，实际 {len(gmt_data)}"
+        assert len(gmt_data) == 3, f"Expectation of 3 genomes, actual{len(gmt_data)}"
 
-        # 验证 GMT 格式: term_id<TAB>term_name<TAB>gene1<TAB>gene2...
+        # Validation GMT format: term_id<TAB>term_name<TAB>gene1<TAB>gene2...
         for term_id, (term_name, genes) in gmt_data.items():
             assert isinstance(term_name, str) and len(term_name) > 0
-            assert len(genes) > 0, f"基因集 {term_id} 没有基因"
+            assert len(genes) > 0, f"Gene sets{term_id}No genes."
 
-        # TERM001 应包含 GENE1, GENE2, GENE3
+        # TERM001 should include GENE1, GENE2, GENE3
         assert sorted(gmt_data["TERM001"][1]) == ["GENE1", "GENE2", "GENE3"]
-        # TERM002 应包含 GENE2, GENE4
+        # TERM002 should include GENE2, GENE4
         assert sorted(gmt_data["TERM002"][1]) == ["GENE2", "GENE4"]
-        # TERM003 应包含 GENE1, GENE5
+        # TERM003 should include GENE1, GENE5
         assert sorted(gmt_data["TERM003"][1]) == ["GENE1", "GENE5"]
 
-        # Step 4: 使用 GSEA 验证数据库可用
+        # Step 4: Use GSEA to validate the availability of databases
         gsea = GSEA(permutations=50, min_size=1, max_size=500)
         ranked_genes = ["GENE1", "GENE2", "GENE3", "GENE4", "GENE5"]
         gene_weights = {g: 1.0 - i * 0.1 for i, g in enumerate(ranked_genes)}
 
         for term_id, (term_name, genes) in gmt_data.items():
-            es, nes, pvalue, leading_edge, _ = gsea.calculate_normalized_es(
+            es, nes, pvalue, leading_edge = gsea.calculate_normalized_es(
                 ranked_genes, set(genes), gene_weights
             )
-            assert -1.0 <= es <= 1.0, f"ES={es} 超出范围 [-1,1]"
-            assert 0.0 <= pvalue <= 1.0, f"pvalue={pvalue} 超出范围 [0,1]"
+            assert -1.0 <= es <= 1.0, f"ES={es}Beyond range"
+            assert 0.0 <= pvalue <= 1.0, f"pvalue={pvalue}Exceeding range [0, 1]"
 
 
 # ============================================================
@@ -188,19 +188,19 @@ class TestE2EFourColumnHierarchy:
 # ============================================================
 
 class TestE2EThreeColumnNoHierarchy:
-    """三列无层级注释文件端到端测试"""
+    """Three rows without hierarchical comment end-to-end test"""
 
     def test_e2e_three_column_no_hierarchy(self, tmp_db_root, three_col_annotation):
-        """三列注释 -> 构建数据库 -> 验证层级回退 -> GMT 正确"""
+        """Three column comments -> Build Database -> Validation Level Refund -> GMT Correct."""
         builder = CustomDatabaseBuilder(root_dir=tmp_db_root)
         outdir = _build_db(builder, three_col_annotation, "hsa", 9606, "E2E3Col")
 
-        # 验证输出文件
+        # Authenticate Output File
         assert os.path.exists(os.path.join(outdir, "hsa.E2E3Col2gene.tab.gz"))
         assert os.path.exists(os.path.join(outdir, "E2E3Col2disc.gz"))
         assert os.path.exists(os.path.join(outdir, "hsa.E2E3Col.gmt.gz"))
 
-        # 验证描述文件中层级列回退为 term_name
+        # Validate hierarchy in description file back to term_name
         desc_path = os.path.join(outdir, "E2E3Col2disc.gz")
         with gzip.open(desc_path, 'rt', encoding='utf-8') as f:
             lines = [l.strip() for l in f if l.strip()]
@@ -210,12 +210,12 @@ class TestE2EThreeColumnNoHierarchy:
             term_id = parts[0]
             term_name = parts[1]
             hierarchy = parts[2] if len(parts) > 2 else ""
-            # 三列格式没有层级信息，hierarchy 应回退为 term_name
+            # No hierarchical information in the three-column format, heirarchy should revert to term_name
             assert hierarchy == term_name, (
-                f"term {term_id}: 层级 '{hierarchy}' 应等于 term_name '{term_name}'"
+                f"term {term_id}: Level '{hierarchy}' Should be equal to term_name '{term_name}'"
             )
 
-        # 验证 GMT 文件正确生成
+        # Verify that GMT files are correctly generated
         gmt_path = os.path.join(outdir, "hsa.E2E3Col.gmt.gz")
         gmt_data = _read_gmt_gz(gmt_path)
         assert len(gmt_data) == 2
@@ -228,19 +228,19 @@ class TestE2EThreeColumnNoHierarchy:
 # ============================================================
 
 class TestE2ETwoColumnSimple:
-    """两列简单注释文件端到端测试"""
+    """Two rows of simple annotation file end-to-end tests"""
 
     def test_e2e_two_column_simple(self, tmp_db_root, two_col_annotation):
-        """两列注释 -> 构建数据库 -> 验证 term_name 同时作为 term_id"""
+        """Two Columns of Comment -> Build Database -> Validation term_name And as a... term_id"""
         builder = CustomDatabaseBuilder(root_dir=tmp_db_root)
         outdir = _build_db(builder, two_col_annotation, "hsa", 9606, "E2E2Col")
 
-        # 验证输出文件
+        # Authenticate Output File
         assert os.path.exists(os.path.join(outdir, "hsa.E2E2Col2gene.tab.gz"))
         assert os.path.exists(os.path.join(outdir, "E2E2Col2disc.gz"))
         assert os.path.exists(os.path.join(outdir, "hsa.E2E2Col.gmt.gz"))
 
-        # 验证描述文件: term_id == term_name（两列格式）
+        # Validation description file: term_id = term_name (in both column format)
         desc_path = os.path.join(outdir, "E2E2Col2disc.gz")
         with gzip.open(desc_path, 'rt', encoding='utf-8') as f:
             lines = [l.strip() for l in f if l.strip()]
@@ -249,16 +249,16 @@ class TestE2ETwoColumnSimple:
             parts = line.split('\t')
             term_id = parts[0]
             term_name = parts[1]
-            # 两列格式: term_name 同时作为 term_id
+            # Two column formats: term_name as timetimetime
             assert term_id == term_name, (
-                f"两列格式下 term_id '{term_id}' 应等于 term_name '{term_name}'"
+                f"Term_id 'under two columns{term_id}'should be equal to term_name '{term_name}'"
             )
 
-        # 验证 GMT 文件
+        # Authenticate GMT files
         gmt_path = os.path.join(outdir, "hsa.E2E2Col.gmt.gz")
         gmt_data = _read_gmt_gz(gmt_path)
         assert len(gmt_data) == 2
-        # 两列格式: term_id == term_name
+        # Two column formats: term_id = term_name
         for term_id in gmt_data:
             assert gmt_data[term_id][0] == term_id
 
@@ -268,27 +268,27 @@ class TestE2ETwoColumnSimple:
 # ============================================================
 
 class TestE2EGmtNotUserProvided:
-    """验证 CustomDatabaseBuilder API 不接受 GMT 文件参数"""
+    """Validation for CustomDatabase Builder API not to accept GMT file parameters"""
 
     def test_e2e_gmt_not_user_provided(self):
-        """build_from_annotation 方法不应接受 gmt_file 参数"""
+        """The build_from_nonotation method should not accept gmt_file parameters"""
         sig = inspect.signature(CustomDatabaseBuilder.build_from_annotation)
         params = list(sig.parameters.keys())
 
-        # 不应包含 gmt 相关参数
+        # Should not contain gmt related parameters
         assert 'gmt_file' not in params, (
-            "build_from_annotation 不应接受 gmt_file 参数，GMT 文件应自动生成"
+            "Build_from_anitation gmt_file parameters should not be accepted and GMT files should be generated automatically"
         )
         assert 'gmt' not in params, (
-            "build_from_annotation 不应接受 gmt 参数，GMT 文件应自动生成"
+            "Build_from_nonotation gmt parameters should not be accepted and GMT files should be generated automatically"
         )
         assert 'gene_set_file' not in params, (
-            "build_from_annotation 不应接受 gene_set_file 参数"
+            "Build_from_nonotation not to accept the square_set_file parameter"
         )
 
-        # 应包含 annotation_file 参数
+        # Should contain an estimate_file parameters
         assert 'annotation_file' in params, (
-            "build_from_annotation 应接受 annotation_file 参数"
+            "Build_from_notification should accept annuity_file"
         )
 
 
@@ -297,26 +297,26 @@ class TestE2EGmtNotUserProvided:
 # ============================================================
 
 class TestE2EGseaWithCustomDb:
-    """使用自定义数据库进行 GSEA 分析端到端测试"""
+    """GSEA analytical end-to-end testing using custom databases"""
 
     def test_e2e_gsea_with_custom_db(self, tmp_db_root, large_four_col_annotation):
-        """构建自定义数据库 -> 读取自动生成的 GMT -> GSEA 分析"""
-        # Step 1: 构建自定义数据库
+        """Build Custom Databases -> Read Autogenerated GMT -> GSEA Analysis"""
+        # Step 1: Build a custom database
         builder = CustomDatabaseBuilder(root_dir=tmp_db_root)
         outdir = _build_db(builder, large_four_col_annotation, "hsa", 9606, "GseaTest")
 
-        # Step 2: 读取自动生成的 GMT 文件
+        # Step 2: Read automatically generated GMT files
         gmt_path = os.path.join(outdir, "hsa.GseaTest.gmt.gz")
-        assert os.path.exists(gmt_path), "GMT 文件未生成"
+        assert os.path.exists(gmt_path), "GMT file not generated"
 
         gene_sets = {}
         gmt_data = _read_gmt_gz(gmt_path)
         for term_id, (term_name, genes) in gmt_data.items():
             gene_sets[term_id] = set(genes)
 
-        assert len(gene_sets) > 0, "GMT 文件中没有基因集"
+        assert len(gene_sets) > 0, "No gene sets in GMT files"
 
-        # Step 3: 创建排序基因列表（使用注释文件中的基因）
+        # Step 3: Create Ranked Gene List (using genes in Note Files)
         all_genes = set()
         for genes in gene_sets.values():
             all_genes.update(genes)
@@ -324,11 +324,11 @@ class TestE2EGseaWithCustomDb:
         ranked_genes = all_genes
         gene_weights = {g: 1.0 - i * 0.01 for i, g in enumerate(ranked_genes)}
 
-        # Step 4: 使用 GSEA 分析
+        # Step 4: Use GSEA analysis
         gsea = GSEA(permutations=50, min_size=1, max_size=500)
         results = []
         for term_id, genes in gene_sets.items():
-            es, nes, pvalue, leading_edge, _ = gsea.calculate_normalized_es(
+            es, nes, pvalue, leading_edge = gsea.calculate_normalized_es(
                 ranked_genes, genes, gene_weights
             )
             results.append({
@@ -339,17 +339,17 @@ class TestE2EGseaWithCustomDb:
                 'leading_edge_count': len(leading_edge)
             })
 
-        # Step 5: 验证结果
-        assert len(results) == len(gene_sets), "结果数量应等于基因集数量"
+        # Step 5: Validation results
+        assert len(results) == len(gene_sets), "The result should be equal to the number of genomes."
 
         for r in results:
-            # ES 在 [-1, 1] 范围
+            # ES in range [-1, ]
             assert -1.0 <= r['es'] <= 1.0, (
-                f"{r['term_id']}: ES={r['es']} 超出范围 [-1,1]"
+                f"{r['term_id']}: ES={r['es']}O BORBORO OUT OF SCOPE"
             )
-            # pvalue 在 [0, 1] 范围
+            # pvalue in range [0, ]
             assert 0.0 <= r['pvalue'] <= 1.0, (
-                f"{r['term_id']}: pvalue={r['pvalue']} 超出范围 [0,1]"
+                f"{r['term_id']}: pvalue={r['pvalue']}Exceeding range [0, 1]"
             )
 
 
@@ -358,24 +358,24 @@ class TestE2EGseaWithCustomDb:
 # ============================================================
 
 class TestE2ESsgseaWithCustomDb:
-    """使用自定义数据库进行 ssGSEA 分析端到端测试"""
+    """Test from the ssGSEA analytical end to the end using a custom database"""
 
     def test_e2e_ssgsea_with_custom_db(self, tmp_db_root, large_four_col_annotation):
-        """构建自定义数据库 -> 创建表达矩阵 -> ssGSEA 分析"""
-        # Step 1: 构建自定义数据库
+        """Build Custom Databases -> Create Expression Matrix -> ssGSEA Analysis"""
+        # Step 1: Build a custom database
         builder = CustomDatabaseBuilder(root_dir=tmp_db_root)
         outdir = _build_db(builder, large_four_col_annotation, "hsa", 9606, "SsgseaTest")
 
-        # Step 2: 读取自动生成的 GMT 文件
+        # Step 2: Read automatically generated GMT files
         gmt_path = os.path.join(outdir, "hsa.SsgseaTest.gmt.gz")
-        assert os.path.exists(gmt_path), "GMT 文件未生成"
+        assert os.path.exists(gmt_path), "GMT file not generated"
 
         gene_sets = {}
         gmt_data = _read_gmt_gz(gmt_path)
         for term_id, (term_name, genes) in gmt_data.items():
             gene_sets[term_id] = set(genes)
 
-        # Step 3: 创建小型表达矩阵（使用注释文件中的基因）
+        # Step 3: Create small expression matrix (using genes from annotation files)
         all_genes = set()
         for genes in gene_sets.values():
             all_genes.update(genes)
@@ -390,26 +390,26 @@ class TestE2ESsgseaWithCustomDb:
             columns=[f"Sample_{i+1}" for i in range(n_samples)]
         )
 
-        # Step 4: 使用 ssGSEA 分析
+        # Step 4: Use ssGSEA analysis
         ssgsea = SSGSEA(min_size=1, max_size=500)
         results_df = ssgsea.analyze_matrix(expr_matrix, gene_sets)
 
-        # Step 5: 验证输出矩阵形状
+        # Step 5: Verify output matrix shape
         expected_pathways = len(gene_sets)
         expected_samples = n_samples
 
         assert results_df.shape[0] == expected_pathways, (
-            f"通路数不匹配: 期望 {expected_pathways}, 实际 {results_df.shape[0]}"
+            f"The number of routes does not match: expect {expected_pathways}, actual {results_df.shape[0]}"
         )
         assert results_df.shape[1] == expected_samples, (
-            f"样本数不匹配: 期望 {expected_samples}, 实际 {results_df.shape[1]}"
+            f"Samples do not match: Expect {expected_samples}, actual {results_df.shape[1]}"
         )
 
-        # 验证得分在合理范围
+        # Validation score is within reasonable range
         min_score = results_df.values.min()
         max_score = results_df.values.max()
-        assert min_score >= -1.0, f"最小得分 {min_score} 小于 -1"
-        assert max_score <= 1.0, f"最大得分 {max_score} 大于 1"
+        assert min_score >= -1.0, f"Minimum score {min_score} less than -1"
+        assert max_score <= 1.0, f"Max. score.{max_score}greater than 1"
 
 
 # ============================================================
@@ -417,11 +417,11 @@ class TestE2ESsgseaWithCustomDb:
 # ============================================================
 
 class TestE2ECliBuildWithCustomAnnot:
-    """CLI build 子命令自定义注释文件端到端测试"""
+    """CLI Build subcommand customizes the annotation file end to the endpoint test"""
 
     def test_e2e_cli_build_with_custom_annot(self, tmp_path):
-        """创建临时注释文件 -> 调用 CLI build -> 验证输出"""
-        # Step 1: 创建临时注释文件
+        """Create a temporary annotation file -> Call CLI build -> Authenticate Output"""
+        # Step 1: Create a temporary annotation file
         annot_file = tmp_path / "cli_test_annot.tsv"
         annot_file.write_text(
             "GENE1\tTERM001\tCell Cycle\tBiology|Cell Cycle\n"
@@ -432,7 +432,7 @@ class TestE2ECliBuildWithCustomAnnot:
 
         db_dir = tmp_path / "cli_test_db"
 
-        # Step 2: 使用 subprocess 调用 CLI
+        # Step 2: Use subprocess to call CLI
         result = subprocess.run(
             [sys.executable, "-m", "allenricher", "build",
              "-s", "testsp", "-t", "99999",
@@ -445,47 +445,47 @@ class TestE2ECliBuildWithCustomAnnot:
             cwd=str(Path(__file__).parent.parent)
         )
 
-        # CLI 命令可能因为标准构建流程缺少基础数据而报错，
-        # 但自定义构建部分应该已经执行
-        # 检查输出目录中是否有自定义数据库文件
-        # 查找 testsp 目录下的文件
+        # The CLI command may be wrong because the standard build process lacks basic data, but the process is not a good one.
+        # But the custom building should have been implemented
+        # Check whether there is a custom database file in the output directory
+        # Find files under the directory
         testsp_dirs = list(db_dir.rglob("testsp"))
         if testsp_dirs:
             outdir = testsp_dirs[0]
-            # 验证输出文件生成
+            # Validate output file generation
             found_files = list(outdir.glob("*.gz"))
             assert len(found_files) >= 2, (
-                f"期望至少 2 个输出文件，实际找到 {len(found_files)}"
+                f"Expected at least 2 output files, actually found{len(found_files)}"
             )
 
-            # 验证关键文件
+            # Validate key documents
             gmt_files = list(outdir.glob("testsp.TestDB.gmt.gz"))
-            assert len(gmt_files) == 1, "GMT 文件未生成"
+            assert len(gmt_files) == 1, "GMT file not generated"
         else:
-            # 如果标准构建流程失败导致整个命令失败，
-            # 验证至少自定义构建部分执行了（通过检查 stderr/stdout）
-            # 在某些环境下标准构建可能因为缺少基础数据而失败
-            # 但这不影响自定义构建部分的正确性
+            # If the standard build process fails, the entire command will fail.
+            # Verify that at least the custom build was performed (by checking stderr)/stdout)
+            # A standard build may fail when the fixture intentionally omits required source data.
+            # But this does not affect the correctness of the self-defined building parts.
             combined_output = result.stdout + result.stderr
-            # 自定义构建应至少尝试执行
+            # Custom build should at least try to execute
             assert "TestDB" in combined_output or "testsp" in combined_output, (
-                f"CLI 输出中未找到自定义构建相关信息: {combined_output[:500]}"
+                f"No custom construction information found in CLI output: {combined_output[: 500]}"
             )
 
 
 # ============================================================
-# 测试报告生成
+# Test Report Generation
 # ============================================================
 
 class TestIntegrationReport:
-    """集成测试报告生成"""
+    """Integrated Test Report Generation"""
 
     @pytest.fixture
     def report_data(self, tmp_db_root, four_col_annotation, large_four_col_annotation):
-        """构建测试报告所需的数据"""
+        """Data for the build test report"""
         data = {}
 
-        # 构建四列数据库
+        # Build four-column database
         builder = CustomDatabaseBuilder(root_dir=tmp_db_root)
         outdir = _build_db(builder, four_col_annotation, "hsa", 9606, "Report4Col")
         gmt_path = os.path.join(outdir, "hsa.Report4Col.gmt.gz")
@@ -498,7 +498,7 @@ class TestIntegrationReport:
             'gmt_valid': True,
         }
 
-        # 构建大型数据库并运行 GSEA
+        # Build large databases and run GSEA
         outdir2 = _build_db(builder, large_four_col_annotation, "hsa", 9606, "ReportGSEA")
         gmt_path2 = os.path.join(outdir2, "hsa.ReportGSEA.gmt.gz")
         gmt_data2 = _read_gmt_gz(gmt_path2)
@@ -513,7 +513,7 @@ class TestIntegrationReport:
         gsea = GSEA(permutations=50, min_size=1, max_size=500)
         gsea_results = []
         for term_id, genes in gene_sets.items():
-            es, nes, pvalue, leading_edge, _ = gsea.calculate_normalized_es(
+            es, nes, pvalue, leading_edge = gsea.calculate_normalized_es(
                 ranked_genes, genes, gene_weights
             )
             gsea_results.append({
@@ -527,7 +527,7 @@ class TestIntegrationReport:
             'all_pvalue_in_range': all(0 <= r['pvalue'] <= 1 for r in gsea_results),
         }
 
-        # ssGSEA 分析
+        # sGSEA analysis
         expr_data = np.random.RandomState(42).randn(len(all_genes), 3)
         expr_matrix = pd.DataFrame(
             expr_data, index=sorted(all_genes),
@@ -549,7 +549,7 @@ class TestIntegrationReport:
         return data
 
     def test_generate_report(self, report_data, tmp_path):
-        """生成测试报告 JSON"""
+        """Generate test report"""
         report = {
             "timestamp": datetime.now().isoformat(),
             "test_type": "custom_db_integration",
@@ -579,7 +579,7 @@ class TestIntegrationReport:
             },
         }
 
-        # 写入测试报告
+        # Write Test Report
         test_data_dir = Path(__file__).parent.parent / "test_data"
         test_data_dir.mkdir(exist_ok=True)
         report_path = test_data_dir / "custom_db_test_report.json"
@@ -587,10 +587,10 @@ class TestIntegrationReport:
         with open(report_path, 'w', encoding='utf-8') as f:
             json.dump(report, f, indent=2, ensure_ascii=False)
 
-        # 验证报告写入成功
-        assert report_path.exists(), f"报告文件未生成: {report_path}"
+        # Validation report successfully
+        assert report_path.exists(), f"The report document was not generated: {report_path}"
 
-        # 验证报告内容
+        # Validate the contents of the report
         with open(report_path, 'r', encoding='utf-8') as f:
             loaded = json.load(f)
 

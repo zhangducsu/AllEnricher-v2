@@ -1,42 +1,35 @@
-"""
-TRRUST v2 数据库解析器
-
-解析 TRRUST TSV 文件（TF-target 转录调控关系），
-生成 AllEnricher 标准的 TF2target.tab.gz、gene2TF.tab.gz 和 TF2disc.gz 文件。
-
-输入文件格式 (TRRUST TSV):
-    TF基因名\\ttarget基因名\\tmode_of_regulation(Activation/Repression/Unknown)
-
-输出文件格式：
-    - {species}.TF2target.tab.gz: TF\\ttarget1\\ttarget2\\t... (0/1 矩阵)
-    - {species}.gene2TF.tab.gz: Gene\\tTF1\\tTF2\\t... (0/1 矩阵)
-    - {species}.TF2disc.gz: TF\\tmode\\ttarget_count
-"""
+"""Parse TRRUST regulatory interactions into TF-target gene sets."""
 
 import gzip
 import logging
 from pathlib import Path
-from typing import Dict, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 logger = logging.getLogger(__name__)
 
 
 class TRRUSTParser:
-    """TRRUST v2 数据库解析器
+    """Build TF-target gene sets from TRRUST regulatory edges."""
 
-    解析 TRRUST TSV 文件，提取 TF-target 转录调控关系，
-    生成 AllEnricher 标准格式的数据库文件。
-
-    输入文件格式 (TRRUST TSV):
-        TF基因名\\ttarget基因名\\tmode_of_regulation
-
-        mode_of_regulation 取值: Activation / Repression / Unknown
-
-    输出文件格式：
-    - {species}.TF2target.tab.gz: TF\\ttarget1\\ttarget2\\t... (0/1 矩阵)
-    - {species}.gene2TF.tab.gz: Gene\\tTF1\\tTF2\\t... (0/1 矩阵)
-    - {species}.TF2disc.gz: TF\\tmode\\ttarget_count
-    """
+    @staticmethod
+    def parse_edges(tsv_path: str) -> List[Tuple[str, str, str, str]]:
+        """Read TRRUST regulatory edges with direction and PubMed identifiers."""
+        open_func = gzip.open if tsv_path.endswith('.gz') else open
+        edges: List[Tuple[str, str, str, str]] = []
+        with open_func(tsv_path, 'rt', encoding='utf-8') as handle:
+            for line in handle:
+                if not line.strip() or line.startswith('#'):
+                    continue
+                parts = line.rstrip('\n').split('\t')
+                if len(parts) < 3:
+                    continue
+                tf, target, mode = (part.strip() for part in parts[:3])
+                pmid = parts[3].strip() if len(parts) > 3 else ""
+                if tf and target:
+                    edges.append((tf, target, mode, pmid))
+        if not edges:
+            raise ValueError("No valid TF-target interactions were found in the TRRUST file")
+        return edges
 
     @staticmethod
     def parse_tsv(tsv_path: str) -> Tuple[
@@ -44,25 +37,8 @@ class TRRUSTParser:
         Dict[str, Set[str]],
         Dict[str, str]
     ]:
-        """解析 TRRUST TSV 文件，提取 TF-target 关系
-
-        读取 TRRUST TSV 文件，构建 TF->targets 映射、
-        gene->TFs 反向映射，以及 TF 调控模式统计。
-
-        Args:
-            tsv_path: TRRUST TSV 文件路径（支持 .gz 压缩格式）
-
-        Returns:
-            三元组 (tf_to_targets, gene_to_tfs, tf_modes):
-            - tf_to_targets: {TF: {target1, target2, ...}}
-            - gene_to_tfs: {gene: {TF1, TF2, ...}}
-            - tf_modes: {TF: 'activator'/'repressor'/'mixed'/'unknown'}
-
-        Raises:
-            FileNotFoundError: 输入文件不存在时抛出
-            ValueError: 没有找到有效的 TF-target 关联时抛出
-        """
-        # 自动选择打开方式
+        """Parse the source TSV into normalized regulatory gene sets."""
+        # AutoSelect Open
         if tsv_path.endswith('.gz'):
             f_open = gzip.open(tsv_path, 'rt', encoding='utf-8')
         else:
@@ -89,17 +65,17 @@ class TRRUSTParser:
                 if not tf or not target:
                     continue
 
-                # 构建 TF -> targets 映射
+                # Build TF-> towers map
                 if tf not in tf_to_targets:
                     tf_to_targets[tf] = set()
                 tf_to_targets[tf].add(target)
 
-                # 构建 gene -> TFs 反向映射
+                # Build Gene-> TFs Reverse Map
                 if target not in gene_to_tfs:
                     gene_to_tfs[target] = set()
                 gene_to_tfs[target].add(tf)
 
-                # 统计 TF 的调控模式计数
+                # TF-stating mode count
                 if tf not in tf_mode_counts:
                     tf_mode_counts[tf] = {'activation': 0, 'repression': 0, 'unknown': 0}
                 mode_lower = mode.lower()
@@ -114,10 +90,10 @@ class TRRUSTParser:
 
         if n == 0:
             raise ValueError(
-                "[错误] 在 TRRUST 文件中没有找到有效的 TF-target 关联！"
+                "No valid TF-target interactions were found in the TRRUST file"
             )
 
-        # 确定 TF 的主要调控模式
+        # Determine the main TF mode of regulation
         tf_modes: Dict[str, str] = {}
         for tf, counts in tf_mode_counts.items():
             act = counts['activation']
@@ -133,8 +109,8 @@ class TRRUSTParser:
             else:
                 tf_modes[tf] = 'unknown'
 
-        logger.info("TRRUSTParser: 共解析 %d 条 TF-target 关联", n)
-        logger.info("TRRUSTParser: %d 个 TF, %d 个靶基因",
+        logger.info("TRRUSTParser: solves %d Article TF-target association", n)
+        logger.info("TRRUSTPARSER: %d TF, %d TREE",
                     len(tf_to_targets), len(gene_to_tfs))
 
         return tf_to_targets, gene_to_tfs, tf_modes
@@ -142,34 +118,21 @@ class TRRUSTParser:
     @staticmethod
     def build_database(tsv_path: str, output_dir: str, species: str,
                        valid_genes: Optional[Set[str]] = None) -> None:
-        """构建 TRRUST 数据库文件
-
-        解析 TRRUST TSV 文件，生成 TF2target.tab.gz、gene2TF.tab.gz
-        和 TF2disc.gz 三个数据库文件。
-
-        Args:
-            tsv_path: TRRUST TSV 文件路径（支持 .gz 压缩格式）
-            output_dir: 输出目录
-            species: 物种缩写（如 hsa, mmu）
-            valid_genes: 可选的有效基因集合，如果提供则过滤不在集合中的基因
-
-        Raises:
-            FileNotFoundError: 输入文件不存在时抛出
-            ValueError: 没有找到有效的 TF-target 关联时抛出
-        """
+        """Build normalized database artifacts from parsed source data."""
         outdir_path = Path(output_dir)
         outdir_path.mkdir(parents=True, exist_ok=True)
 
-        logger.info("TRRUSTParser: 开始构建 TRRUST 数据库 (species=%s)", species)
+        logger.info("TRRUSTParser: Start building TRRUST databases (species=%s)", species)
 
-        # 第一步：解析 TSV 文件
+        # Step 1: parsing TSV files
+        edges = TRRUSTParser.parse_edges(tsv_path)
         tf_to_targets, gene_to_tfs, tf_modes = TRRUSTParser.parse_tsv(tsv_path)
 
-        # 第二步：如果提供了 valid_genes，过滤不在集合中的基因
+        # Step 2: If a valid_genes is provided, filtering genes not in the pool
         if valid_genes is not None:
-            logger.info("使用 valid_genes 过滤 (共 %d 个有效基因)", len(valid_genes))
+            logger.info("Filtering TRRUST targets against %d valid genes", len(valid_genes))
 
-            # 过滤 TF: TF 本身必须是有效基因
+            # Filter TF: TF itself must be a valid gene
             filtered_tf_to_targets: Dict[str, Set[str]] = {}
             for tf, targets in tf_to_targets.items():
                 if tf not in valid_genes:
@@ -178,7 +141,7 @@ class TRRUSTParser:
                 if filtered_targets:
                     filtered_tf_to_targets[tf] = filtered_targets
 
-            # 重建 gene_to_tfs
+            # Rebuild Gene_to_tfs
             filtered_gene_to_tfs: Dict[str, Set[str]] = {}
             for tf, targets in filtered_tf_to_targets.items():
                 for target in targets:
@@ -186,7 +149,7 @@ class TRRUSTParser:
                         filtered_gene_to_tfs[target] = set()
                     filtered_gene_to_tfs[target].add(tf)
 
-            # 过滤 tf_modes
+            # Filter tf_modes
             filtered_tf_modes: Dict[str, str] = {
                 tf: mode for tf, mode in tf_modes.items()
                 if tf in filtered_tf_to_targets
@@ -195,25 +158,31 @@ class TRRUSTParser:
             tf_to_targets = filtered_tf_to_targets
             gene_to_tfs = filtered_gene_to_tfs
             tf_modes = filtered_tf_modes
+            edges = [
+                edge for edge in edges
+                if edge[0] in tf_to_targets and edge[1] in tf_to_targets[edge[0]]
+            ]
 
-            logger.info("过滤后: %d 个 TF, %d 个靶基因",
+            logger.info("Filtering retained %d TFs and %d target genes",
                         len(tf_to_targets), len(gene_to_tfs))
 
         if not tf_to_targets:
             raise ValueError(
-                "[错误] 过滤后没有有效的 TF-target 关联！"
+                "No valid TF-target associations remained after filtering"
             )
 
-        # 第三步：收集所有基因（TF + target），作为 gene2TF 矩阵的行
-        all_genes = set(gene_to_tfs.keys()) | set(tf_to_targets.keys())
+        # gene2TF rows define the statistical background and therefore include
+        # only genes that occur as targets. Regulator-only TFs remain as columns
+        # and in the TF2target file.
+        all_genes = set(gene_to_tfs.keys())
         sorted_tfs = sorted(tf_to_targets.keys())
         sorted_genes = sorted(all_genes)
 
-        # 第四步：写入 TF2target.tab.gz
-        # 格式: TF\\ttarget1\\ttarget2\\t... (0/1 矩阵)
+        # Step 4: Write TF2target.tab.gz
+        # Format: TF\\ttarget1\\ttarget2\\t... (0/1(Atlas)
         sorted_targets = sorted(gene_to_tfs.keys())
         tab_file = outdir_path / f"{species}.TF2target.tab.gz"
-        logger.info("写入文件: %s", tab_file)
+        logger.info("Writing file: %s", tab_file)
 
         with gzip.open(tab_file, 'wt', encoding='utf-8') as f:
             header = ["TF"] + sorted_targets
@@ -228,10 +197,10 @@ class TRRUSTParser:
                         row.append('0')
                 f.write('\t'.join(row) + '\n')
 
-        # 第五步：写入 gene2TF.tab.gz
-        # 格式: Gene\\tTF1\\tTF2\\t... (0/1 矩阵)
+        # Step 5: write gene2TF.tab.gz
+        # Format: Gene\\tTF1\\tTF2\\t... (0/1(Atlas)
         gene2tf_file = outdir_path / f"{species}.gene2TF.tab.gz"
-        logger.info("写入文件: %s", gene2tf_file)
+        logger.info("Writing file: %s", gene2tf_file)
 
         with gzip.open(gene2tf_file, 'wt', encoding='utf-8') as f:
             header = ["Gene"] + sorted_tfs
@@ -246,15 +215,23 @@ class TRRUSTParser:
                         row.append('0')
                 f.write('\t'.join(row) + '\n')
 
-        # 第六步：写入 TF2disc.gz
-        # 格式: TF\\tmode\\ttarget_count
+        # Step 6: Write the TF metadata and the regularized border table with the header.
         disc_file = outdir_path / f"{species}.TF2disc.gz"
-        logger.info("写入文件: %s", disc_file)
+        logger.info("Writing file: %s", disc_file)
 
         with gzip.open(disc_file, 'wt', encoding='utf-8') as f:
+            f.write("Term_ID\tTerm_Name\tTF\tMode\tTarget_Set_Size\tSource\n")
             for tf in sorted_tfs:
                 mode = tf_modes.get(tf, 'unknown')
                 target_count = len(tf_to_targets[tf])
-                f.write(f"{tf}\t{mode}\t{target_count}\n")
+                f.write(
+                    f"{tf}\t{tf} targets [TRRUST]\t{tf}\t{mode}\t{target_count}\tTRRUST\n"
+                )
 
-        logger.info("TRRUSTParser: TRRUST 数据库构建完成")
+        edge_file = outdir_path / f"{species}.TRRUST_edges.tsv.gz"
+        with gzip.open(edge_file, 'wt', encoding='utf-8') as f:
+            f.write("TF\tTarget\tMode\tPMID\tSource\n")
+            for tf, target, mode, pmid in sorted(set(edges)):
+                f.write(f"{tf}\t{target}\t{mode}\t{pmid}\tTRRUST\n")
+
+        logger.info("TRRUSTParser: TRRUST database built up")

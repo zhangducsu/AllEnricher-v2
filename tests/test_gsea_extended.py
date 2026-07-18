@@ -1,16 +1,7 @@
-"""
-GSEA 扩展功能单元测试
+"""Extended tests for GSEA and ssGSEA analysis behavior.
 
-测试覆盖范围：
-- GSEA 富集分数（ES）计算正确性
-- GSEA 基于置换检验的归一化富集分数（NES）计算
-- GSEA 置换检验 p 值范围
-- GSEA 前沿基因（leading edge）正确性
-- GSEA 空基因集处理
-- GSEA 表达矩阵分析接口
-- ssGSEA 表达矩阵分析接口
-- ssGSEA NES 范围验证
-- ssGSEA 单样本分析
+Coverage includes ES and NES calculations, permutation P values, leading-edge genes,
+empty inputs, expression-matrix interfaces, score ranges, and single-sample analysis.
 """
 
 import pytest
@@ -21,45 +12,33 @@ from allenricher.core.enrichment import GSEA, SSGSEA
 
 
 # ============================================================
-# 测试数据构造工具
+# Synthetic test fixtures
 # ============================================================
 
 def _make_ranked_genes_with_enrichment_top(gene_set_size=15, total_genes=100, seed=42):
-    """
-    构造一个基因集富集在排序列表顶部的场景
-
-    返回: (ranked_genes, gene_set)
-    """
+    """Place one gene set at the top of a synthetic ranked list."""
     rng = np.random.default_rng(seed)
     gene_set = {f"GENE_{i}" for i in range(gene_set_size)}
     other_genes = [f"GENE_{i}" for i in range(gene_set_size, total_genes)]
     rng.shuffle(other_genes)
-    # 基因集的基因排在最前面
+    # Gene-set members occupy the leading positions.
     ranked_genes = list(gene_set) + other_genes
     return ranked_genes, gene_set
 
 
 def _make_ranked_genes_with_enrichment_bottom(gene_set_size=15, total_genes=100, seed=42):
-    """
-    构造一个基因集富集在排序列表底部的场景
-
-    返回: (ranked_genes, gene_set)
-    """
+    """Place one gene set at the bottom of a synthetic ranked list."""
     rng = np.random.default_rng(seed)
     gene_set = {f"GENE_{i}" for i in range(total_genes - gene_set_size, total_genes)}
     other_genes = [f"GENE_{i}" for i in range(total_genes - gene_set_size)]
     rng.shuffle(other_genes)
-    # 基因集的基因排在最后面
+    # Gene-set members occupy the trailing positions.
     ranked_genes = other_genes + list(gene_set)
     return ranked_genes, gene_set
 
 
 def _make_expression_matrix(n_genes=50, n_samples=3, seed=42):
-    """
-    构造测试用表达矩阵 (行=基因, 列=样本)
-
-    返回: pd.DataFrame
-    """
+    """Create a synthetic gene-by-sample expression matrix."""
     rng = np.random.default_rng(seed)
     genes = [f"GENE_{i}" for i in range(n_genes)]
     samples = [f"SAMPLE_{i}" for i in range(n_samples)]
@@ -68,11 +47,7 @@ def _make_expression_matrix(n_genes=50, n_samples=3, seed=42):
 
 
 def _make_gene_sets(n_pathways=2, genes_per_pathway=10, total_genes=50, seed=42):
-    """
-    构造测试用基因集
-
-    返回: {通路名: 基因集合}
-    """
+    """Create synthetic pathway gene sets for tests."""
     rng = np.random.default_rng(seed)
     gene_pool = [f"GENE_{i}" for i in range(total_genes)]
     gene_sets = {}
@@ -83,54 +58,48 @@ def _make_gene_sets(n_pathways=2, genes_per_pathway=10, total_genes=50, seed=42)
 
 
 # ============================================================
-# GSEA 测试
+# GSEA Test
 # ============================================================
 
 class TestGSEAEnrichmentScore:
-    """GSEA 富集分数（ES）计算测试"""
+    """Tests for GSEA enrichment-score calculations."""
 
     def test_gsea_enrichment_score_basic(self):
-        """验证 ES 计算正确性（已知输入的预期输出）
-
-        当基因集的所有基因都集中在排序列表最顶部时，
-        ES 应接近 1.0（因为所有命中都在最开始累积，miss 尚未开始扣减）。
-        """
+        """Return an ES near one when every hit precedes every miss."""
         gsea = GSEA(permutations=100, seed=42)
 
-        # 构造场景：5 个基因集基因全部排在 20 个基因的最前面
+        # All five gene-set members precede the remaining genes.
         gene_set = {"A", "B", "C", "D", "E"}
         ranked_genes = ["A", "B", "C", "D", "E"] + [f"X_{i}" for i in range(15)]
 
-        es, leading_edge, rank_at_es = gsea.calculate_enrichment_score(ranked_genes, gene_set)
+        es, leading_edge = gsea.calculate_enrichment_score(ranked_genes, gene_set)
 
-        # 所有基因集基因在最前面，ES 应接近 1.0
-        assert es > 0.9, f"ES 应接近 1.0，实际为 {es}"
-        # 前沿基因应包含所有基因集基因
+        # Concentrating all hits at the top should produce an ES near one.
+        assert es > 0.9, f"ES should be close to 1.0, actually {es}"
+        # Every hit belongs to the leading edge in this construction.
         assert set(leading_edge) == gene_set
-        assert rank_at_es == len(gene_set)
 
     def test_gsea_nes_positive(self):
-        """正向富集时 NES 应为正值"""
+        """Return a positive NES for enrichment at the top of the ranking."""
         gsea = GSEA(permutations=100, seed=42)
 
         ranked_genes, gene_set = _make_ranked_genes_with_enrichment_top(
             gene_set_size=15, total_genes=100, seed=42
         )
 
-        es, nes, pvalue, leading_edge, rank_at_es = gsea.calculate_normalized_es(
+        es, nes, pvalue, leading_edge = gsea.calculate_normalized_es(
             ranked_genes, gene_set
         )
 
-        assert nes > 0, f"正向富集时 NES 应为正值，实际为 {nes}"
-        assert es > 0, f"正向富集时 ES 应为正值，实际为 {es}"
-        assert rank_at_es > 0
+        assert nes > 0, f"NES should be positive when gathering for the rich, actually{nes}"
+        assert es > 0, f"ES should be positive when it is going to be rich, actually is{es}"
 
     def test_gsea_nes_negative(self):
-        """负向富集时 NES 应为负值
+        """When the negatives are concentrated NES should be negative
 
-        注意：当前 GSEA 的 ES 计算只追踪最大值（正向），
-        因此基因集在底部时 ES 接近 0。
-        此测试验证当 ES 为 0 或接近 0 时 NES 的行为。
+Attention.: Current GSEA It's... ES Calculate only trace maximum value (Heading), 
+So when the gene pool is at the bottom, ES Close. 0.
+This test validates the NES behaviour when ES is 0 or close to 0.
         """
         gsea = GSEA(permutations=100, seed=42)
 
@@ -138,67 +107,68 @@ class TestGSEAEnrichmentScore:
             gene_set_size=15, total_genes=100, seed=42
         )
 
-        es, nes, pvalue, leading_edge, rank_at_es = gsea.calculate_normalized_es(
+        es, nes, pvalue, leading_edge = gsea.calculate_normalized_es(
             ranked_genes, gene_set
         )
 
-        assert es < 0, f"底部富集时 ES 应为负值，实际为 {es}"
-        assert nes < 0, f"底部富集时 NES 应为负值，实际为 {nes}"
-        assert rank_at_es > 0
+        # When the gene set is at the bottom, as only the maximum trace is currently being achieved,
+        # ES should be close to 0 (miss first reduced, hit later accumulated but not above previous peak)
+        assert es < 0, f"The Es with a rich bottom should be negative, actually {es}"
+        assert nes < 0, f"The NES with a rich bottom should be negative, actually{nes}"
+        assert leading_edge
 
     def test_gsea_permutation_pvalue(self):
-        """置换检验 p 值应在 [0, 1] 范围内"""
+        """Replace the check p values should be within [0, 1]"""
         gsea = GSEA(permutations=100, seed=42)
 
         ranked_genes, gene_set = _make_ranked_genes_with_enrichment_top(
             gene_set_size=15, total_genes=100, seed=42
         )
 
-        es, nes, pvalue, leading_edge, rank_at_es = gsea.calculate_normalized_es(
+        es, nes, pvalue, leading_edge = gsea.calculate_normalized_es(
             ranked_genes, gene_set
         )
 
-        assert 0.0 <= pvalue <= 1.0, f"p 值应在 [0, 1] 范围内，实际为 {pvalue}"
+        assert 0.0 <= pvalue <= 1.0, f"p Value should be within [0, 1] and actual{pvalue}"
 
     def test_gsea_leading_edge(self):
-        """前沿基因应全部属于基因集"""
+        """The frontier gene should all belong to the gene pool."""
         gsea = GSEA(permutations=100, seed=42)
 
         ranked_genes, gene_set = _make_ranked_genes_with_enrichment_top(
             gene_set_size=15, total_genes=100, seed=42
         )
 
-        es, nes, pvalue, leading_edge, rank_at_es = gsea.calculate_normalized_es(
+        es, nes, pvalue, leading_edge = gsea.calculate_normalized_es(
             ranked_genes, gene_set
         )
 
-        # 前沿基因应全部属于基因集
+        # The frontier gene should all belong to the gene pool.
         for gene in leading_edge:
-            assert gene in gene_set, f"前沿基因 {gene} 不属于基因集"
+            assert gene in gene_set, f"Precipitous genes{gene}Not a gene set."
 
     def test_gsea_empty_gene_set(self):
-        """空基因集应返回 ES=0"""
+        """The empty gene set should return ES=0"""
         gsea = GSEA(permutations=100, seed=42)
 
         ranked_genes = [f"GENE_{i}" for i in range(50)]
-        gene_set = set()  # 空基因集
+        gene_set = set()  # Empty gene set.
 
-        es, leading_edge, rank_at_es = gsea.calculate_enrichment_score(ranked_genes, gene_set)
+        es, leading_edge = gsea.calculate_enrichment_score(ranked_genes, gene_set)
 
-        assert es == 0.0, f"空基因集的 ES 应为 0，实际为 {es}"
-        assert leading_edge == [], f"空基因集的前沿基因应为空列表"
-        assert rank_at_es == 0
+        assert es == 0.0, f"The Es for the empty gene set should be 0, actually{es}"
+        assert leading_edge == [], f"The frontier gene of the empty gene set should be an empty list"
 
 
 # ============================================================
-# GSEA 表达矩阵分析测试
+# GSEA Expression Matrix Analysis Test
 # ============================================================
 
 class TestGSEAAnalyzeMatrix:
-    """GSEA 表达矩阵分析接口测试"""
+    """GSEA expression matrix analysis interface test"""
 
     def test_gsea_analyze_matrix(self):
-        """表达矩阵分析输出形状正确"""
+        """Express matrix analysis output shape correct"""
         gsea = GSEA(permutations=50, seed=42)
 
         expression_matrix = _make_expression_matrix(n_genes=50, n_samples=3, seed=42)
@@ -206,22 +176,22 @@ class TestGSEAAnalyzeMatrix:
 
         result = gsea.analyze_matrix(expression_matrix, gene_sets)
 
-        # 验证输出形状：行=通路数，列=样本数
-        assert result.shape == (2, 3), f"输出形状应为 (2, 3)，实际为 {result.shape}"
-        # 验证行名和列名
+        # Confirm output shape: Line = Line = Line = Sample
+        assert result.shape == (2, 3), f"Output shape should be (2, 3), actual{result.shape}"
+        # Validation of line names and listings
         assert list(result.index) == ["PATHWAY_0", "PATHWAY_1"]
         assert list(result.columns) == ["SAMPLE_0", "SAMPLE_1", "SAMPLE_2"]
 
 
 # ============================================================
-# ssGSEA 测试
+# SGSEA test
 # ============================================================
 
 class TestSSGSEAAnalyzeMatrix:
-    """ssGSEA 表达矩阵分析接口测试"""
+    """ssGSEA expression matrix analysis interface test"""
 
     def test_ssgsea_analyze_matrix(self):
-        """ssGSEA 表达矩阵分析输出形状正确"""
+        """ssGSEA expression matrix analysis output shape is correct"""
         ssgsea = SSGSEA(min_size=1, max_size=500)
 
         expression_matrix = _make_expression_matrix(n_genes=50, n_samples=3, seed=42)
@@ -229,14 +199,14 @@ class TestSSGSEAAnalyzeMatrix:
 
         result = ssgsea.analyze_matrix(expression_matrix, gene_sets)
 
-        # 验证输出形状：行=通路数，列=样本数
-        assert result.shape == (2, 3), f"输出形状应为 (2, 3)，实际为 {result.shape}"
-        # 验证行名和列名
+        # Confirm output shape: Line = Line = Line = Sample
+        assert result.shape == (2, 3), f"Output shape should be (2, 3), actual{result.shape}"
+        # Validation of line names and listings
         assert list(result.index) == ["PATHWAY_0", "PATHWAY_1"]
         assert list(result.columns) == ["SAMPLE_0", "SAMPLE_1", "SAMPLE_2"]
 
     def test_ssgsea_nes_range(self):
-        """ssGSEA NES 应在 [-1, 1] 范围内"""
+        """sGSEA NES should be within [1, 1]"""
         ssgsea = SSGSEA(min_size=1, max_size=500)
 
         expression_matrix = _make_expression_matrix(n_genes=50, n_samples=5, seed=42)
@@ -244,23 +214,23 @@ class TestSSGSEAAnalyzeMatrix:
 
         result = ssgsea.analyze_matrix(expression_matrix, gene_sets)
 
-        # 验证所有 NES 值在 [-1, 1] 范围内
+        # Verify all NES values in [-1, 1]
         for col in result.columns:
             for val in result[col]:
-                assert -1.0 <= val <= 1.0, f"ssGSEA NES 应在 [-1, 1] 范围内，实际为 {val}"
+                assert -1.0 <= val <= 1.0, f"sGSEA NES should be within [-1, 1] range, actually{val}"
 
     def test_ssgsea_single_sample(self):
-        """单样本分析应正常工作"""
+        """Single sample analysis should be working."""
         ssgsea = SSGSEA(min_size=1, max_size=500)
 
-        # 只有一个样本的表达矩阵
+        # There's only one sample of the matrix of expression.
         expression_matrix = _make_expression_matrix(n_genes=50, n_samples=1, seed=42)
         gene_sets = _make_gene_sets(n_pathways=2, genes_per_pathway=10, total_genes=50, seed=42)
 
         result = ssgsea.analyze_matrix(expression_matrix, gene_sets)
 
-        # 验证输出形状：行=通路数，列=1
-        assert result.shape == (2, 1), f"输出形状应为 (2, 1)，实际为 {result.shape}"
+        # Confirm output shape: Line = Roads, Column = 1
+        assert result.shape == (2, 1), f"The output shape should be (2, 1) and the actual {result.shape}"
         assert list(result.columns) == ["SAMPLE_0"]
 
 

@@ -1,11 +1,4 @@
-"""
-TF富集分析可视化模块 - 基于 plotly.graph_objects 的交互式图表
-
-提供转录因子(Transcription Factor)富集分析结果的交互式可视化图表：
-- 水平条形图：TF富集显著性排名
-- 饼图：TF调控模式分布
-- 热图：TF-Target重叠度(Jaccard相似系数)
-"""
+"""Interactive Plotly figures for transcription factor enrichment results."""
 
 import logging
 from typing import Dict, Optional
@@ -16,17 +9,17 @@ import plotly.graph_objects as go
 
 logger = logging.getLogger(__name__)
 
-# TF调控模式配色方案
+# Colors used for transcription-factor regulatory modes.
 MODE_COLORS = {
-    "activator": "#2ecc71",   # 绿色 - 激活因子
-    "repressor": "#e74c3c",    # 红色 - 抑制因子
-    "mixed": "#f39c12",        # 橙色 - 混合调控
-    "unknown": "#3498db",      # 蓝色 - 未知模式
+    "activator": "#2ecc71",
+    "repressor": "#e74c3c",
+    "mixed": "#f39c12",
+    "unknown": "#3498db",
 }
 
 
 class Visualizer:
-    """TF富集分析可视化器 - 基于 plotly 的交互式图表"""
+    """Build interactive figures for transcription factor analyses."""
 
     def plot_tf_enrichment_bar(
         self,
@@ -35,23 +28,25 @@ class Visualizer:
         title: str = "Transcription Factor Enrichment",
         color_by_mode: bool = True,
     ) -> go.Figure:
-        """生成TF富集分析水平条形图
+        """Plot the most significant transcription factors as horizontal bars.
 
         Args:
-            result_df: TF富集分析结果DataFrame，需包含 TF名称、Pvalue/FDR、Overlap 等列
-            top_n: 显示前N个最显著的TF
-            title: 图表标题
-            color_by_mode: 是否按调控模式(Mode列)着色
+            result_df: Enrichment results containing TF names and P values.
+            top_n: Maximum number of transcription factors to display.
+            title: Figure title.
+            color_by_mode: Color bars by the ``Mode`` column when available.
 
         Returns:
-            go.Figure: plotly交互式水平条形图
+            An interactive Plotly figure.
         """
         df = result_df.copy()
 
-        # 标准化列名映射
+        # Resolve supported column aliases without changing the input table.
         pval_col = self._find_column(df, ["Pvalue", "P_Value", "pvalue", "P-value", "p_value"])
         overlap_col = self._find_column(df, ["Overlap", "overlap", "Gene_Count", "gene_count"])
-        tf_col = self._find_column(df, ["TF", "tf", "Term_Name", "term_name", "Name", "name"])
+        tf_col = self._find_column(
+            df, ["Term_Name", "term_name", "TF", "tf", "Name", "name"]
+        )
 
         if tf_col is None or pval_col is None:
             raise ValueError(
@@ -59,19 +54,19 @@ class Visualizer:
                 "Expected columns: TF/Name/Term_Name and Pvalue/P_Value"
             )
 
-        # 按 Pvalue 升序排列，取 top_n
+        # Select the most significant rows.
         df = df.sort_values(by=pval_col, ascending=True).head(top_n).copy()
 
-        # 计算 -log10(Pvalue)
+        # Transform P values for display while protecting against log10(0).
         df["_neg_log10_pval"] = -np.log10(df[pval_col].astype(float).clip(lower=1e-300))
 
-        # 确定条形颜色
+        # Use regulatory-mode colors when that annotation is available.
         if color_by_mode and "Mode" in df.columns:
             bar_colors = df["Mode"].map(MODE_COLORS).fillna(MODE_COLORS["unknown"]).tolist()
         else:
             bar_colors = ["#3498db"] * len(df)
 
-        # 构建条形图
+        # Draw the primary bar layer.
         fig = go.Figure()
 
         fig.add_trace(
@@ -90,7 +85,7 @@ class Visualizer:
             )
         )
 
-        # 条形末端显示 Overlap 数值
+        # Label bars with overlap counts when provided.
         if overlap_col is not None:
             overlap_vals = df[overlap_col].tolist()
             fig.add_trace(
@@ -106,7 +101,7 @@ class Visualizer:
                 )
             )
 
-        # 布局设置
+        # Keep long TF names readable without crowding the plot.
         fig.update_layout(
             title=dict(text=title, font=dict(size=16)),
             xaxis_title="-log10(Pvalue)",
@@ -128,28 +123,29 @@ class Visualizer:
         result_df: pd.DataFrame,
         title: str = "TF Regulation Mode Distribution",
     ) -> go.Figure:
-        """生成TF调控模式饼图
+        """Plot the regulatory-mode distribution among significant TFs.
 
-        仅统计显著TF（FDR < 0.05）的调控模式分布。
+        When an FDR column is available, only rows with FDR below 0.05 are
+        included.
 
         Args:
-            result_df: TF富集分析结果DataFrame，需包含 Mode 和 FDR 列
-            title: 图表标题
+            result_df: Enrichment results containing ``Mode`` and optionally FDR.
+            title: Figure title.
 
         Returns:
-            go.Figure: plotly交互式饼图
+            An interactive Plotly figure.
         """
         df = result_df.copy()
 
-        # 查找FDR列
+        # Resolve the adjusted-P-value column when present.
         fdr_col = self._find_column(df, ["FDR", "fdr", "Adjusted_P_Value", "adjusted_p_value", "Qvalue"])
 
-        # 筛选显著TF
+        # Restrict the summary to statistically significant TFs.
         if fdr_col is not None:
             df = df[df[fdr_col].astype(float) < 0.05].copy()
 
         if "Mode" not in df.columns or len(df) == 0:
-            # 无显著结果时返回空饼图
+            # Render an explicit empty state instead of a misleading distribution.
             fig = go.Figure(
                 data=[
                     go.Pie(
@@ -162,10 +158,10 @@ class Visualizer:
             fig.update_layout(title=dict(text=title, font=dict(size=16)))
             return fig
 
-        # 统计各模式数量
+        # Count TFs in each regulatory mode.
         mode_counts = df["Mode"].value_counts()
 
-        # 确保所有已知模式都有对应颜色
+        # Apply the established color mapping to known modes.
         labels = []
         values = []
         colors = []
@@ -175,7 +171,7 @@ class Visualizer:
                 values.append(int(mode_counts[mode]))
                 colors.append(MODE_COLORS[mode])
 
-        # 处理未知模式名
+        # Preserve unexpected mode labels with a neutral fallback color.
         for mode_name, count in mode_counts.items():
             if mode_name not in MODE_COLORS:
                 labels.append(str(mode_name))
@@ -214,18 +210,18 @@ class Visualizer:
         top_n: int = 15,
         title: str = "TF-Target Overlap Heatmap",
     ) -> go.Figure:
-        """生成TF-Target重叠度热图(Jaccard相似系数)
+        """Plot pairwise Jaccard similarity between top TF target sets.
 
         Args:
-            result_df: TF富集分析结果DataFrame（用于确定top TF）
-            tf_to_targets: TF到其靶基因集合的映射 {TF_name: set_of_genes}
-            top_n: 显示前N个最显著的TF
-            title: 图表标题
+            result_df: TF enrichment results used to select the top TFs.
+            tf_to_targets: Mapping from each TF name to its target-gene set.
+            top_n: Maximum number of TFs to include.
+            title: Figure title.
 
         Returns:
-            go.Figure: plotly交互式热图
+            An interactive Plotly heatmap.
         """
-        # 确定top TF列表
+        # Select top TFs using P values when available.
         pval_col = self._find_column(result_df, ["Pvalue", "P_Value", "pvalue", "P-value", "p_value"])
         tf_col = self._find_column(result_df, ["TF", "tf", "Term_Name", "term_name", "Name", "name"])
 
@@ -237,7 +233,7 @@ class Visualizer:
         else:
             top_tfs = result_df.head(top_n)[tf_col].tolist()
 
-        # 过滤出有靶基因数据的TF
+        # Keep only TFs for which target-gene data are available.
         top_tfs = [tf for tf in top_tfs if tf in tf_to_targets]
 
         if len(top_tfs) < 2:
@@ -246,7 +242,7 @@ class Visualizer:
                 "Ensure tf_to_targets contains entries for the top TFs."
             )
 
-        # 计算 Jaccard 相似系数矩阵
+        # Calculate the pairwise Jaccard similarity matrix.
         n = len(top_tfs)
         jaccard_matrix = np.zeros((n, n))
 
@@ -258,7 +254,7 @@ class Visualizer:
                 union = len(set_i | set_j)
                 jaccard_matrix[i, j] = intersection / union if union > 0 else 0.0
 
-        # 构建热图
+        # Build the annotated similarity heatmap.
         fig = go.Figure(
             data=go.Heatmap(
                 z=jaccard_matrix,
@@ -293,14 +289,14 @@ class Visualizer:
 
     @staticmethod
     def _find_column(df: pd.DataFrame, candidates: list) -> Optional[str]:
-        """在DataFrame中查找第一个匹配的列名
+        """Return the first candidate column present in a DataFrame.
 
         Args:
-            df: 目标DataFrame
-            candidates: 候选列名列表
+            df: DataFrame to inspect.
+            candidates: Candidate column names in priority order.
 
         Returns:
-            匹配到的列名，未找到返回None
+            The matching column name, or ``None`` when no candidate exists.
         """
         for col in candidates:
             if col in df.columns:

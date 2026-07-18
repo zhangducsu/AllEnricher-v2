@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""检查数据库文件的内容"""
+"""Check the contents of the database file"""
 
 import gzip
 from pathlib import Path
@@ -9,7 +9,7 @@ def check_file():
     v1_db_dir = Path(__file__).parent.parent / "AllEnricher-v1" / "database" / "organism" / "v20190612" / "hsa"
     
     print("=" * 80)
-    print("检查 hsa.GO2gene.tab.gz")
+    print("Check. hsa.Go2gene.tab.gz")
     print("=" * 80)
     filepath = v1_db_dir / "hsa.GO2gene.tab.gz"
     
@@ -18,7 +18,7 @@ def check_file():
         print("\n".join(lines))
     
     print("\n" + "=" * 80)
-    print("检查 hsa.KEGG2gene.tab.gz")
+    print("Check hsa. Kegg2gene.tab.gz")
     print("=" * 80)
     filepath = v1_db_dir / "hsa.KEGG2gene.tab.gz"
     

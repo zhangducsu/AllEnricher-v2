@@ -1,12 +1,4 @@
-"""数据库版本管理模块
-
-管理 AllEnricher 各数据源的版本信息，支持：
-- 远程版本检测（检查数据源是否有更新）
-- 本地版本清单读写（versions.json）
-- 版本比较和更新判断
-- 旧版本清理
-- 构建血缘追踪
-"""
+"""Record local database versions, lineage, and remote update metadata."""
 
 from __future__ import annotations
 
@@ -26,22 +18,12 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================================
-# 数据类
+# Data class
 # ============================================================
 
 @dataclass
 class DatabaseVersion:
-    """单个数据源的版本信息
-
-    Attributes:
-        source: 数据源标识，如 "go", "kegg", "reactome", "taxonomy"
-        remote_version: 远程数据源版本号（如 "releases/2026-03-25", "Release 118.0+", "v96"）
-        remote_last_modified: 远程文件最后修改时间（HTTP Last-Modified）
-        local_version: 本地版本目录名（如 "GO20260527"）
-        local_path: 本地文件/目录路径（相对于 database/）
-        downloaded_at: 下载时间（ISO 8601）
-        file_hash: 文件 MD5/SHA256（可选，用于完整性校验）
-    """
+    """Describe one downloaded upstream data snapshot."""
 
     source: str
     remote_version: Optional[str] = None
@@ -52,17 +34,7 @@ class DatabaseVersion:
     file_hash: Optional[str] = None
 
     def is_newer_than(self, other: DatabaseVersion) -> bool:
-        """判断远程版本是否比本地版本更新
-
-        基于 remote_last_modified 时间戳比较。
-        任一方缺少 last_modified 时返回 False。
-
-        Args:
-            other: 被比较的版本（通常是本地版本）
-
-        Returns:
-            True 表示 self 比 other 更新
-        """
+        """Return whether this version is newer than another snapshot."""
         if not self.remote_last_modified or not other.remote_last_modified:
             return False
         try:
@@ -73,42 +45,34 @@ class DatabaseVersion:
             return False
 
     def to_dict(self) -> dict:
-        """转换为字典"""
+        """Return a JSON-serializable representation."""
         return asdict(self)
 
     @classmethod
     def from_dict(cls, data: dict) -> DatabaseVersion:
-        """从字典创建实例，自动过滤未知字段"""
+        """Create an instance from a serialized mapping."""
         return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
 
 
 @dataclass
 class VersionManifest:
-    """全局版本清单
-
-    管理 versions.json 的读写，记录所有数据源的版本信息。
-
-    Attributes:
-        created_at: 清单创建时间
-        updated_at: 清单最后更新时间
-        versions: 数据源版本字典 {source_name: DatabaseVersion}
-    """
+    """Store version metadata for all downloaded data sources."""
 
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     versions: Dict[str, DatabaseVersion] = field(default_factory=dict)
 
     def get(self, source: str) -> Optional[DatabaseVersion]:
-        """获取指定数据源的版本信息"""
+        """Return version metadata for one data source."""
         return self.versions.get(source)
 
     def set(self, source: str, version: DatabaseVersion) -> None:
-        """设置指定数据源的版本信息，同时更新 updated_at"""
+        """Record version metadata for one data source."""
         self.versions[source] = version
         self.updated_at = datetime.now(timezone.utc).isoformat()
 
     def to_dict(self) -> dict:
-        """转换为字典（含嵌套版本信息）"""
+        """Return a JSON-serializable representation."""
         return {
             "created_at": self.created_at,
             "updated_at": self.updated_at,
@@ -117,7 +81,7 @@ class VersionManifest:
 
     @classmethod
     def from_dict(cls, data: dict) -> VersionManifest:
-        """从字典创建实例"""
+        """Create an instance from a serialized mapping."""
         manifest = cls(
             created_at=data.get("created_at", ""),
             updated_at=data.get("updated_at", ""),
@@ -127,43 +91,35 @@ class VersionManifest:
         return manifest
 
     def save(self, path: Path) -> None:
-        """写入 versions.json"""
+        """Write the species registry as deterministic TSV."""
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
             json.dump(self.to_dict(), f, indent=2, ensure_ascii=False)
-        logger.info("版本清单已保存: %s", path)
+        logger.info("Version List saved: %s", path)
 
     @classmethod
     def load(cls, path: Path) -> VersionManifest:
-        """读取 versions.json，文件不存在时返回空清单"""
+        """Load a species registry from TSV."""
         if not path.exists():
-            logger.info("版本清单不存在，创建新清单: %s", path)
+            logger.info("Version list does not exist, creating a new list: %s", path)
             return cls()
         with open(path, "r", encoding="utf-8") as f:
             return cls.from_dict(json.load(f))
 
 
 # ============================================================
-# 版本管理器
+# Version Manager
 # ============================================================
 
 class DatabaseVersionManager:
-    """数据库版本管理器
-
-    负责：
-    - 读写 versions.json 版本清单
-    - 查询本地已安装的版本
-    - 比较本地与远程版本差异
-    - 旧版本清理
-    - 构建血缘追踪
-    """
+    """Record versions, builds, lineage, and cleanup candidates."""
 
     MANIFEST_FILENAME = "versions.json"
 
     def __init__(self, database_dir: str = "./database"):
         """
         Args:
-            database_dir: 数据库根目录路径
+database_dir: Path to the database root directory
         """
         self.database_dir = Path(database_dir)
         self.manifest_path = self.database_dir / self.MANIFEST_FILENAME
@@ -171,13 +127,13 @@ class DatabaseVersionManager:
 
     @property
     def manifest(self) -> VersionManifest:
-        """延迟加载版本清单"""
+        """Load the version manifest on first access."""
         if self._manifest is None:
             self._manifest = VersionManifest.load(self.manifest_path)
         return self._manifest
 
     def save_manifest(self) -> None:
-        """保存版本清单到文件"""
+        """Write the current version manifest."""
         self.manifest.save(self.manifest_path)
 
     def record_download(
@@ -188,15 +144,7 @@ class DatabaseVersionManager:
         remote_version: Optional[str] = None,
         remote_last_modified: Optional[str] = None,
     ) -> None:
-        """记录一次下载操作
-
-        Args:
-            source: 数据源标识
-            local_version: 本地版本目录名
-            local_path: 本地路径（相对于 database/）
-            remote_version: 远程版本号
-            remote_last_modified: 远程最后修改时间
-        """
+        """Record one completed source download."""
         ver = DatabaseVersion(
             source=source,
             remote_version=remote_version,
@@ -209,31 +157,21 @@ class DatabaseVersionManager:
         self.save_manifest()
 
     def get_local_version(self, source: str) -> Optional[DatabaseVersion]:
-        """获取某个数据源的版本信息
-
-        优先从 versions.json 读取；若不存在则通过扫描磁盘目录推断。
-        """
+        """Return local version metadata for one data source."""
         ver = self.manifest.get(source)
         if ver is not None:
             return ver
 
-        # 回退：扫描磁盘目录推断版本
+        # Backs: Scan disk directory extrapolated version
         inferred = self._infer_version_from_disk(source)
         if inferred is not None:
-            # 写回 versions.json 以便后续直接读取
+            # Write back versions.json to follow up on reading directly
             self.manifest.set(source, inferred)
             self.save_manifest()
         return inferred
 
     def _infer_version_from_disk(self, source: str) -> Optional[DatabaseVersion]:
-        """通过扫描 database/basic/ 目录推断某个数据源的版本信息
-
-        Args:
-            source: 数据源标识，如 "go", "reactome", "do", "kegg", "taxonomy"
-
-        Returns:
-            推断出的 DatabaseVersion，或 None
-        """
+        """Infer legacy version metadata from downloaded directories."""
         basic_dir = self.database_dir / "basic"
 
         if source == "go":
@@ -308,16 +246,11 @@ class DatabaseVersionManager:
         return None
 
     def list_local_versions(self) -> Dict[str, DatabaseVersion]:
-        """列出所有本地已安装的数据源版本"""
+        """Return locally installed source versions."""
         return dict(self.manifest.versions)
 
     def list_installed_basic_versions(self) -> Dict[str, List[str]]:
-        """扫描 database/basic/ 目录，列出已安装的基础数据版本
-
-        Returns:
-            {source_name: [version_dir_names]}
-            例如 {"go": ["GO20260515", "GO20260527"], "reactome": ["Reactome20260515"]}
-        """
+        """List installed shared-source snapshots."""
         result: Dict[str, List[str]] = {}
         basic_dir = self.database_dir / "basic"
 
@@ -336,7 +269,7 @@ class DatabaseVersionManager:
                 if d.is_dir() and d.name.startswith("Reactome")
             )
 
-        # KEGG（无版本目录，检查是否有文件）
+        # KEGG (no version of directory, check if file is available)
         kegg_dir = basic_dir / "kegg"
         if kegg_dir.exists() and any(kegg_dir.iterdir()):
             result["kegg"] = ["cached"]
@@ -354,11 +287,7 @@ class DatabaseVersionManager:
         return result
 
     def list_installed_organism_versions(self) -> List[str]:
-        """扫描 database/organism/ 目录，列出已构建的物种数据库版本
-
-        Returns:
-            版本目录名列表，如 ["v20260515"]
-        """
+        """List installed species database builds."""
         organism_dir = self.database_dir / "organism"
         if not organism_dir.exists():
             return []
@@ -368,14 +297,7 @@ class DatabaseVersionManager:
         )
 
     def get_organism_build_info(self, version: str) -> Dict[str, List[str]]:
-        """获取某个构建版本下包含哪些物种
-
-        Args:
-            version: 版本目录名，如 "v20260515"
-
-        Returns:
-            {version: [species_codes]}
-        """
+        """Return species included in one database build."""
         version_dir = self.database_dir / "organism" / version
         if not version_dir.exists():
             return {}
@@ -386,23 +308,16 @@ class DatabaseVersionManager:
         }
 
     def find_stale_versions(self, keep_count: int = 2) -> Dict[str, List[str]]:
-        """找出可以清理的旧版本
-
-        Args:
-            keep_count: 每个数据源保留的最新版本数量
-
-        Returns:
-            {source: [stale_version_names]}
-        """
+        """Return old snapshots eligible for cleanup."""
         stale: Dict[str, List[str]] = {}
 
-        # 基础数据
+        # Basic data
         basic_versions = self.list_installed_basic_versions()
         for source, versions in basic_versions.items():
             if len(versions) > keep_count:
                 stale[source] = versions[:-keep_count]
 
-        # 物种数据库
+        # Species database
         organism_versions = self.list_installed_organism_versions()
         if len(organism_versions) > keep_count:
             stale["organism"] = organism_versions[:-keep_count]
@@ -410,15 +325,7 @@ class DatabaseVersionManager:
         return stale
 
     def remove_stale_versions(self, keep_count: int = 2, dry_run: bool = True) -> Dict[str, List[str]]:
-        """清理旧版本
-
-        Args:
-            keep_count: 保留的最新版本数量
-            dry_run: 仅预览不实际删除
-
-        Returns:
-            {source: [removed_version_names]}
-        """
+        """Remove selected stale snapshots after caller confirmation."""
         stale = self.find_stale_versions(keep_count)
         removed: Dict[str, List[str]] = {}
 
@@ -433,25 +340,15 @@ class DatabaseVersionManager:
                 if dir_path.exists():
                     if not dry_run:
                         shutil.rmtree(dir_path)
-                        logger.info("已删除: %s", dir_path)
+                        logger.info("Deleted: %s", dir_path)
                     else:
-                        logger.info("[dry-run] 将删除: %s", dir_path)
+                        logger.info("[dry-run] Delete: %s", dir_path)
                     removed[source].append(ver)
 
         return removed
 
     def get_build_lineage(self, organism_version: str, species: str) -> Optional[dict]:
-        """查询某个 organism 版本的构建血缘
-
-        读取 build_manifest.json 获取构建时使用的源数据版本。
-
-        Args:
-            organism_version: 如 "v20260515"
-            species: 如 "hsa"
-
-        Returns:
-            build_manifest.json 的内容，或 None
-        """
+        """Return the source lineage of one species database build."""
         manifest_path = (
             self.database_dir / "organism" / organism_version / species / "build_manifest.json"
         )
@@ -461,13 +358,9 @@ class DatabaseVersionManager:
             return json.load(f)
 
     def get_full_lineage_report(self) -> str:
-        """生成所有 organism 版本的血缘报告
-
-        Returns:
-            格式化的血缘报告字符串
-        """
+        """Return lineage metadata for all installed species builds."""
         lines = []
-        lines.append("构建血缘追踪报告")
+        lines.append("Database build provenance")
         lines.append("=" * 80)
 
         for org_ver in self.list_installed_organism_versions():
@@ -477,20 +370,20 @@ class DatabaseVersionManager:
                     continue
 
                 lines.append(f"\n[{org_ver}/{species}]")
-                lines.append(f"  构建时间: {lineage.get('built_at', '-')}")
-                lines.append(f"  软件版本: {lineage.get('allenricher_version', '-')}")
-                lines.append(f"  数据库: {', '.join(lineage.get('databases', []))}")
+                lines.append(f"Build time: {lineage.get('built_at', '-')}")
+                lines.append(f"Software version: {lineage.get('allenricher_version', '-')}")
+                lines.append(f"Database: {', '.join(lineage.get('databases', []))}")
 
                 deps = lineage.get("dependencies", {})
                 if deps:
-                    lines.append("  依赖链:")
+                    lines.append("Dependencies:")
                     for db_name, dep_info in deps.items():
                         basic_dir = dep_info.get("basic_dir", "-")
                         lines.append(f"    {db_name:<12} <- {basic_dir}")
 
                 src_vers = lineage.get("source_versions", {})
                 if src_vers:
-                    lines.append("  源数据版本:")
+                    lines.append("Source versions:")
                     for src_name, src_ver in src_vers.items():
                         lines.append(f"    {src_name:<12} = {src_ver}")
 
@@ -498,43 +391,39 @@ class DatabaseVersionManager:
         return "\n".join(lines)
 
     def get_summary_table(self) -> str:
-        """生成人类可读的本地版本清单表格
-
-        Returns:
-            格式化的表格字符串
-        """
+        """Render installed version metadata as a readable table."""
         lines = []
-        lines.append("本地数据库版本清单")
+        lines.append("List of local database versions")
         lines.append("=" * 80)
 
-        # 基础数据版本
+        # Basic Data Version
         basic_versions = self.list_installed_basic_versions()
         if basic_versions:
-            lines.append("\n[基础数据 (basic/)]")
-            lines.append(f"  {'数据源':<15} {'已安装版本':<40}")
+            lines.append("\n [Base Data (basic/)]")
+            lines.append(f"  {'Data Sources':<15} {'Installed version':<40}")
             lines.append(f"  {'-'*15} {'-'*40}")
             for source, versions in basic_versions.items():
-                ver_str = ", ".join(versions) if versions else "无"
-                latest = "<- 最新" if versions else ""
+                ver_str = ", ".join(versions) if versions else "None"
+                latest = "<- Latest" if versions else ""
                 lines.append(f"  {source:<15} {ver_str:<40} {latest}")
 
-        # 物种数据库版本
+        # Species database version
         organism_versions = self.list_installed_organism_versions()
         if organism_versions:
-            lines.append("\n[物种数据库 (organism/)]")
-            lines.append(f"  {'版本':<15} {'包含物种'}")
+            lines.append("\n[Specific database (organism/)]")
+            lines.append(f"  {'Version':<15} {'Include species'}")
             lines.append(f"  {'-'*15} {'-'*40}")
             for ver in organism_versions:
                 species_list = self.get_organism_build_info(ver).get(ver, [])
-                species_str = ", ".join(species_list) if species_list else "空"
-                latest = "<- 最新" if ver == organism_versions[-1] else ""
+                species_str = ", ".join(species_list) if species_list else "Empty"
+                latest = "<- Latest" if ver == organism_versions[-1] else ""
                 lines.append(f"  {ver:<15} {species_str:<40} {latest}")
 
-        # versions.json 中记录的远程版本
+        # Remote version recorded in version.json
         local_records = self.list_local_versions()
         if local_records:
-            lines.append("\n[版本元数据 (versions.json)]")
-            lines.append(f"  {'数据源':<20} {'本地版本':<20} {'远程版本':<25} {'下载时间'}")
+            lines.append("\n[version metadata (versions.json)]")
+            lines.append(f"  {'Data Sources':<20} {'Local version':<20} {'Remote version':<25} {'Download Time'}")
             lines.append(f"  {'-'*20} {'-'*20} {'-'*25} {'-'*20}")
             for source, ver in sorted(local_records.items()):
                 remote_ver = ver.remote_version or "-"
@@ -545,7 +434,7 @@ class DatabaseVersionManager:
         return "\n".join(lines)
 
     def get_summary_json(self) -> dict:
-        """生成 JSON 格式的版本清单"""
+        """Render installed version metadata as JSON."""
         return {
             "basic_versions": self.list_installed_basic_versions(),
             "organism_versions": self.list_installed_organism_versions(),
@@ -557,18 +446,15 @@ class DatabaseVersionManager:
 
 
 # ============================================================
-# 远程版本检测器
+# Remote version detector
 # ============================================================
 
 class RemoteVersionChecker:
-    """远程数据源版本检测器
+    """Inspect upstream metadata for newer data snapshots."""
 
-    通过 HTTP HEAD / API 查询检测远程数据源是否有更新。
-    """
+    TIMEOUT = 30  # sec
 
-    TIMEOUT = 30  # 秒
-
-    # 各数据源的关键文件 URL
+    # Key files for data sources URL
     SOURCE_URLS: Dict[str, str] = {
         "gene2go": "https://ftp.ncbi.nlm.nih.gov/gene/DATA/gene2go.gz",
         "gene_info": "https://ftp.ncbi.nlm.nih.gov/gene/DATA/gene_info.gz",
@@ -580,7 +466,7 @@ class RemoteVersionChecker:
         "wikipathways": "https://data.wikipathways.org/",
     }
 
-    # 远程 source key → 本地 versions.json 中可能的 key 列表
+    # Remote source key... and possible key list in local versions. json
     _SOURCE_KEY_ALIASES: Dict[str, List[str]] = {
         "gene2go": ["gene2go", "go"],
         "gene_info": ["gene_info", "go"],
@@ -594,19 +480,12 @@ class RemoteVersionChecker:
     def __init__(self, timeout: int = TIMEOUT):
         """
         Args:
-            timeout: HTTP 请求超时秒数
+timeout: HTTP Request timeout in seconds
         """
         self.timeout = timeout
 
     def check_head(self, url: str) -> Optional[Dict[str, str]]:
-        """发送 HTTP HEAD 请求获取 Last-Modified / ETag
-
-        Args:
-            url: 目标 URL
-
-        Returns:
-            {"last_modified": "...", "etag": "...", "content_length": "..."} 或 None
-        """
+        """Read Last-Modified and ETag metadata from an upstream URL."""
         try:
             resp = requests.head(url, timeout=self.timeout, allow_redirects=True)
             resp.raise_for_status()
@@ -619,17 +498,11 @@ class RemoteVersionChecker:
                 result["content_length"] = resp.headers["Content-Length"]
             return result if result else None
         except Exception as e:
-            logger.warning("HEAD 请求失败 %s: %s", url, e)
+            logger.warning("HEAD request failed%s: %s", url, e)
             return None
 
     def check_go_obo_version(self) -> Optional[Dict[str, str]]:
-        """检测 GO Ontology 版本
-
-        下载 go-basic.obo 前 1024 字节，解析 data-version 字段。
-
-        Returns:
-            {"remote_version": "releases/2026-03-25", "last_modified": "..."} 或 None
-        """
+        """Inspect the current upstream Gene Ontology release."""
         url = self.SOURCE_URLS["go_obo"]
         try:
             resp = requests.get(
@@ -645,43 +518,37 @@ class RemoteVersionChecker:
                         "last_modified": resp.headers.get("Last-Modified", ""),
                     }
         except Exception as e:
-            logger.warning("检测 GO 版本失败: %s", e)
+            logger.warning("Could not close temporary folder: %s%s", e)
         return None
 
     def check_kegg_version(self) -> Optional[Dict[str, str]]:
-        """检测 KEGG 版本
-
-        调用 REST API info/kegg 获取版本号。
-
-        Returns:
-            {"remote_version": "Release 118.0+ ...", "last_modified": ""} 或 None
-        """
+        """Inspect the current upstream KEGG release metadata."""
         url = self.SOURCE_URLS["kegg"]
         try:
             resp = requests.get(url, timeout=self.timeout)
             resp.raise_for_status()
             for line in resp.text.strip().split("\n"):
                 if "Release" in line:
-                    # 提取 Release 及其后的内容（去除行首的 kegg 前缀）
+                    # Remove Release and subsequent contents (remove kegg prefix from the header)
                     idx = line.find("Release")
                     version_str = line[idx:].strip()
                     return {
                         "remote_version": version_str,
                         "last_modified": "",
                     }
+            dates = re.findall(r"\b\d{4}/\d{2}/\d{2}\b", resp.text)
+            if dates:
+                latest = max(dates, key=lambda value: datetime.strptime(value, "%Y/%m/%d"))
+                return {
+                    "remote_version": f"KEGG data {latest}",
+                    "last_modified": latest,
+                }
         except Exception as e:
-            logger.warning("检测 KEGG 版本失败: %s", e)
+            logger.warning("Could not close temporary folder: %s%s", e)
         return None
 
     def check_reactome_version(self) -> Optional[Dict[str, str]]:
-        """检测 Reactome 版本
-
-        调用 Reactome ContentService API 获取当前数据库版本。
-        API 文档: https://reactome.org/ContentService/
-
-        Returns:
-            {"remote_version": "v96", "last_modified": ""} 或 None
-        """
+        """Inspect the current upstream Reactome release."""
         url = "https://reactome.org/ContentService/data/database/version"
         try:
             resp = requests.get(url, timeout=self.timeout, headers={
@@ -693,47 +560,38 @@ class RemoteVersionChecker:
             if version_num and version_num.isdigit():
                 return {
                     "remote_version": f"v{version_num}",
-                    "last_modified": "",  # API 不返回 last-modified
+                    "last_modified": "",  # API does not return last-modified
                 }
         except Exception as e:
-            logger.warning("检测 Reactome 版本失败: %s", e)
+            logger.warning("Could not close temporary folder: %s%s", e)
         return None
 
     def check_all_sources(self) -> Dict[str, Dict[str, str]]:
-        """检测所有数据源的远程版本
-
-        Returns:
-            {
-                "gene2go": {"last_modified": "...", ...},
-                "go_obo": {"remote_version": "releases/2026-03-25", ...},
-                "kegg": {"remote_version": "Release 118.0+...", ...},
-                ...
-            }
-        """
+        """Check all supported upstream sources for newer versions."""
         results: Dict[str, Dict[str, str]] = {}
 
-        # HTTP HEAD 类（gene2go, gene_info, taxonomy）
+        # HTTP HEAD class (gene2go, gene_info, taxonomy)
         for source in ["gene2go", "gene_info", "taxonomy"]:
             info = self.check_head(self.SOURCE_URLS[source])
             if info:
                 results[source] = info
 
-        # GO OBO（文件内容解析）
+        # GO OBO (file content interpretation)
         go_info = self.check_go_obo_version()
         if go_info:
             results["go_obo"] = go_info
 
-        # GOA Proteomes（目录 HEAD）
+        # GOA Proteomes (Dialer HEAD)
         goa_info = self.check_head(self.SOURCE_URLS["goa_proteomes"])
         if goa_info:
             results["goa_proteomes"] = goa_info
 
-        # KEGG（API 查询）
+        # KEG (API Query)
         kegg_info = self.check_kegg_version()
         if kegg_info:
             results["kegg"] = kegg_info
 
-        # Reactome（页面解析）
+        # Reactome (page parsing)
         reactome_info = self.check_reactome_version()
         if reactome_info:
             results["reactome"] = reactome_info
@@ -741,28 +599,12 @@ class RemoteVersionChecker:
         return results
 
     def check_updates(self, local_manager: DatabaseVersionManager) -> Dict[str, Dict]:
-        """检查所有数据源是否有更新
-
-        比较远程版本与本地记录，返回更新状态。
-
-        Args:
-            local_manager: 本地版本管理器
-
-        Returns:
-            {
-                "gene2go": {
-                    "has_update": True,
-                    "local": {"version": ..., "remote_version": ..., ...},
-                    "remote": {"last_modified": "...", ...},
-                },
-                ...
-            }
-        """
+        """Compare remote source metadata with the local manifest."""
         remote_versions = self.check_all_sources()
         update_status: Dict[str, Dict] = {}
 
         for source, remote_info in remote_versions.items():
-            # 尝试多个 key 别名查找本地版本
+            # Try multiple key aliases for local versions
             local_ver = None
             for alias in self._SOURCE_KEY_ALIASES.get(source, [source]):
                 local_ver = local_manager.get_local_version(alias)
@@ -771,7 +613,7 @@ class RemoteVersionChecker:
             has_update = False
 
             if local_ver is None:
-                has_update = True  # 本地从未下载过
+                has_update = True  # Locally never downloaded
             elif "last_modified" in remote_info and local_ver.remote_last_modified:
                 try:
                     remote_dt = parsedate_to_datetime(remote_info["last_modified"])
@@ -781,6 +623,8 @@ class RemoteVersionChecker:
                     has_update = False
             elif "remote_version" in remote_info and local_ver.remote_version:
                 has_update = remote_info["remote_version"] != local_ver.remote_version
+            elif remote_info.get("last_modified") or remote_info.get("remote_version"):
+                has_update = True  # The old version of the record lacks a remote benchmark and cannot prove to be the latest
 
             update_status[source] = {
                 "has_update": has_update,

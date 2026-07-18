@@ -1,6 +1,8 @@
 """
-层级注释文件解析器单元测试
+Level-level annotation file resolver unit test
 """
+
+import gzip
 
 import pytest
 from pathlib import Path
@@ -12,7 +14,7 @@ from allenricher.database.parsers.annotation_parser import (
 
 
 # ============================================================
-# AnnotationRecord 测试
+# AnnotationRecord Test
 # ============================================================
 
 class TestAnnotationRecord:
@@ -46,12 +48,12 @@ class TestAnnotationRecord:
 
 
 # ============================================================
-# 四列格式解析
+# Four Columns Resolution
 # ============================================================
 
 class TestParseFourColumn:
     def test_parse_four_column_with_hierarchy(self, tmp_path):
-        """四列格式解析，验证层级"""
+        """Four-column formatting, validation level"""
         f = tmp_path / "annotation.tsv"
         f.write_text(
             "TP53\tGO:0006915\tapoptotic process\tBiological Process|Cellular Process\n"
@@ -72,12 +74,12 @@ class TestParseFourColumn:
 
 
 # ============================================================
-# 三列格式解析
+# 3-column format resolution
 # ============================================================
 
 class TestParseThreeColumn:
     def test_parse_three_column(self, tmp_path):
-        """三列格式解析"""
+        """3-column format resolution"""
         f = tmp_path / "annotation.tsv"
         f.write_text(
             "TP53\tGO:0006915\tapoptotic process\n"
@@ -97,12 +99,12 @@ class TestParseThreeColumn:
 
 
 # ============================================================
-# 两列格式解析
+# Two-column format resolution
 # ============================================================
 
 class TestParseTwoColumn:
     def test_parse_two_column(self, tmp_path):
-        """两列格式解析"""
+        """Two-column format resolution"""
         f = tmp_path / "annotation.tsv"
         f.write_text(
             "TP53\tapoptotic process\n"
@@ -116,19 +118,19 @@ class TestParseTwoColumn:
 
         assert len(records) == 3
         assert records[0].gene == "TP53"
-        # 两列格式下 term_name 同时作为 term_id
+        # The term_name under two columns is also used as the term_id
         assert records[0].term_id == "apoptotic process"
         assert records[0].term_name == "apoptotic process"
         assert records[0].hierarchy is None
 
 
 # ============================================================
-# get_term_genes 测试
+# get_term_genes test
 # ============================================================
 
 class TestGetTermGenes:
     def test_get_term_genes(self, tmp_path):
-        """term 到 genes 映射"""
+        """Term to Genes map"""
         f = tmp_path / "annotation.tsv"
         f.write_text(
             "TP53\tGO:0006915\tapoptotic process\n"
@@ -146,12 +148,12 @@ class TestGetTermGenes:
 
 
 # ============================================================
-# get_hierarchy_tree 测试
+# _hierarchy_tree test
 # ============================================================
 
 class TestGetHierarchyTree:
     def test_get_hierarchy_tree(self, tmp_path):
-        """层级树结构"""
+        """Tier Tree Structure"""
         f = tmp_path / "annotation.tsv"
         f.write_text(
             "TP53\tGO:0006915\tapoptotic process\tBiological Process|Cellular Process\n"
@@ -163,13 +165,13 @@ class TestGetHierarchyTree:
         parser = AnnotationParser(str(f))
         tree = parser.get_hierarchy_tree()
 
-        # 顶层应有 Biological Process
+        # Top level should be Biologicial Process
         assert "Biological Process" in tree
         bp = tree["Biological Process"]
         assert "Cellular Process" in bp
         assert "Cell adhesion" in bp
 
-        # 验证最底层 term 数据
+        # Verify bottom term data
         cp = bp["Cellular Process"]
         assert "GO:0006915" in cp
         assert cp["GO:0006915"]["genes"] == {"TP53", "BRCA1"}
@@ -181,12 +183,12 @@ class TestGetHierarchyTree:
 
 
 # ============================================================
-# KEGG 三级层级测试
+# KEGG Level 3 Test
 # ============================================================
 
 class TestKEGGStyleHierarchy:
     def test_kegg_style_hierarchy(self, tmp_path):
-        """KEGG 三级层级: Category|Subcategory|Pathway"""
+        """KEG Level 3: Category Subcategory Pathway"""
         f = tmp_path / "kegg_annotation.tsv"
         f.write_text(
             "TP53\thsa04110\tCell Cycle\tMetabolism|Global and overview|Cell Cycle\n"
@@ -198,12 +200,12 @@ class TestKEGGStyleHierarchy:
         parser = AnnotationParser(str(f))
         tree = parser.get_hierarchy_tree()
 
-        # 三级层级：hierarchy 路径有 3 层，term_id 在第 3 层之下
+        # Level 3: Heerarchy path with 3 layers, term_id under 3
         assert "Metabolism" in tree
         metabolism = tree["Metabolism"]
         assert "Global and overview" in metabolism
         overview = metabolism["Global and overview"]
-        # hierarchy 最后一层 "Cell Cycle" 也会作为树的节点
+        # The last layer of "Cell Cycle" will be the node of the tree.
         assert "Cell Cycle" in overview
         cell_cycle = overview["Cell Cycle"]
         assert "hsa04110" in cell_cycle
@@ -220,12 +222,12 @@ class TestKEGGStyleHierarchy:
 
 
 # ============================================================
-# GO 两级层级测试
+# GO Level 2 Test
 # ============================================================
 
 class TestGOStyleHierarchy:
     def test_go_style_hierarchy(self, tmp_path):
-        """GO 两级层级: Ontology|Term"""
+        """GO Level 2: OntologicTerm"""
         f = tmp_path / "go_annotation.tsv"
         f.write_text(
             "TP53\tGO:0006915\tapoptotic process\tBiological Process|apoptotic process\n"
@@ -237,7 +239,7 @@ class TestGOStyleHierarchy:
         parser = AnnotationParser(str(f))
         tree = parser.get_hierarchy_tree()
 
-        # hierarchy 路径有 2 层，term_id 在第 2 层之下
+        # The path to the hierarchy is 2 floor, term_id below 2 floor
         assert "Biological Process" in tree
         bp = tree["Biological Process"]
         assert "apoptotic process" in bp
@@ -254,7 +256,7 @@ class TestGOStyleHierarchy:
 
 
 # ============================================================
-# 自动格式检测测试
+# AutoFormat Test Test
 # ============================================================
 
 class TestAutoDetectFormat:
@@ -283,7 +285,7 @@ class TestAutoDetectFormat:
         assert parser._detect_format() == 'two_column'
 
     def test_auto_detect_with_comments(self, tmp_path):
-        """自动检测应跳过注释行"""
+        """Ignore comment lines while detecting the table format."""
         f = tmp_path / "with_comments.tsv"
         f.write_text(
             "# this is a comment\n"
@@ -295,12 +297,12 @@ class TestAutoDetectFormat:
 
 
 # ============================================================
-# 空行和注释处理测试
+# Empty lines and comments
 # ============================================================
 
 class TestEmptyLinesAndComments:
     def test_empty_lines_and_comments(self, tmp_path):
-        """空行和注释处理"""
+        """Ignore blank lines and comments while parsing records."""
         f = tmp_path / "mixed.tsv"
         f.write_text(
             "# header comment\n"
@@ -319,49 +321,63 @@ class TestEmptyLinesAndComments:
         assert records[1].gene == "BRCA1"
 
     def test_empty_file_raises(self, tmp_path):
-        """空文件应抛出 ValueError"""
+        """Reject an empty annotation file."""
         f = tmp_path / "empty.tsv"
         f.write_text("", encoding='utf-8')
 
         parser = AnnotationParser(str(f))
-        with pytest.raises(ValueError, match="为空或仅包含注释行"):
+        with pytest.raises(ValueError, match="empty or contains only"):
             parser._detect_format()
 
     def test_only_comments_raises(self, tmp_path):
-        """仅包含注释行的文件应抛出 ValueError"""
+        """Reject an annotation file containing only comments."""
         f = tmp_path / "comments_only.tsv"
         f.write_text("# comment1\n# comment2\n", encoding='utf-8')
 
         parser = AnnotationParser(str(f))
-        with pytest.raises(ValueError, match="为空或仅包含注释行"):
+        with pytest.raises(ValueError, match="empty or contains only"):
             parser._detect_format()
+
+    def test_gzip_header_and_custom_hierarchy_separator(self, tmp_path):
+        path = tmp_path / "annotation.tsv.gz"
+        with gzip.open(path, "wt", encoding="utf-8") as handle:
+            handle.write("gene\tterm_id\tterm_name\thierarchy\n")
+            handle.write(" TP53 \t GO:0006915 \t Apoptosis \t Biology > Cell death \n")
+
+        records = AnnotationParser(
+            str(path), hierarchy_separator=">"
+        ).parse()
+
+        assert len(records) == 1
+        assert records[0].gene == "TP53"
+        assert records[0].hierarchy == "Biology|Cell death"
 
 
 # ============================================================
-# 文件不存在测试
+# File does not have a test
 # ============================================================
 
 class TestFileNotFound:
     def test_file_not_found(self):
-        """文件不存在异常"""
+        """File does not have an anomaly"""
         parser = AnnotationParser("/nonexistent/path/file.tsv")
-        with pytest.raises(FileNotFoundError, match="注释文件不存在"):
+        with pytest.raises(FileNotFoundError, match="Annotation file does not exist"):
             parser.parse()
 
     def test_detect_format_file_not_found(self):
-        """_detect_format 文件不存在异常"""
+        """_Defect_format file does not appear abnormal"""
         parser = AnnotationParser("/nonexistent/path/file.tsv")
-        with pytest.raises(FileNotFoundError, match="注释文件不存在"):
+        with pytest.raises(FileNotFoundError, match="Annotation file does not exist"):
             parser._detect_format()
 
 
 # ============================================================
-# 解析结果缓存测试
+# Resolve result cache test
 # ============================================================
 
 class TestParseCaching:
     def test_parse_caching(self, tmp_path):
-        """多次调用 parse() 应返回缓存结果"""
+        """Repeated call parse() should return the cache result"""
         f = tmp_path / "cache.tsv"
         f.write_text("TP53\tGO:0006915\tapoptotic process\n", encoding='utf-8')
 

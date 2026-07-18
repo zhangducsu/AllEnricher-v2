@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-完整比较 v1 和 v2 结果的脚本
+Script for full comparison v1 and v2 results
 """
 
 import sys
@@ -10,7 +10,7 @@ import numpy as np
 
 
 def load_and_normalize_v1():
-    """加载并标准化 v1 结果"""
+    """Load and standardize v1 results"""
     v1_results_dir = Path(__file__).parent.parent / "AllEnricher-v1" / "example" / "allenricher" / "fisher" / "Q0.05"
     
     db_files = {
@@ -30,7 +30,7 @@ def load_and_normalize_v1():
         df = pd.read_csv(filepath, sep='\t')
         df['TermID'] = df['TermID'].astype(str)
         
-        # 标准化列名
+        # Standardized listing
         df_norm = pd.DataFrame()
         df_norm['Term_ID'] = df['TermID']
         df_norm['Term_Name'] = df['TermName']
@@ -45,7 +45,7 @@ def load_and_normalize_v1():
 
 
 def load_v2_results():
-    """加载 v2 结果"""
+    """Loading v2 Results"""
     v2_dir = Path(__file__).parent / "comparison_output"
     
     results = {}
@@ -60,7 +60,7 @@ def load_v2_results():
 
 
 def save_v1_normalized(v1_norm):
-    """保存标准化的 v1 结果"""
+    """Keep standardized v1 results"""
     output_dir = Path(__file__).parent / "comparison_output"
     for db_name, df in v1_norm.items():
         out_file = output_dir / f"v1_{db_name}_normalized.tsv"
@@ -68,9 +68,9 @@ def save_v1_normalized(v1_norm):
 
 
 def compare_databases(v1_norm, v2_results):
-    """比较所有数据库的结果"""
+    """Compare all database results"""
     print("=" * 80)
-    print("AllEnricher v1 vs v2 详细比较")
+    print("AllEnricher v1 vs v2 is a detailed comparison")
     print("=" * 80)
     print()
     
@@ -86,33 +86,33 @@ def compare_databases(v1_norm, v2_results):
         v1_df = v1_norm[db_name]
         v2_df = v2_results[db_name]
         
-        print(f"  v1 条目数: {len(v1_df)}")
-        print(f"  v2 条目数: {len(v2_df)}")
+        print(f"v1 Entry: {len(v1_df)}")
+        print(f"v2 Entry: {len(v2_df)}")
         
-        # 按 Term_ID 对齐
+        # Press Term_ID Alignment
         v1_sorted = v1_df.sort_values('Term_ID').set_index('Term_ID')
         v2_sorted = v2_df.sort_values('Term_ID').set_index('Term_ID')
         
-        # 共同条目
+        # Common entry
         common_terms = v1_sorted.index.intersection(v2_sorted.index)
         v1_only = v1_sorted.index.difference(v2_sorted.index)
         v2_only = v2_sorted.index.difference(v1_sorted.index)
         
-        print(f"  共同条目: {len(common_terms)}")
+        print(f"Common entry: {len(common_terms)}")
         if len(v1_only) > 0:
-            print(f"  v1 特有: {len(v1_only)}")
+            print(f"v1 Special: {len(v1_only)}")
         if len(v2_only) > 0:
-            print(f"  v2 特有: {len(v2_only)}")
+            print(f"v2 Special: {len(v2_only)}")
         
         if len(common_terms) == 0:
             print()
             continue
         
-        # 只比较共同条目
+        # Common entries only
         v1_common = v1_sorted.loc[common_terms]
         v2_common = v2_sorted.loc[common_terms]
         
-        # 比较各个列
+        # Compare rows
         columns_to_compare = ['P_Value', 'Adjusted_P_Value', 'Gene_Count', 'Background_Count']
         db_match = True
         
@@ -124,53 +124,53 @@ def compare_databases(v1_norm, v2_results):
             v2_vals = v2_common[col]
             
             if col in ['P_Value', 'Adjusted_P_Value']:
-                # 浮点比较
+                # Float Comparison
                 if np.allclose(v1_vals, v2_vals, rtol=1e-5, atol=1e-8):
-                    print(f"  {col}: 完全匹配 ✓")
+                    print(f"{col}: Perfectly matched *")
                 else:
                     db_match = False
                     all_match = False
-                    # 计算差异数
+                    # Calculated variance
                     diff_mask = ~np.isclose(v1_vals, v2_vals, rtol=1e-5, atol=1e-8)
                     diff_count = np.sum(diff_mask)
-                    print(f"  {col}: {diff_count} 个差异")
+                    print(f"{col}: {diff_count}Variance")
                     
-                    # 显示前 3 个差异
+                    # Show the first 3 differences
                     diff_terms = v1_common.index[diff_mask][:3]
                     for term in diff_terms:
                         print(f"    {term}: v1={v1_common.loc[term, col]:.6g}, v2={v2_common.loc[term, col]:.6g}")
             else:
-                # 整数比较
+                # Integer comparison
                 if (v1_vals == v2_vals).all():
-                    print(f"  {col}: 完全匹配 ✓")
+                    print(f"{col}: Perfectly matched *")
                 else:
                     db_match = False
                     all_match = False
                     diff_count = np.sum(v1_vals != v2_vals)
-                    print(f"  {col}: {diff_count} 个差异")
+                    print(f"{col}: {diff_count}Variance")
         
         if db_match:
-            print(f"  ✓ {db_name} 所有数值完全一致")
+            print(f"✓ {db_name}All values are exactly the same.")
         
         print()
     
     print("=" * 80)
     if all_match:
-        print("✓ 所有测试数据库的结果完全一致！")
+        print("* The results of all tests are identical!")
     else:
-        print("⚠ 发现一些差异")
+        print("Differences were found.")
     print("=" * 80)
 
 
 def main():
-    # 加载结果
+    # Loading results
     v1_norm = load_and_normalize_v1()
     v2_results = load_v2_results()
     
-    # 保存标准化 v1 结果
+    # Keep standardized v1 results
     save_v1_normalized(v1_norm)
     
-    # 比较
+    # Comparison
     compare_databases(v1_norm, v2_results)
 
 

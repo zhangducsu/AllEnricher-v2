@@ -1,26 +1,45 @@
-"""
-Database management for AllEnricher v2.0
-
-数据库管理模块，负责加载和管理各种富集分析数据库。
-支持从 v1 的数据库文件格式（.tab.gz）加载。
-"""
+"""Discover, validate, and load enrichment databases for one species."""
 
 import gzip
 import csv
 import json
 import logging
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Dict, Iterable, List, Optional, Set
 
 import pandas as pd
 
 logger = logging.getLogger(__name__)
 
+_TF_DATABASE_SPECIES = {
+    "TRRUST": {"hsa", "mmu"},
+    "CHEA3": {"hsa"},
+    "HTFTARGET": {"hsa"},
+}
+_TF_DATABASES = {*_TF_DATABASE_SPECIES, "ANIMALTFDB"}
 
-# KEGG 物种代码到 NCBI Gene taxid 的映射
-# 注意：gene_info.gz 使用 NCBI Gene taxid，而非 GOA 的 taxid
+
+def validate_tf_database_species(database: str, species: str) -> None:
+    """Reject TF databases that do not support the requested species."""
+    database_name = database.upper()
+    species_code = species.lower()
+    supported = _TF_DATABASE_SPECIES.get(database_name)
+    if supported is not None and species_code not in supported:
+        raise ValueError(
+            f"{database} does not support species '{species}'; supported species codes: "
+            f"{', '.join(sorted(supported))}"
+        )
+    if database_name == "ANIMALTFDB" and species_code == "hsa":
+        raise ValueError(
+            "AnimalTFDB does not provide an independent human TF-target network; "
+            "use hTFtarget for human analyses"
+        )
+
+
+# KEGG species code map for NCBI Gene Taxid
+# NCBI gene_info and GOA sources are matched by NCBI TaxID.
 KEGG_CODE_TO_TAXID: Dict[str, int] = {
-    # 常见模式生物
+    # Common pattern organisms
     'hsa': 9606,   # Homo sapiens (Human)
     'hpy': 835,    # Helicobacter pylori 26695
     'mta': 4530,   # Oryza sativa (Rice)
@@ -38,7 +57,7 @@ KEGG_CODE_TO_TAXID: Dict[str, int] = {
     'spo': 4896,   # Schizosaccharomyces pombe (Fission yeast)
     'xla': 8355,   # Xenopus laevis (African clawed frog)
     'xtr': 8364,   # Xenopus tropicalis
-    # 其他常见物种
+    # Other common species
     'eco': 562,    # Escherichia coli K-12
     'bsu': 224308, # Bacillus subtilis 168
     'pae': 208964, # Pseudomonas aeruginosa PAO1
@@ -49,66 +68,45 @@ KEGG_CODE_TO_TAXID: Dict[str, int] = {
 
 
 class DatabaseManager:
-    """数据库管理器
-
-    负责加载和管理富集分析所需的各种数据库（GO、KEGG、Reactome等）。
-    兼容 v1 的数据库文件格式。
-
-    Attributes:
-        database_dir: 数据库文件所在目录
-        species: 物种代码（如 hsa、mmu）
-        databases: 已加载的数据库字典
-        term_names: Term ID 到名称的映射字典
-    """
+    """Load validated gene sets and metadata for a selected species."""
 
     def __init__(self, database_dir: str, species: str):
-        """初始化数据库管理器
+        """Initialize Database Manager
 
         Args:
-            database_dir: 数据库文件目录路径
-            species: 物种代码（如 hsa）
+database_dir: Database directory path
+Spheres: species code (e.g. hsa)
         """
         self.database_dir = Path(database_dir)
         self.species = species
         self.databases: Dict[str, Dict] = {}
         self.term_names: Dict[str, Dict[str, str]] = {}  # {db_name: {term_id: term_name}}
+        self.term_hierarchies: Dict[str, Dict[str, str]] = {}
         self._active_version: Optional[str] = None
+        self._active_versions: Dict[str, str] = {}
 
     def _find_species_dir(self, database_dir: Path, species: str, version: Optional[str] = None) -> Path:
-        """自动查找物种数据库目录
-
-        支持两种目录结构:
-        1. v2 格式: database/organism/v{date}/{species}/  (如 database/organism/2024-01-01/hsa/)
-        2. v1 格式: database/  (直接在该目录下查找文件)
-
-        Args:
-            database_dir: 基础数据库目录
-            species: 物种代码
-            version: 指定使用的数据库版本（如 v20260515），为 None 时自动使用最新版本
-
-        Returns:
-            实际的物种数据库目录路径
-        """
-        # 模式 1: database/organism/v{date}/{species}/ (v2 结构)
+        """Locate the canonical or legacy database directory for a species."""
+        # Mode 1: database/organism/v{date}/{species}/(v2 Structure)
         organism_dir = database_dir / "organism"
 
-        # 如果指定了版本，直接使用
+        # If a version is specified, use directly
         if version and organism_dir.exists():
             species_dir = organism_dir / version / species
             if species_dir.exists():
                 self._active_version = version
                 return species_dir
-            # 版本不存在时列出可用版本
+            # List available versions when they do not exist
             available = sorted(
                 d.name for d in organism_dir.iterdir()
                 if d.is_dir() and (d / species).exists()
             )
             if available:
-                logger.error("版本 '%s' 的物种 '%s' 不存在。可用版本: %s", version, species, ", ".join(available))
+                logger.error("Version '%s\"Specific species \"%s' Does not exist. Available version: %s", version, species, ", ".join(available))
             else:
-                logger.error("物种 '%s' 没有任何已构建的版本。", species)
+                logger.error("Species '%s' There is no version of the building.", species)
 
-        # 自动查找最新版本
+        # Auto-Find the latest version
         if organism_dir.exists():
             for version_dir in sorted(organism_dir.iterdir(), reverse=True):
                 if version_dir.is_dir():
@@ -117,7 +115,7 @@ class DatabaseManager:
                         self._active_version = version_dir.name
                         return species_dir
 
-        # v1 兼容
+        # v1 Compatibility
         if (database_dir / f"{species}.GO2gene.tab.gz").exists():
             self._active_version = "v1-legacy"
             return database_dir
@@ -127,112 +125,227 @@ class DatabaseManager:
 
     @property
     def active_version(self) -> Optional[str]:
-        """当前活跃的数据库版本号
-
-        Returns:
-            版本号字符串（如 'v20260515'、'v1-legacy'），未加载时为 None
-        """
+        """Return the active build version for this species database."""
+        versions = set(self._active_versions.values())
+        if len(versions) == 1:
+            return next(iter(versions))
+        if len(versions) > 1:
+            return "mixed"
         return self._active_version
 
+    @property
+    def database_versions(self) -> Dict[str, str]:
+        """Return source versions for each loaded database."""
+        return dict(self._active_versions)
+
+    def _iter_species_dirs(self, species: str, version: Optional[str] = None) -> Iterable[Path]:
+        """Yield canonical and legacy species database directories."""
+        root = self.database_dir
+        organism_dir = root / "organism"
+        if version and organism_dir.exists():
+            candidate = organism_dir / version / species
+            if candidate.is_dir():
+                yield candidate
+            return
+        if root.name == species and root.is_dir():
+            yield root
+            return
+        if organism_dir.exists():
+            for version_dir in sorted(organism_dir.iterdir(), reverse=True):
+                candidate = version_dir / species
+                if version_dir.is_dir() and candidate.is_dir():
+                    yield candidate
+        if root.is_dir():
+            yield root
+
+    @staticmethod
+    def _version_for_dir(path: Path, species: str) -> str:
+        if path.name == species and path.parent.parent.name == "organism":
+            return path.parent.name
+        return "v1-legacy"
+
+    def _find_species_dir_with_files(
+        self,
+        species: str,
+        filenames: Iterable[str],
+        version: Optional[str] = None,
+    ) -> Optional[Path]:
+        filenames = list(filenames)
+        for directory in self._iter_species_dirs(species, version=version):
+            if any((directory / filename).is_file() for filename in filenames):
+                return directory
+        return None
+
+    def _matrix_filenames(self, name: str) -> List[str]:
+        prefixes = {
+            'GO': ['GO'],
+            'KEGG': ['kegg', 'KEGG'],
+            'REACTOME': ['Reactome', 'reactome'],
+            'DO': ['DO'],
+            'DISGENET': ['CUI', 'DisGeNET'],
+            'WIKIPATHWAYS': ['WikiPathways', 'wikipathways'],
+            'TRRUST': ['gene2TF'],
+            'CHEA3': ['ChEA3_2gene'],
+            'ANIMALTFDB': ['AnimalTFDB_2gene'],
+            'HTFTARGET': ['hTF_2gene'],
+        }.get(name.upper(), [name, name.lower()])
+        complete_prefixes = {'gene2TF', 'ChEA3_2gene', 'AnimalTFDB_2gene', 'hTF_2gene'}
+        return list(dict.fromkeys(
+            f"{self.species}.{prefix}.tab.gz"
+            if prefix in complete_prefixes
+            else f"{self.species}.{prefix}2gene.tab.gz"
+            for prefix in prefixes
+        ))
+
+    def _gmt_filenames(self, name: str) -> List[str]:
+        labels = {
+            'GO': ['GO'],
+            'KEGG': ['KEGG', 'kegg'],
+            'REACTOME': ['Reactome', 'reactome'],
+            'DO': ['DO'],
+            'DISGENET': ['DisGeNET', 'DISGENET'],
+            'WIKIPATHWAYS': ['WikiPathways', 'wikipathways'],
+        }.get(name.upper(), [name, name.lower()])
+        return list(dict.fromkeys(
+            filename
+            for label in labels
+            for filename in (
+                f"{self.species}.{label}.gmt.gz",
+                f"{self.species}.{label}.gmt",
+            )
+        ))
+
     def get_build_metadata(self) -> Optional[Dict]:
-        """获取当前活跃版本的构建元数据
-
-        从 build_manifest.json 读取构建时记录的元信息，
-        包含构建时间、依赖版本等。
-
-        Returns:
-            元数据字典，文件不存在或未加载版本时返回 None
-        """
-        if not self._active_version:
-            return None
-        manifest_path = Path(self.database_dir) / "organism" / self._active_version / self.species / "build_manifest.json"
-        if not manifest_path.exists():
-            return None
-        try:
-            with open(manifest_path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception as e:
-            logger.warning("读取 build_manifest.json 失败: %s", e)
-            return None
+        """Return build metadata for the active species database."""
+        metadata: Dict = {"database_versions": self.database_versions, "source_versions": {}}
+        found = False
+        for version in sorted(set(self._active_versions.values())):
+            if version == "v1-legacy":
+                continue
+            manifest_path = self.database_dir / "organism" / version / self.species / "build_manifest.json"
+            if not manifest_path.exists():
+                continue
+            try:
+                with open(manifest_path, "r", encoding="utf-8") as f:
+                    manifest = json.load(f)
+                metadata["source_versions"].update(manifest.get("source_versions", {}))
+                if manifest.get("built_at"):
+                    metadata["built_at"] = manifest["built_at"]
+                found = True
+            except Exception as e:
+                logger.warning("Reading build_manifest. json failed: %s", e)
+        return metadata if found else None
 
     def load_databases(self, database_names: List[str], version: Optional[str] = None) -> None:
-        """加载指定的数据库
-
-        Args:
-            database_names: 数据库名称列表，如 ["GO", "KEGG"]
-            version: 指定使用的数据库版本，为 None 时自动使用最新版本
-        """
+        """Load each requested database."""
         for name in database_names:
             self.load_database(name, version=version)
 
+    def has_database(self, name: str, version: Optional[str] = None) -> bool:
+        """Return whether a valid database is available for this species."""
+        try:
+            validate_tf_database_species(name, self.species)
+        except ValueError:
+            return False
+        filenames = self._gmt_filenames(name) + self._matrix_filenames(name)
+        return self._find_species_dir_with_files(
+            self.species, filenames, version=version
+        ) is not None
+
     def load_database(self, name: str, version: Optional[str] = None) -> None:
-        """加载单个数据库
+        """Load one database into the normalized in-memory schema."""
+        validate_tf_database_species(name, self.species)
+        gmt_filenames = self._gmt_filenames(name)
+        matrix_filenames = self._matrix_filenames(name)
+        filenames = gmt_filenames + matrix_filenames
+        database_dir = self._find_species_dir_with_files(
+            self.species, filenames, version=version
+        )
+        if database_dir is None:
+            raise FileNotFoundError(
+                f"Database file does not exist: {', '.join(filenames)} not found"
+            )
+        active_version = self._version_for_dir(database_dir, self.species)
+        self._active_versions[name] = active_version
+        self._active_version = active_version
+        self._validate_tf_snapshot_schema(name, database_dir)
 
-        从 v1 格式的 .tab.gz 文件加载数据库。
-        文件格式：第一行是表头（Gene\tTermID1\tTermID2...），
-        后续行是基因和所属条目的 0/1 矩阵。
+        # Load Term Name Map (from. tab.id.gz or 2disc.gz)
+        self._load_term_names(name, database_dir)
 
-        Args:
-            name: 数据库名称（如 "GO"、"KEGG"）
-            version: 指定使用的数据库版本，为 None 时自动使用最新版本
-        """
-        # 自动查找物种目录（支持 v2 的 organism/v{date}/{species}/ 结构）
-        self.database_dir = self._find_species_dir(self.database_dir, self.species, version=version)
+        gmt_path = next(
+            (database_dir / filename for filename in gmt_filenames
+             if (database_dir / filename).is_file()),
+            None,
+        )
+        if gmt_path is not None:
+            self.databases[name] = self._drop_terms_without_names(
+                name, self._parse_gmt_file(gmt_path, name)
+            )
+            return
 
-        # 先加载 Term 名称映射（从 .tab.id.gz 或 .2disc.gz）
-        self._load_term_names(name)
+        filepath = next(
+            (database_dir / filename for filename in matrix_filenames
+             if (database_dir / filename).is_file()),
+            None,
+        )
+        if filepath is None:
+            raise FileNotFoundError(
+                f"Database file does not exist: {database_dir}Not found below{', '.join(matrix_filenames)}"
+            )
 
-        # 构建文件路径（v1 格式：{species}.{name}2gene.tab.gz）
-        # 注意部分数据库有特殊文件名映射
-        name_to_prefix = {
-            'GO': 'GO',
-            'KEGG': 'kegg',
-            'REACTOME': 'Reactome',
-            'DO': 'DO',
-            'DISGENET': 'CUI',  # DisGeNET 使用 CUI 前缀
-            'WIKIPATHWAYS': 'WikiPathways',
-            'TRRUST': 'TF2target',  # TRRUST 使用 TF2target 前缀
-            'CHEA3': 'ChEA3_2gene',  # ChEA3 使用 ChEA3_2gene 前缀
-            'ANIMALTFDB': 'AnimalTFDB_2gene',
-            'HTFTARGET': 'hTF_2gene',
-        }
-        prefix = name_to_prefix.get(name.upper(), name)
-
-        filename = f"{self.species}.{prefix}2gene.tab.gz"
-        filepath = self.database_dir / filename
-
-        if not filepath.exists():
-            # 尝试小写
-            filename = f"{self.species}.{prefix.lower()}2gene.tab.gz"
-            filepath = self.database_dir / filename
-
-        if not filepath.exists():
-            # 也尝试数据库名称本身
-            filename = f"{self.species}.{name}2gene.tab.gz"
-            filepath = self.database_dir / filename
-
-        if not filepath.exists():
-            filename = f"{self.species}.{name.lower()}2gene.tab.gz"
-            filepath = self.database_dir / filename
-
-        if not filepath.exists():
-            raise FileNotFoundError(f"数据库文件不存在: {self.database_dir} 下未找到 {self.species}.{prefix}2gene.tab.gz")
-
-        # 解析数据库文件（此时名称会使用 term_names 映射）
+        # Parsing database files (the name will use term_names map at this time)
         term_data = self._parse_tab_file(filepath, name)
-        self.databases[name] = term_data
+        self.databases[name] = self._drop_terms_without_names(name, term_data)
+
+    @staticmethod
+    def _drop_terms_without_names(db_name: str, term_data: Dict[str, Dict]) -> Dict[str, Dict]:
+        """Remove non-TF terms that lack a descriptive name."""
+        if db_name.upper() in _TF_DATABASES:
+            return term_data
+        valid = {
+            term_id: info
+            for term_id, info in term_data.items()
+            if str(info.get("name") or "").strip().casefold() != str(term_id).strip().casefold()
+        }
+        removed = len(term_data) - len(valid)
+        if removed:
+            logger.info(
+                "Database%sYes.%dThe entry is missing a specific name and has been excluded from the analysis",
+                db_name, removed,
+            )
+        return valid
+
+    def _validate_tf_snapshot_schema(self, name: str, database_dir: Path) -> None:
+        """Reject obsolete TF snapshots that lose library or context provenance."""
+        requirements = {
+            "CHEA3": (f"{self.species}.ChEA3_2disc.gz", {"Term_ID", "Library"}),
+            "HTFTARGET": (f"{self.species}.hTF_2disc.gz", {"Term_ID", "Context"}),
+            "ANIMALTFDB": (
+                f"{self.species}.AnimalTFDB_mapped_2disc.gz",
+                {"Term_ID", "Context", "Inference_Type"},
+            ),
+        }
+        requirement = requirements.get(name.upper())
+        if requirement is None:
+            return
+        filename, required = requirement
+        path = database_dir / filename
+        if not path.is_file():
+            raise ValueError(
+                f"{name} is missing evidence metadata file {filename}; rebuild the database"
+            )
+        with gzip.open(path, 'rt', encoding='utf-8') as handle:
+            columns = set(handle.readline().rstrip('\n').split('\t'))
+        if not required.issubset(columns):
+            raise ValueError(
+                f"The {name} database uses a legacy metadata schema; rebuild it to preserve evidence context"
+            )
 
     @staticmethod
     def _capitalize(text: str) -> str:
-        """首字母大写，同时保留全大写词（如 DNA、RNA、mRNA、ATP）
-
-        Args:
-            text: 输入文本
-
-        Returns:
-            首字母大写的文本
-        """
-        # 保留全大写词的映射（如 DNA -> DNA）
+        """Capitalize display labels while preserving established abbreviations."""
+        # Keep a full capitalisation map (e. g. DNA-> DNA)
         upper_map = {
             'DNA': 'DNA', 'RNA': 'RNA', 'mRNA': 'mRNA', 'tRNA': 'tRNA',
             'rRNA': 'rRNA', 'ATP': 'ATP', 'ADP': 'ADP', 'GTP': 'GTP',
@@ -258,41 +371,41 @@ class DatabaseManager:
         return ' '.join(result)
 
     def _format_term_name(self, db_name: str, raw_name: str) -> str:
-        """格式化 Term 名称，统一为 "Category|Name" 格式，首字母大写
+        """Normalize a term name and optional hierarchy for display."""
+        if db_name.upper() in _TF_DATABASES:
+            return raw_name
 
-        Args:
-            db_name: 数据库名称 (GO, KEGG, Reactome, DO)
-            raw_name: 原始名称字符串
+        if db_name.upper() not in {
+            "GO", "KEGG", "REACTOME", "DO", "DISGENET", "WIKIPATHWAYS",
+        }:
+            return raw_name
 
-        Returns:
-            格式化后的名称字符串
-        """
-        # 将下划线替换为空格（用于 KEGG 的 pathway_name_with_underscores）
+        # Replace underlined with space (pathway_name_with_underserves for KEG)
         name = raw_name.replace('_', ' ')
 
         if db_name.upper() == 'GO':
-            # GO 格式: "biological_process:mitochondrion inheritance"
-            # 转为: "Biological Process|Mitochondrion Inheritance"
+            # GO format: "biological_process: mitochondion inheritance"
+            # The following is a translation: "Biological Problem of Mitochondion Inheritance"
             if ':' in name:
                 namespace, term = name.split(':', 1)
                 return f"{namespace.title()}|{self._capitalize(term)}"
             return self._capitalize(name)
 
         elif db_name.upper() == 'KEGG':
-            # KEGG 格式可能是:
-            #   "Category|SubCategory|PathwayName" (有分类，三层)
-            #   "Uncategorized|Uncategorized|PathwayName" (无分类，三层但无用)
-            #   "PathwayName" (只有名称)
-            # 根据实际层级数决定输出格式
+            # KEGG format is probably:
+            #   "Category SubCategory PathwayName" (Category, 3th floor)
+            #   "Uncategorized Uncategorized PathwayName" (unclassified, third floor but useless)
+            #   "PathwayName" (name only)
+            # The output format is based on actual hierarchical numbers
             if '|' in name:
                 parts = name.split('|')
                 pathway_name = self._capitalize(parts[-1])
 
-                # 如果一级分类是 Uncategorized，只显示通路名（1级）
+                # If the first level is classified as Uncategorized, only the pass name is shown (level 1)
                 if parts[0].lower() == 'uncategorized':
                     return pathway_name
 
-                # 有有效分类，显示 Category|SubCategory|PathwayName（三层）
+                # There is a valid classification showing Category SubCategory PathwayName (third floor)
                 if len(parts) >= 3:
                     cat = self._capitalize(parts[0])
                     subcat = self._capitalize(parts[1])
@@ -301,21 +414,26 @@ class DatabaseManager:
                     return f"{parts[0].title()}|{pathway_name}"
             return self._capitalize(name)
 
-        # Reactome, DO 等无层级结构，首字母大写即可
+        # Reactome, DO and all hierarchical structures, capital letters.
         return self._capitalize(name)
 
-    def _load_term_names(self, db_name: str) -> None:
-        """加载 Term ID 到名称的映射
+    @staticmethod
+    def _normalize_tf_term_name(db_name: str, term_id: str, term_name: str) -> str:
+        """Create a readable TF label without changing its stable identifier."""
+        if db_name.upper() not in _TF_DATABASES:
+            return term_name
+        cleaned = str(term_name or "").strip()
+        if not cleaned or cleaned.casefold() == str(term_id).strip().casefold():
+            return f"{term_id} targets [{db_name}]"
+        return cleaned
 
-        v1 数据库中，*.tab.id.gz 或 *.2disc.gz 文件包含 Term 名称。
-        例如 GO 有 hsa.GO.tab.id.gz，KEGG 有 hsa.KEGG2disc.gz
-
-        Args:
-            db_name: 数据库名称
-        """
+    def _load_term_names(self, db_name: str, database_dir: Optional[Path] = None) -> None:
+        """Load term identifiers, names, and hierarchy descriptions."""
         self.term_names[db_name] = {}
+        self.term_hierarchies[db_name] = {}
+        database_dir = database_dir or self.database_dir
 
-        # 数据库名到文件前缀的映射（与 load_database 一致）
+        # Map of database name to description prefix (same as true product of various builder)
         name_to_prefix = {
             'GO': 'GO',
             'KEGG': 'kegg',
@@ -323,13 +441,16 @@ class DatabaseManager:
             'DO': 'DO',
             'DISGENET': 'CUI',
             'WIKIPATHWAYS': 'WikiPathways',
+            'TRRUST': 'TF',
+            'CHEA3': 'ChEA3_',
+            'HTFTARGET': 'hTF_',
         }
         prefix = name_to_prefix.get(db_name.upper(), db_name)
 
-        # 方法1: 尝试加载 {species}.{db}.tab.id.gz 文件
-        id_file = self.database_dir / f"{self.species}.{db_name}.tab.id.gz"
+        # Method 1: Try Loading{species}.{db}.tab.id.gz file
+        id_file = database_dir / f"{self.species}.{db_name}.tab.id.gz"
         if not id_file.exists():
-            id_file = self.database_dir / f"{self.species}.{db_name.lower()}.tab.id.gz"
+            id_file = database_dir / f"{self.species}.{db_name.lower()}.tab.id.gz"
 
         if id_file.exists():
             try:
@@ -338,86 +459,114 @@ class DatabaseManager:
                         line = line.strip()
                         if not line:
                             continue
-                        # 格式: TermID\tTermName\tParentTerms
+                        # Format: TermID\tTermName\tParentTerms
                         parts = line.split('\t')
                         if len(parts) >= 2:
-                            self.term_names[db_name][parts[0]] = parts[1]
-                return  # 如果成功加载，直接返回
+                            term_id = parts[0]
+                            term_name = (
+                                term_id if db_name.upper() in _TF_DATABASES else parts[1]
+                            )
+                            self.term_names[db_name][term_id] = self._normalize_tf_term_name(
+                                db_name, term_id, term_name
+                            )
+                            if len(parts) >= 3 and '|' in parts[2]:
+                                self.term_hierarchies[db_name][term_id] = parts[2]
+                return  # If loaded successfully, return directly
             except Exception as e:
-                print(f"警告: 加载 {id_file} 失败: {e}")
+                print(f"Warning: Failed to load {id_file}: {e}")
 
-        # 方法2: 尝试从 *.2disc.gz 加载（使用 prefix 构建路径，与 load_database 一致）
-        disc_file = self.database_dir / f"{self.species}.{prefix}2disc.gz"
-        if not disc_file.exists():
-            disc_file = self.database_dir / f"{self.species}.{prefix.lower()}2disc.gz"
-        if not disc_file.exists():
-            # 回退：尝试使用 db_name 本身
-            disc_file = self.database_dir / f"{self.species}.{db_name}2disc.gz"
-        if not disc_file.exists():
-            disc_file = self.database_dir / f"{self.species}.{db_name.lower()}2disc.gz"
-        if not disc_file.exists():
-            # 回退：尝试不带物种前缀的文件（如 GO2disc.gz）
-            disc_file = self.database_dir / f"{prefix}2disc.gz"
-        if not disc_file.exists():
-            disc_file = self.database_dir / f"{prefix.lower()}2disc.gz"
+        # Option 2: Try loading from *.2disc.gz.
+        special_disc = {
+            'ANIMALTFDB': [
+                f"{self.species}.AnimalTFDB_mapped_2disc.gz",
+                f"{self.species}.AnimalTFDB_2disc.gz",
+            ],
+        }.get(db_name.upper(), [])
+        disc_candidates = special_disc + [
+            f"{self.species}.{prefix}2disc.gz",
+            f"{self.species}.{prefix.lower()}2disc.gz",
+            f"{self.species}.{db_name}2disc.gz",
+            f"{self.species}.{db_name.lower()}2disc.gz",
+            f"{prefix}2disc.gz",
+            f"{prefix.lower()}2disc.gz",
+        ]
+        disc_file = next(
+            (database_dir / filename for filename in dict.fromkeys(disc_candidates)
+             if (database_dir / filename).is_file()),
+            database_dir / disc_candidates[0],
+        )
 
         if disc_file.exists():
             try:
                 count = 0
+                has_named_schema = False
                 with gzip.open(disc_file, 'rt', encoding='utf-8') as f:
                     for line in f:
                         line = line.strip()
                         if not line:
                             continue
-                        # 格式: TermID\tTermName (TermName 使用 | 分隔层级)
+                        # Format: TermID\tTermName (Term Name with a stony partition level)
                         parts = line.split('\t')
                         if len(parts) >= 2:
                             term_id = parts[0]
                             raw_name = parts[1]
-                            term_name = self._format_term_name(db_name, raw_name)
+                            if term_id == "Term_ID":
+                                has_named_schema = raw_name == "Term_Name"
+                                continue
+                            if term_id == "TF":
+                                continue
+                            if db_name.upper() in _TF_DATABASES and not has_named_schema:
+                                # Legacy TF descriptions used the second column for counts/modes,
+                                # not a display name. Keep the TF identifier as the label.
+                                term_name = term_id
+                            else:
+                                term_name = self._format_term_name(db_name, raw_name)
+                            term_name = self._normalize_tf_term_name(
+                                db_name, term_id, term_name
+                            )
                             self.term_names[db_name][term_id] = term_name
+                            hierarchy = parts[2].strip() if len(parts) >= 3 else ""
+                            if '|' not in hierarchy and '|' in term_name:
+                                hierarchy = term_name
+                            if '|' in hierarchy:
+                                self.term_hierarchies[db_name][term_id] = hierarchy
                             count += 1
                 if count > 0:
-                    print(f"    从 {disc_file.name} 加载了 {count} 个 Term 名称")
+                    print(f"Loaded {count} disease terms from {disc_file.name}")
             except Exception as e:
-                print(f"警告: 加载 {disc_file} 失败: {e}")
+                print(f"Warning: failed to load {disc_file}: {e}")
 
     def _parse_tab_file(self, filepath: Path, db_name: str) -> Dict[str, Dict]:
-        """解析 .tab.gz 文件
-
-        Args:
-            filepath: 数据库文件路径
-            db_name: 数据库名称
-
-        Returns:
-            Dict: {term_id: {"name": str, "genes": List[str]}}
-        """
+        """Parse a compressed membership matrix and its descriptions."""
         term_data: Dict[str, Dict] = {}
 
-        # 获取该数据库的名称映射
+        # Map to get the name of the database
         name_map = self.term_names.get(db_name, {})
+        hierarchy_map = self.term_hierarchies.get(db_name, {})
 
         with gzip.open(filepath, 'rt', encoding='utf-8') as f:
             reader = csv.reader(f, delimiter='\t')
 
-            # 读取表头
+            # Read Table Headers
             header = next(reader)
-            # 表头格式：Gene\tTermID1\tTermID2\t...
-            term_ids = header[1:]  # 第一列是 Gene，后面是 Term ID
+            # Header format: Gene\tTermID1\tTermID2\t...
+            term_ids = header[1:]  # The first column is Gene, followed by Term ID.
 
-            # 初始化 term_data，使用 term_names 中的名称或 Term ID 作为名称
+            # Initialize term_data, using name in term_names or Term_ID as name
             for term_id in term_ids:
-                # 如果有名称映射，使用映射的名称；否则使用 Term ID
+                # If a name is map, use the name of the map; otherwise, use Term ID
                 term_name = name_map.get(term_id, term_id)
                 term_data[term_id] = {"name": term_name, "genes": []}
+                if term_id in hierarchy_map:
+                    term_data[term_id]["hierarchy"] = hierarchy_map[term_id]
 
-            # 读取数据行
+            # Read Data Line
             for row in reader:
                 if len(row) < 2:
                     continue
 
                 gene = row[0]
-                # 后面的列表示该基因是否属于对应条目（1=属于，0=不属于）
+                # The column that follows indicates whether the gene belongs to the corresponding entry (1 = yes, 0 = not)
                 for i, value in enumerate(row[1:]):
                     if i < len(term_ids) and value == '1':
                         term_id = term_ids[i]
@@ -425,20 +574,47 @@ class DatabaseManager:
 
         return term_data
 
-    def get_all_term_data(self) -> Dict[str, Dict]:
-        """获取所有已加载数据库的条目数据
+    def _parse_gmt_file(self, filepath: Path, db_name: str) -> Dict[str, Dict]:
+        """Parse GMT records into normalized term metadata and genes."""
+        term_data: Dict[str, Dict] = {}
+        name_map = self.term_names.get(db_name, {})
+        hierarchy_map = self.term_hierarchies.get(db_name, {})
+        opener = gzip.open if filepath.suffix.lower() == '.gz' else open
+        with opener(filepath, 'rt', encoding='utf-8') as handle:
+            for line_number, line in enumerate(handle, 1):
+                parts = line.rstrip('\r\n').split('\t')
+                if len(parts) < 3 or not parts[0].strip():
+                    logger.warning("Skip invalid GMT lines%s: %d", filepath, line_number)
+                    continue
+                term_id = parts[0].strip()
+                description = parts[1].strip()
+                genes = [gene.strip() for gene in parts[2:] if gene.strip()]
+                if not genes:
+                    continue
+                if term_id not in term_data:
+                    mapped_name = name_map.get(term_id)
+                    if mapped_name:
+                        term_name = mapped_name
+                    else:
+                        raw_name = term_id if db_name.upper() in _TF_DATABASES else description or term_id
+                        term_name = self._format_term_name(db_name, raw_name)
+                    term_data[term_id] = {
+                        "name": term_name,
+                        "genes": [],
+                    }
+                    if term_id in hierarchy_map:
+                        term_data[term_id]["hierarchy"] = hierarchy_map[term_id]
+                term_data[term_id]["genes"] = list(dict.fromkeys(
+                    [*term_data[term_id]["genes"], *genes]
+                ))
+        return term_data
 
-        Returns:
-            Dict: {db_name: {term_id: {"name": str, "genes": List[str]}}}
-        """
+    def get_all_term_data(self) -> Dict[str, Dict]:
+        """Return normalized term data for all loaded databases."""
         return self.databases
 
     def get_background_genes(self) -> Set[str]:
-        """获取背景基因集（所有数据库中基因的并集）
-
-        Returns:
-            Set[str]: 背景基因集合
-        """
+        """Return the union of genes annotated by loaded databases."""
         background = set()
         for db_data in self.databases.values():
             for term_info in db_data.values():
@@ -446,14 +622,7 @@ class DatabaseManager:
         return background
 
     def get_database_genes(self, db_name: str) -> Set[str]:
-        """获取指定数据库的所有基因
-
-        Args:
-            db_name: 数据库名称
-
-        Returns:
-            Set[str]: 该数据库中所有基因的集合
-        """
+        """Return all genes annotated by one database."""
         if db_name not in self.databases:
             return set()
 
@@ -463,53 +632,33 @@ class DatabaseManager:
         return genes
 
     def get_genome_genes(self, taxid: Optional[int] = None, species_code: Optional[str] = None) -> Set[str]:
-        """获取该物种的全基因组基因（来自 gene_info.gz）
-
-        gene_info.gz 包含该物种的所有基因（无论是否有 GO 注释），
-        与 gene2go.gz（只有 GO 注释的基因）不同。
-
-        Args:
-            taxid: NCBI Gene 分类学 ID，如果为 None 则从 species_code 推断
-            species_code: KEGG 物种代码（如 'hsa'），用于从 KEGG_CODE_TO_TAXID 推断 taxid
-
-        Returns:
-            Set[str]: 全基因组 Gene Symbol 集合（第3列，与 GO/KEGG 注释标识符一致）
-        """
-        # 如果提供了 species_code，尝试从中推断 taxid
+        """Return all gene symbols recorded for the selected TaxID."""
+        # Resolve the NCBI TaxID from the species code when available.
         if taxid is None and species_code is not None:
             taxid = KEGG_CODE_TO_TAXID.get(species_code.lower())
 
         if taxid is None:
-            # 如果仍然没有 taxid，返回空集合
+            # If you still don't have a taxid, go back to the air.
             return set()
 
         genome_file = self.database_dir / "gene_info.gz"
         if not genome_file.exists():
-            # 尝试在 basic/go 目录下查找
-            # 向上查找 database 根目录
-            db_root = self.database_dir
-            for _ in range(5):
-                if db_root.parent:
-                    db_root = db_root.parent
-                if db_root.name in ('database', 'AllEnricher-v2', 'AllEnricher'):
-                    break
-
+            db_root = next(
+                (path for path in (self.database_dir, *self.database_dir.parents)
+                 if path.name == "database"),
+                self.database_dir,
+            )
             basic_go_dir = db_root / "basic" / "go"
-            if basic_go_dir.exists():
-                # 使用最新版本
-                versions = sorted([d for d in basic_go_dir.iterdir() if d.is_dir()], reverse=True)
-                for version_dir in versions:
-                    genome_file = version_dir / "gene_info.gz"
-                    if genome_file.exists():
-                        break
-                    genome_file = self.database_dir / "gene_info.gz"  # 重置
-                if not genome_file.exists():
-                    return set()
-            else:
+            candidates = (
+                sorted(basic_go_dir.glob("*/gene_info.gz"), reverse=True)
+                if basic_go_dir.exists() else []
+            )
+            if not candidates:
                 return set()
+            genome_file = candidates[0]
 
         genes = set()
-        # 只包含真正的基因类型，排除 biological-region（基因组区域，非基因）、pseudo（假基因）
+        # Keep gene records; exclude biological regions, pseudogenes, and other non-gene entries.
         _VALID_GENE_TYPES = frozenset({
             "protein-coding", "ncRNA", "snoRNA", "rRNA", "tRNA", "snRNA",
             "scRNA", "other",
@@ -522,9 +671,9 @@ class DatabaseManager:
                 parts = line.split("\t")
                 if len(parts) >= 10:
                     file_taxid = parts[0]
-                    gene_symbol = parts[2]  # 第3列：Gene Symbol（如 A1BG）
-                    gene_type = parts[9]    # 第10列：基因类型
-                    # 过滤只保留指定 taxid 且是真正基因类型的条目
+                    gene_symbol = parts[2]  # Column 3: Gene Symbol (e.g. A1BG)
+                    gene_type = parts[9]    # Column 10: gene type
+                    # Retain valid gene records for the requested NCBI TaxID.
                     try:
                         if int(file_taxid) == taxid and gene_type in _VALID_GENE_TYPES:
                             if gene_symbol and gene_symbol != "-" and not gene_symbol.startswith("NEW|"):
@@ -533,31 +682,34 @@ class DatabaseManager:
                         continue
         return genes
 
+    @staticmethod
+    def _read_tf_info_file(path: Path, legacy_columns: List[str]) -> pd.DataFrame:
+        with gzip.open(path, 'rt', encoding='utf-8') as handle:
+            first_cell = handle.readline().split('\t', 1)[0]
+        if first_cell in {"Term_ID", "TF"}:
+            return pd.read_csv(path, sep='\t', compression='gzip', dtype=str)
+        return pd.read_csv(
+            path, sep='\t', compression='gzip', header=None,
+            names=legacy_columns, dtype=str,
+        )
+
     def load_trrust(self, species: Optional[str] = None) -> Optional[Dict[str, 'pd.DataFrame']]:
-        """加载 TRRUST 转录因子-靶基因数据库
-
-        查找并加载以下文件:
-        - {species}.TF2target.tab.gz: TF 到靶基因的映射
-        - {species}.gene2TF.tab.gz: 基因到 TF 的映射
-        - {species}.TF2disc.gz: TF 描述信息
-
-        Args:
-            species: 物种代码，为 None 时使用实例的 self.species
-
-        Returns:
-            包含三个 DataFrame 的字典 {'tf2target': DataFrame, 'gene2tf': DataFrame, 'tf_info': DataFrame}，
-            如果任一必要文件不存在则返回 None
-        """
+        """Load TRRUST TF-target gene sets."""
         sp = species or self.species
-        base_dir = self._find_species_dir(self.database_dir, sp)
+        validate_tf_database_species("TRRUST", sp)
+        filenames = [f"{sp}.TF2target.tab.gz", f"{sp}.gene2TF.tab.gz"]
+        base_dir = self._find_species_dir_with_files(sp, filenames)
+        if base_dir is None:
+            logger.warning("The TRRUST database file does not exist")
+            return None
 
-        tf2target_file = base_dir / f"{sp}.TF2target.tab.gz"
-        gene2tf_file = base_dir / f"{sp}.gene2TF.tab.gz"
+        tf2target_file = base_dir / filenames[0]
+        gene2tf_file = base_dir / filenames[1]
         tf2disc_file = base_dir / f"{sp}.TF2disc.gz"
 
-        # 检查必要文件是否存在
+        # Check whether the necessary documents exist
         if not tf2target_file.exists() and not gene2tf_file.exists():
-            logger.warning("TRRUST 数据库文件不存在: %s", base_dir)
+            logger.warning("The TRRUST database file does not exist: %s", base_dir)
             return None
 
         result: Dict[str, 'pd.DataFrame'] = {}
@@ -573,35 +725,36 @@ class DatabaseManager:
             result['gene2tf'] = pd.DataFrame()
 
         if tf2disc_file.exists():
-            result['tf_info'] = pd.read_csv(tf2disc_file, sep='\t', compression='gzip')
+            result['tf_info'] = self._read_tf_info_file(
+                tf2disc_file, ["TF", "Mode", "Target_Set_Size"]
+            )
         else:
             result['tf_info'] = pd.DataFrame()
+
+        edge_file = base_dir / f"{sp}.TRRUST_edges.tsv.gz"
+        result['edges'] = (
+            pd.read_csv(edge_file, sep='\t', compression='gzip', dtype=str)
+            if edge_file.exists() else pd.DataFrame()
+        )
 
         return result
 
     def load_chea3(self, species: Optional[str] = None) -> Optional[Dict[str, 'pd.DataFrame']]:
-        """加载 ChEA3 转录因子-靶基因数据库
-
-        查找并加载以下文件:
-        - {species}.ChEA3_2gene.tab.gz: 基因到 TF 的映射
-        - {species}.ChEA3_2disc.gz: TF 描述信息
-
-        Args:
-            species: 物种代码，为 None 时使用实例的 self.species
-
-        Returns:
-            包含两个 DataFrame 的字典 {'gene2tf': DataFrame, 'tf_info': DataFrame}，
-            如果必要文件不存在则返回 None
-        """
+        """Load ChEA3 TF-target gene sets."""
         sp = species or self.species
-        base_dir = self._find_species_dir(self.database_dir, sp)
+        validate_tf_database_species("ChEA3", sp)
+        gene2tf_name = f"{sp}.ChEA3_2gene.tab.gz"
+        base_dir = self._find_species_dir_with_files(sp, [gene2tf_name])
+        if base_dir is None:
+            logger.warning("ChEA3 database file does not exist")
+            return None
 
-        gene2tf_file = base_dir / f"{sp}.ChEA3_2gene.tab.gz"
+        gene2tf_file = base_dir / gene2tf_name
         tf2disc_file = base_dir / f"{sp}.ChEA3_2disc.gz"
 
-        # 检查必要文件是否存在
+        # Check whether the necessary documents exist
         if not gene2tf_file.exists():
-            logger.warning("ChEA3 数据库文件不存在: %s", base_dir)
+            logger.warning("The ChEA3 database file does not exist: %s", base_dir)
             return None
 
         result: Dict[str, 'pd.DataFrame'] = {}
@@ -609,24 +762,27 @@ class DatabaseManager:
         result['gene2tf'] = pd.read_csv(gene2tf_file, sep='\t', compression='gzip')
 
         if tf2disc_file.exists():
-            result['tf_info'] = pd.read_csv(tf2disc_file, sep='\t', compression='gzip')
+            result['tf_info'] = self._read_tf_info_file(
+                tf2disc_file, ["TF", "lib_count", "Target_Set_Size"]
+            )
         else:
             result['tf_info'] = pd.DataFrame()
+
+        if "Term_ID" not in result['tf_info'].columns:
+            raise ValueError("ChEA3 uses a legacy metadata schema; rebuild the database")
 
         return result
 
     def load_htftarget(self, species: Optional[str] = None) -> Optional[Dict[str, pd.DataFrame]]:
-        """加载 hTFtarget 数据库
-
-        Returns:
-            {'gene2tf': DataFrame, 'tf_info': DataFrame}
-        """
+        """Load hTFtarget regulatory-context gene sets."""
         sp = species or self.species
-        db_dir = self._find_species_db_dir(sp)
+        validate_tf_database_species("hTFtarget", sp)
+        gene2tf_name = f"{sp}.hTF_2gene.tab.gz"
+        db_dir = self._find_species_dir_with_files(sp, [gene2tf_name])
         if db_dir is None:
             return None
 
-        gene2tf_file = db_dir / f"{sp}.hTF_2gene.tab.gz"
+        gene2tf_file = db_dir / gene2tf_name
         disc_file = db_dir / f"{sp}.hTF_2disc.gz"
 
         if not gene2tf_file.exists():
@@ -636,31 +792,43 @@ class DatabaseManager:
         result['gene2tf'] = pd.read_csv(gene2tf_file, sep='\t', compression='gzip', low_memory=False)
 
         if disc_file.exists():
-            result['tf_info'] = pd.read_csv(disc_file, sep='\t', compression='gzip')
+            result['tf_info'] = self._read_tf_info_file(
+                disc_file, ["TF", "target_count", "tissues", "source"]
+            )
+        else:
+            result['tf_info'] = pd.DataFrame()
+
+        if "Term_ID" not in result['tf_info'].columns:
+            raise ValueError("hTFtarget uses a legacy metadata schema; rebuild the database")
 
         return result
 
     def load_animaltfdb(self, species: Optional[str] = None) -> Optional[Dict[str, pd.DataFrame]]:
-        """加载 AnimalTFDB 数据库（同源映射结果）
-
-        Returns:
-            {'gene2tf': DataFrame, 'tf_info': DataFrame}
-        """
+        """Load species-specific AnimalTFDB TF-target gene sets."""
         sp = species or self.species
-        db_dir = self._find_species_db_dir(sp)
+        validate_tf_database_species("AnimalTFDB", sp)
+        gene2tf_name = f"{sp}.AnimalTFDB_2gene.tab.gz"
+        db_dir = self._find_species_dir_with_files(sp, [gene2tf_name])
         if db_dir is None:
             return None
 
-        gene2tf_file = db_dir / f"{sp}.AnimalTFDB_2gene.tab.gz"
+        gene2tf_file = db_dir / gene2tf_name
         disc_file = db_dir / f"{sp}.AnimalTFDB_mapped_2disc.gz"
 
         if not gene2tf_file.exists():
-            return self.load_htftarget(sp)
+            return None
 
         result = {}
         result['gene2tf'] = pd.read_csv(gene2tf_file, sep='\t', compression='gzip', low_memory=False)
 
         if disc_file.exists():
-            result['tf_info'] = pd.read_csv(disc_file, sep='\t', compression='gzip')
+            result['tf_info'] = self._read_tf_info_file(
+                disc_file, ["TF", "target_count", "Family", "source"]
+            )
+        else:
+            result['tf_info'] = pd.DataFrame()
+
+        if not {"Term_ID", "Inference_Type"}.issubset(result['tf_info'].columns):
+            raise ValueError("AnimalTFDB uses a legacy metadata schema; rebuild the database")
 
         return result
