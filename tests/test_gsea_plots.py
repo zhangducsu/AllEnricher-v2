@@ -1,13 +1,12 @@
 """
-GSEA 可视化模块单元测试
+GSEA Visualization module test
 ========================
 
-测试覆盖范围：
-- plot_gsea_enrichment 生成正确的 Figure 对象
-- plot_gsea_nes_barplot 生成正确的 Figure 对象
-- plot_gsea_dotplot 生成正确的 Figure 对象
-- 使用 E2E 测试数据（test_data/ranked_genes.tsv 和 test_data/gene_sets.gmt）
-- 验证图表保存到临时文件
+Test coverage:
+- plot_gsea_enrichment generates the correct Figure object
+- plot_gsea_lollipop / plot_gsea_ridgeplot to generate the correct Figure object
+- Use E2E Test Data (test_data/ranked_genes.tsv and test_data/gene_sets.gmt)
+- Verify chart saved to temporary file
 """
 
 import os
@@ -18,19 +17,19 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 
-# 使用非交互后端，避免弹窗
+# Use non-interactive backends to avoid pop windows
 matplotlib.use("Agg")
 
 from allenricher.visualization.gsea_plots import (
     plot_gsea_enrichment,
-    plot_gsea_nes_barplot,
-    plot_gsea_dotplot,
+    plot_gsea_lollipop,
+    plot_gsea_multi_enrichment,
+    plot_gsea_ridgeplot,
 )
-from allenricher.visualization.plot_config import PlotConfig
 
 
 # ============================================================
-# 测试数据加载工具
+# Test Data Load Tool
 # ============================================================
 
 TEST_DATA_DIR = Path(__file__).parent.parent / "test_data"
@@ -38,7 +37,7 @@ TEST_DATA_DIR = Path(__file__).parent.parent / "test_data"
 
 def _load_ranked_genes() -> tuple:
     """
-    从 test_data/ranked_genes.tsv 加载排序基因列表和权重
+From test_data/ranked_genes.tsv Loading of the ranked gene list and weight
 
     Returns:
         (ranked_genes: list[str], gene_weights: dict[str, float])
@@ -52,7 +51,7 @@ def _load_ranked_genes() -> tuple:
 
 def _load_gene_sets() -> dict:
     """
-    从 test_data/gene_sets.gmt 加载基因集
+From test_data/gene_sets.gmt Loading gene set
 
     Returns:
         {pathway_name: set(genes)}
@@ -70,10 +69,10 @@ def _load_gene_sets() -> dict:
 
 def _make_gsea_results_df(n_pathways: int = 10, seed: int = 42) -> pd.DataFrame:
     """
-    构造 GSEA 结果 DataFrame（用于条形图和气泡图测试）
+Construct GSEA Outcome DataFrame (For bar and bubble chart testing)
 
     Returns:
-        包含 pathway, nes, pvalue, gene_count 列的 DataFrame
+Organisation pathway, nes, pvalue, gene_count Columns DataFrame
     """
     rng = np.random.default_rng(seed)
     pathways = [f"Pathway_{i}" for i in range(n_pathways)]
@@ -90,17 +89,17 @@ def _make_gsea_results_df(n_pathways: int = 10, seed: int = 42) -> pd.DataFrame:
 
 
 # ============================================================
-# 测试类
+# Test Class
 # ============================================================
 
 class TestPlotGseaEnrichment:
-    """测试 plot_gsea_enrichment"""
+    """Test"""
 
     def test_returns_figure_object(self):
-        """测试返回 matplotlib Figure 对象"""
+        """Test returns the matlotlib Figure object"""
         ranked_genes, gene_weights = _load_ranked_genes()
         gene_sets = _load_gene_sets()
-        # 取第一个基因集
+        # Take the first gene set.
         pathway_name = list(gene_sets.keys())[0]
         gene_set = gene_sets[pathway_name]
 
@@ -117,7 +116,7 @@ class TestPlotGseaEnrichment:
         plt.close(fig)
 
     def test_figure_has_three_axes(self):
-        """测试图表包含三个子图（三面板）"""
+        """Test chart with three subcharts (three panels)"""
         ranked_genes, gene_weights = _load_ranked_genes()
         gene_sets = _load_gene_sets()
         pathway_name = list(gene_sets.keys())[0]
@@ -136,7 +135,7 @@ class TestPlotGseaEnrichment:
         plt.close(fig)
 
     def test_custom_title(self):
-        """测试自定义标题"""
+        """Test Custom Titles"""
         ranked_genes, gene_weights = _load_ranked_genes()
         gene_sets = _load_gene_sets()
         pathway_name = list(gene_sets.keys())[0]
@@ -152,13 +151,13 @@ class TestPlotGseaEnrichment:
             title="Custom Title Test",
         )
 
-        # suptitle 应包含自定义标题
+        # suptitle should contain custom titles
         assert fig._suptitle is not None
         assert "Custom Title Test" in fig._suptitle.get_text()
         plt.close(fig)
 
     def test_save_to_file(self, tmp_path):
-        """测试图表保存到临时文件"""
+        """Test Chart Save to Temporary File"""
         ranked_genes, gene_weights = _load_ranked_genes()
         gene_sets = _load_gene_sets()
         pathway_name = list(gene_sets.keys())[0]
@@ -177,10 +176,11 @@ class TestPlotGseaEnrichment:
 
         assert os.path.exists(output_file)
         assert os.path.getsize(output_file) > 0
+        assert fig.number not in plt.get_fignums()
         plt.close(fig)
 
     def test_empty_gene_set(self):
-        """测试空基因集不报错"""
+        """Verify that an empty gene-set collection is handled without error."""
         ranked_genes, gene_weights = _load_ranked_genes()
 
         fig = plot_gsea_enrichment(
@@ -196,7 +196,7 @@ class TestPlotGseaEnrichment:
         plt.close(fig)
 
     def test_all_gene_sets(self):
-        """测试所有 E2E 基因集均可正常绘图"""
+        """Test all E2E genomes for normal drawing"""
         ranked_genes, gene_weights = _load_ranked_genes()
         gene_sets = _load_gene_sets()
 
@@ -213,159 +213,122 @@ class TestPlotGseaEnrichment:
             plt.close(fig)
 
 
-class TestPlotGseaNesBarplot:
-    """测试 plot_gsea_nes_barplot"""
-
-    def test_returns_figure_object(self):
-        """测试返回 matplotlib Figure 对象"""
-        df = _make_gsea_results_df()
-
-        fig = plot_gsea_nes_barplot(df)
-
-        assert isinstance(fig, matplotlib.figure.Figure)
-        plt.close(fig)
-
-    def test_top_n_filtering(self):
-        """测试 top_n 参数过滤"""
-        df = _make_gsea_results_df(n_pathways=30)
-
-        fig = plot_gsea_nes_barplot(df, top_n=10)
-        ax = fig.axes[0]
-
-        # Y 轴标签数量应 <= top_n
-        ytick_labels = [t.get_text() for t in ax.get_yticklabels()]
-        assert len(ytick_labels) <= 10
-        plt.close(fig)
-
-    def test_save_to_file(self, tmp_path):
-        """测试图表保存到临时文件"""
-        df = _make_gsea_results_df()
-        output_file = str(tmp_path / "nes_barplot.png")
-
-        fig = plot_gsea_nes_barplot(df, output_file=output_file)
-
-        assert os.path.exists(output_file)
-        assert os.path.getsize(output_file) > 0
-        plt.close(fig)
-
-    def test_custom_title(self):
-        """测试自定义标题"""
-        df = _make_gsea_results_df()
-
-        fig = plot_gsea_nes_barplot(df, title="Custom NES Title")
-        ax = fig.axes[0]
-
-        assert ax.get_title() == "Custom NES Title"
-        plt.close(fig)
-
-    def test_with_real_gsea_data(self):
-        """测试使用真实 GSEA 结果格式数据"""
-        df = pd.DataFrame({
-            "pathway": ["Cell_Cycle", "Apoptosis", "Immune_Response"],
-            "nes": [2.5, -1.8, 1.2],
-            "pvalue": [0.001, 0.01, 0.03],
-            "gene_count": [45, 30, 25],
+class TestPlotGseaMultiEnrichment:
+    def test_returns_one_curve_panel_and_one_hit_panel_per_pathway(self, tmp_path):
+        ranked_genes, gene_weights = _load_ranked_genes()
+        all_gene_sets = _load_gene_sets()
+        selected_ids = list(all_gene_sets)[:2]
+        gene_sets = {term_id: all_gene_sets[term_id] for term_id in selected_ids}
+        results = pd.DataFrame({
+            "Term_ID": selected_ids,
+            "Term_Name": selected_ids,
+            "NES": [2.0, -2.1],
+            "p_value": [0.001, 0.002],
+            "Adjusted_P_Value": [0.01, 0.02],
         })
+        output = tmp_path / "multi.png"
 
-        fig = plot_gsea_nes_barplot(df)
-
-        assert isinstance(fig, matplotlib.figure.Figure)
-        plt.close(fig)
-
-
-class TestPlotGseaDotplot:
-    """测试 plot_gsea_dotplot"""
-
-    def test_returns_figure_object(self):
-        """测试返回 matplotlib Figure 对象"""
-        df = _make_gsea_results_df()
-
-        fig = plot_gsea_dotplot(df)
-
-        assert isinstance(fig, matplotlib.figure.Figure)
-        plt.close(fig)
-
-    def test_top_n_filtering(self):
-        """测试 top_n 参数过滤"""
-        df = _make_gsea_results_df(n_pathways=30)
-
-        fig = plot_gsea_dotplot(df, top_n=10)
-        ax = fig.axes[0]
-
-        ytick_labels = [t.get_text() for t in ax.get_yticklabels()]
-        assert len(ytick_labels) <= 10
-        plt.close(fig)
-
-    def test_save_to_file(self, tmp_path):
-        """测试图表保存到临时文件"""
-        df = _make_gsea_results_df()
-        output_file = str(tmp_path / "gsea_dotplot.png")
-
-        fig = plot_gsea_dotplot(df, output_file=output_file)
-
-        assert os.path.exists(output_file)
-        assert os.path.getsize(output_file) > 0
-        plt.close(fig)
-
-    def test_custom_title(self):
-        """测试自定义标题"""
-        df = _make_gsea_results_df()
-
-        fig = plot_gsea_dotplot(df, title="Custom Dot Plot Title")
-        ax = fig.axes[0]
-
-        assert ax.get_title() == "Custom Dot Plot Title"
-        plt.close(fig)
-
-    def test_has_colorbar(self):
-        """测试图表包含颜色条"""
-        df = _make_gsea_results_df()
-
-        fig = plot_gsea_dotplot(df)
-
-        # 查找 colorbar（通过 ScalarMappable 检查）
-        # fig.axes 包含主轴和 colorbar 轴
-        assert len(fig.axes) >= 2
-        plt.close(fig)
-
-    def test_with_real_gsea_data(self):
-        """测试使用真实 GSEA 结果格式数据"""
-        df = pd.DataFrame({
-            "pathway": ["Cell_Cycle", "Apoptosis", "Immune_Response"],
-            "nes": [2.5, -1.8, 1.2],
-            "pvalue": [0.001, 0.01, 0.03],
-            "gene_count": [45, 30, 25],
-        })
-
-        fig = plot_gsea_dotplot(df)
-
-        assert isinstance(fig, matplotlib.figure.Figure)
-        plt.close(fig)
-
-
-class TestPlotConfig:
-    """测试 PlotConfig 配置类"""
-
-    def test_default_values(self):
-        """测试默认配置值"""
-        config = PlotConfig()
-        assert config.figure_format == "png"
-        assert config.figure_dpi == 300
-        assert config.color_palette == "RdBu_r"
-        assert config.font_family == "sans-serif"
-        assert config.font_size == 10
-        assert config.top_n_pathways == 20
-
-    def test_custom_values(self):
-        """测试自定义配置值"""
-        config = PlotConfig(
-            figure_format="pdf",
-            figure_dpi=600,
-            font_size=12,
+        fig = plot_gsea_multi_enrichment(
+            results,
+            selected_ids,
+            ranked_genes,
+            gene_weights,
+            gene_sets,
+            output_file=str(output),
         )
-        assert config.figure_format == "pdf"
-        assert config.figure_dpi == 600
-        assert config.font_size == 12
+
+        assert len(fig.axes) == len(selected_ids) + 1
+        assert tuple(fig.get_size_inches()) == pytest.approx((7.2, 3.47))
+        assert output.exists() and output.stat().st_size > 0
+        assert fig.number not in plt.get_fignums()
+        plt.close(fig)
+
+
+class TestPlotGseaRidgeplot:
+    def test_uses_pathway_gene_scores_and_saves_plot(self, tmp_path):
+        ranked_genes, gene_weights = _load_ranked_genes()
+        all_gene_sets = _load_gene_sets()
+        selected_ids = list(all_gene_sets)[:3]
+        results = pd.DataFrame({
+            "Term_ID": selected_ids,
+            "Term_Name": [f"GSEA|{term_id}" for term_id in selected_ids],
+            "NES": [2.1, -1.9, 1.6],
+            "p_value": [0.001, 0.003, 0.01],
+        })
+        output = tmp_path / "ridgeplot.png"
+
+        fig = plot_gsea_ridgeplot(
+            results,
+            ranked_genes,
+            gene_weights,
+            all_gene_sets,
+            output_file=str(output),
+        )
+
+        assert isinstance(fig, matplotlib.figure.Figure)
+        assert output.exists() and output.stat().st_size > 0
+        assert len(fig.axes[0].collections) >= 3
+        assert fig.number not in plt.get_fignums()
+        plt.close(fig)
+
+
+class TestPlotGseaLollipop:
+    """Tests"""
+
+    def test_returns_figure_object_with_nes_fallback(self):
+        """No Enrich Factor should return to NES."""
+        df = _make_gsea_results_df()
+
+        fig = plot_gsea_lollipop(df)
+
+        assert isinstance(fig, matplotlib.figure.Figure)
+        assert fig.axes[0].collections[-1].get_alpha() == pytest.approx(1.0)
+        plt.close(fig)
+
+    def test_save_to_file_with_enrichfactor_alias(self, tmp_path):
+        """Rich_Factor should be directly available for lollipops."""
+        df = pd.DataFrame({
+            "Term_Name": ["Cell Cycle", "DNA Repair", "Immune Response"],
+            "Rich_Factor": [4.2, 3.5, 2.8],
+            "Adjusted_P_Value": [1e-4, 2e-3, 5e-3],
+            "Gene_Count": [22, 18, 14],
+        })
+        output_file = str(tmp_path / "gsea_lollipop.png")
+
+        fig = plot_gsea_lollipop(df, output_file=output_file)
+
+        assert os.path.exists(output_file)
+        assert os.path.getsize(output_file) > 0
+        plt.close(fig)
+
+    def test_enrichfactor_top_n_uses_fdr_before_metric(self):
+        df = pd.DataFrame({
+            "Term_Name": ["Weak extreme", "Strong one", "Strong two"],
+            "Rich_Factor": [100.0, 4.0, 3.0],
+            "Adjusted_P_Value": [0.9, 1e-4, 2e-4],
+            "Gene_Count": [2, 20, 18],
+        })
+
+        fig = plot_gsea_lollipop(df, top_n=2)
+        labels = {tick.get_text() for tick in fig.axes[0].get_yticklabels()}
+
+        assert labels == {"Strong one", "Strong two"}
+        plt.close(fig)
+
+    def test_constant_fdr_colorbar_shows_the_real_single_value(self):
+        df = pd.DataFrame({
+            "Term_Name": ["Pathway A", "Pathway B", "Pathway C"],
+            "Rich_Factor": [4.2, 3.5, 2.8],
+            "Adjusted_P_Value": [0.02, 0.02, 0.02],
+            "Gene_Count": [22, 18, 14],
+        })
+
+        fig = plot_gsea_lollipop(df)
+        colorbar = next(axis for axis in fig.axes if axis.get_title() == "FDR")
+
+        assert len(colorbar.get_yticks()) == 1
+        assert colorbar.get_yticklabels()[0].get_text() == "2.0e-2"
+        plt.close(fig)
 
 
 if __name__ == "__main__":

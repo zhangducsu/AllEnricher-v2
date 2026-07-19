@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""可视化集成端到端测试"""
+"""Visualize IC-to-endpoint testing"""
 
 import sys
 import time
@@ -26,7 +26,7 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 
 
 def load_gene_sets_from_gmt(gmt_file):
-    """从GMT文件加载基因集"""
+    """Loading gene sets from GMT files"""
     gene_sets = {}
     with open(gmt_file, 'r') as f:
         for line in f:
@@ -37,25 +37,25 @@ def load_gene_sets_from_gmt(gmt_file):
 
 
 def test_gsea_visualizations():
-    """测试GSEA可视化"""
+    """Test GSEA visualization"""
     print("\n" + "=" * 60)
-    print("测试GSEA可视化")
+    print("Test GSEA visualization")
     print("=" * 60)
 
-    # 加载GSEA结果
+    # Load GSEA results
     gsea_results = pd.read_csv(RESULTS_DIR / "gsea_results.csv")
     ranked_genes_df = pd.read_csv(TEST_DATA_DIR / "ranked_genes.tsv", sep='\t')
 
     tests = []
 
-    # 1. 富集曲线图（前3个通路）
+    # 1. A map of the rich areas (first three routes)
     try:
         start = time.time()
         gene_sets = load_gene_sets_from_gmt(TEST_DATA_DIR / "test_pathways_from_gmt.gmt")
 
         for i, row in gsea_results.head(3).iterrows():
             pathway_name = row['pathway']
-            # 尝试匹配通路名称
+            # Try matching the traffic name
             gene_set = set()
             for gs_name, gs_genes in gene_sets.items():
                 if pathway_name.replace('_', ' ').lower() in gs_name.lower() or \
@@ -76,47 +76,47 @@ def test_gsea_visualizations():
                 output_file=str(OUTPUT_DIR / f"gsea_enrichment_{i}.png")
             )
         tests.append({"name": "GSEA Enrichment Plot", "status": "passed", "time": time.time()-start})
-        print("✓ GSEA富集曲线图")
+        print("* GSEA macro curved graph")
     except Exception as e:
         tests.append({"name": "GSEA Enrichment Plot", "status": "failed", "error": str(e)})
-        print(f"✗ GSEA富集曲线图: {e}")
+        print(f"GSEA macro-chart: {e}")
 
-    # 2. NES条形图
+    # 2. NES strip
     try:
         start = time.time()
         fig = plot_gsea_nes_barplot(gsea_results, output_file=str(OUTPUT_DIR / "gsea_nes_barplot.png"))
         tests.append({"name": "GSEA NES Barplot", "status": "passed", "time": time.time()-start})
-        print("✓ GSEA NES条形图")
+        print("* GSEA NES bar")
     except Exception as e:
         tests.append({"name": "GSEA NES Barplot", "status": "failed", "error": str(e)})
-        print(f"✗ GSEA NES条形图: {e}")
+        print(f"• GSEA NES bar chart: {e}")
 
-    # 3. 气泡图
+    # 3. Bubbles
     try:
         start = time.time()
         fig = plot_gsea_dotplot(gsea_results, output_file=str(OUTPUT_DIR / "gsea_dotplot.png"))
         tests.append({"name": "GSEA Dotplot", "status": "passed", "time": time.time()-start})
-        print("✓ GSEA气泡图")
+        print("* GSEA bubble chart")
     except Exception as e:
         tests.append({"name": "GSEA Dotplot", "status": "failed", "error": str(e)})
-        print(f"✗ GSEA气泡图: {e}")
+        print(f"GSEA bubble chart: {e}")
 
     return tests
 
 
 def test_gsva_visualizations():
-    """测试GSVA/ssGSEA可视化"""
+    """Test GSVA/ssGSEAVisualization"""
     print("\n" + "=" * 60)
-    print("测试GSVA/ssGSEA可视化")
+    print("Test GSVA/ssGSEAVisualization")
     print("=" * 60)
 
     tests = []
 
-    # 加载结果
+    # Loading results
     ssgsea_results = pd.read_csv(RESULTS_DIR / "ssgsea_results.csv", index_col=0)
     gsva_results = pd.read_csv(TEST_DATA_DIR / "gsva_results.csv", index_col=0)
 
-    # 1. 热图
+    # 1. Hot maps
     try:
         start = time.time()
         fig = plot_pathway_heatmap(
@@ -126,12 +126,12 @@ def test_gsva_visualizations():
             dpi=150
         )
         tests.append({"name": "ssGSEA Heatmap", "status": "passed", "time": time.time()-start})
-        print("✓ ssGSEA热图")
+        print("*SGSEA heatmap")
     except Exception as e:
         tests.append({"name": "ssGSEA Heatmap", "status": "failed", "error": str(e)})
-        print(f"✗ ssGSEA热图: {e}")
+        print(f"sGSEA heatmap: {e}")
 
-    # 2. 样本相关性热图
+    # 2. Sample-correlation heatmaps
     try:
         start = time.time()
         fig = plot_sample_correlation(
@@ -140,12 +140,12 @@ def test_gsva_visualizations():
             dpi=150
         )
         tests.append({"name": "Sample Correlation", "status": "passed", "time": time.time()-start})
-        print("✓ 样本相关性热图")
+        print("* Sample-correlation heatmap")
     except Exception as e:
         tests.append({"name": "Sample Correlation", "status": "failed", "error": str(e)})
-        print(f"✗ 样本相关性热图: {e}")
+        print(f"Sample-correlation heatmap: {e}")
 
-    # 3. GSVA热图
+    # 3. GSVA heatmap
     try:
         start = time.time()
         fig = plot_pathway_heatmap(
@@ -155,15 +155,15 @@ def test_gsva_visualizations():
             dpi=150
         )
         tests.append({"name": "GSVA Heatmap", "status": "passed", "time": time.time()-start})
-        print("✓ GSVA热图")
+        print("* GSVA thermal chart")
     except Exception as e:
         tests.append({"name": "GSVA Heatmap", "status": "failed", "error": str(e)})
-        print(f"✗ GSVA热图: {e}")
+        print(f"GSVA heatmap: {e}")
 
-    # 4. 组间比较图
+    # 4. Inter-group comparison
     try:
         start = time.time()
-        # 创建模拟分组
+        # Create Simulation Group
         groups = {
             "Group_A": list(ssgsea_results.columns[:3]),
             "Group_B": list(ssgsea_results.columns[3:])
@@ -176,26 +176,26 @@ def test_gsva_visualizations():
             dpi=150
         )
         tests.append({"name": "Group Comparison", "status": "passed", "time": time.time()-start})
-        print("✓ 组间比较图")
+        print("* Intergroup comparison")
     except Exception as e:
         tests.append({"name": "Group Comparison", "status": "failed", "error": str(e)})
-        print(f"✗ 组间比较图: {e}")
+        print(f"Inter-group comparison: {e}")
 
     return tests
 
 
 def test_common_visualizations():
-    """测试通用可视化"""
+    """Test Universal Visualization"""
     print("\n" + "=" * 60)
-    print("测试通用可视化")
+    print("Test Universal Visualization")
     print("=" * 60)
 
     tests = []
 
-    # 加载基因集
+    # Loading of gene sets
     gene_sets = load_gene_sets_from_gmt(TEST_DATA_DIR / "test_pathways_from_gmt.gmt")
 
-    # 1. 网络图
+    # Network maps
     try:
         start = time.time()
         gsea_results = pd.read_csv(RESULTS_DIR / "gsea_results.csv")
@@ -206,12 +206,12 @@ def test_common_visualizations():
             dpi=150
         )
         tests.append({"name": "Enrichment Network", "status": "passed", "time": time.time()-start})
-        print("✓ 通路网络图")
+        print("• Network chart")
     except Exception as e:
         tests.append({"name": "Enrichment Network", "status": "failed", "error": str(e)})
-        print(f"✗ 通路网络图: {e}")
+        print(f"Network chart: {e}")
 
-    # 2. 火山图
+    # Volcanic maps
     try:
         gsea_results = pd.read_csv(RESULTS_DIR / "gsea_results.csv")
         start = time.time()
@@ -223,19 +223,19 @@ def test_common_visualizations():
             dpi=150
         )
         tests.append({"name": "Volcano Plot", "status": "passed", "time": time.time()-start})
-        print("✓ 火山图")
+        print("* Volcanic map")
     except Exception as e:
         tests.append({"name": "Volcano Plot", "status": "failed", "error": str(e)})
-        print(f"✗ 火山图: {e}")
+        print(f"Volcanic map: {e}")
 
-    # 3. 方法比较图
+    # 3. Comparison of methodology
     try:
         start = time.time()
-        # 加载GSVA和ssGSEA结果进行比较
+        # Comparison of GVA and SGSEA results
         gsva_results = pd.read_csv(TEST_DATA_DIR / "gsva_results.csv", index_col=0)
         ssgsea_results = pd.read_csv(RESULTS_DIR / "ssgsea_results.csv", index_col=0)
 
-        # 计算每个通路的均值进行比较
+        # Calculate the mean score for each pathway.
         gsva_mean = gsva_results.mean(axis=1)
         ssgsea_mean = ssgsea_results.mean(axis=1)
 
@@ -248,32 +248,32 @@ def test_common_visualizations():
             dpi=150
         )
         tests.append({"name": "Method Comparison", "status": "passed", "time": time.time()-start})
-        print("✓ 方法比较图")
+        print("*Methodological comparison")
     except Exception as e:
         tests.append({"name": "Method Comparison", "status": "failed", "error": str(e)})
-        print(f"✗ 方法比较图: {e}")
+        print(f"Methodology comparison: {e}")
 
     return tests
 
 
 def main():
-    """主函数"""
+    """Main Function"""
     print("=" * 60)
-    print("可视化集成端到端测试")
+    print("Visualize IC-to-endpoint testing")
     print("=" * 60)
 
     all_tests = []
 
-    # 测试GSEA可视化
+    # Test GSEA visualization
     all_tests.extend(test_gsea_visualizations())
 
-    # 测试GSVA可视化
+    # Test GSVA visualization
     all_tests.extend(test_gsva_visualizations())
 
-    # 测试通用可视化
+    # Test Universal Visualization
     all_tests.extend(test_common_visualizations())
 
-    # 生成报告
+    # Generate report
     report = {
         "test_name": "Visualization Integration E2E Test",
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -292,11 +292,11 @@ def main():
         json.dump(report, f, indent=2)
 
     print("\n" + "=" * 60)
-    print("可视化测试完成!")
-    print(f"总计: {report['summary']['total']} 个测试")
-    print(f"通过: {report['summary']['passed']} 个")
-    print(f"失败: {report['summary']['failed']} 个")
-    print(f"总时间: {report['summary']['total_time']:.2f}s")
+    print("Visualization test complete!")
+    print(f"Grand total: {report['summary']['total']} test")
+    print(f"Adopted: {report['summary']['passed']}")
+    print(f"Failed: {report['summary']['failed']}")
+    print(f"Total time: {report['summary']['total_time']:.2f} s")
     print("=" * 60)
 
     return report

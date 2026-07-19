@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
-DeepSeek AI 解释功能测试脚本
+DeepSeek AI Explain function test script
 
-使用 DeepSeek 模型对 GO 和 KEGG 富集分析结果进行 AI 解读，生成 HTML 报告。
+Use DeepSeek Models. GO and KEGG The results of the enrichment analysis are being conducted AI Interpretation, Generate HTML Report.
 """
 
 import os
 import sys
 from pathlib import Path
 
-# 添加项目路径
+# Add Item Path
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
@@ -19,58 +19,58 @@ from allenricher.database.manager import DatabaseManager
 from allenricher.report.generator import ReportGenerator
 from allenricher.ai.interpreter import create_interpreter
 
-# 设置 DeepSeek API 密钥
+# Set the DeepSeek API key
 os.environ['DEEPSEEK_API_KEY'] = 'sk-5857ffb7000c42c99f5b5c88ee1d1c51'
 
 
 def main():
-    """主函数"""
+    """Main Function"""
     print("=" * 70)
-    print("DeepSeek AI 解释功能测试")
+    print("DeepSeek AI Explanatorys Test")
     print("=" * 70)
     print()
 
-    # 配置参数
+    # Configure Parameters
     input_file = project_root / "example_genes.txt"
     output_dir = project_root / "deepseek_test_output"
     species = "hsa"
     databases = ["GO", "KEGG"]
     
-    # DeepSeek 配置
+    # DeepSeek Configuration
     ai_backend = "deepseek"
-    ai_model = "deepseek-v4-flash"  # 使用用户指定的模型
+    ai_model = "deepseek-v4-flash"  # Use user-defined models
     ai_api_key = "sk-5857ffb7000c42c99f5b5c88ee1d1c51"
 
-    print(f"输入文件: {input_file}")
-    print(f"输出目录: {output_dir}")
-    print(f"物种: {species}")
-    print(f"数据库: {databases}")
-    print(f"AI 后端: {ai_backend}")
-    print(f"AI 模型: {ai_model}")
+    print(f"Enter a file: {input_file}")
+    print(f"Output directory: {output_dir}")
+    print(f"Species: {species}")
+    print(f"Database: {databases}")
+    print(f"AI backend: {ai_backend}")
+    print(f"AI model: {ai_model}")
     print()
 
-    # 创建输出目录
+    # Create Output Directory
     output_dir.mkdir(exist_ok=True)
 
-    # 步骤 1: 加载基因列表
-    print("步骤 1: 加载基因列表...")
+    # Step 1: Loading a list of genes
+    print("Step 1: Loading a list of genes...")
     with open(input_file, 'r') as f:
         genes = [line.strip() for line in f if line.strip()]
     gene_set = set(genes)
-    print(f"  ✓ 加载了 {len(gene_set)} 个基因")
+    print(f"It's loaded.{len(gene_set)}Genome.")
     print()
 
-    # 步骤 2: 配置和加载数据库
-    print("步骤 2: 配置和加载数据库...")
+    # Step 2: Configure and load the database
+    print("Step 2: Configure and Load Database...")
     
-    # 使用 v1 兼容的数据库路径
+    # Use v1 compatible database path
     db_path = project_root / "database" / "organism" / "v20190612" / "hsa"
     
     if not db_path.exists():
-        print(f"  ✗ 数据库路径不存在: {db_path}")
-        print("  尝试查找其他数据库位置...")
+        print(f"Database path does not exist: {db_path}")
+        print("Try to find other database locations...")
         
-        # 尝试查找数据库
+        # Try to find a database
         possible_paths = [
             project_root / "database" / "organism" / "v20190612" / "hsa",
             Path("F:/OneDrive/Documents/TraeSOLO/AllEnricher/AllEnricher-v1/database/organism/v20190612/hsa"),
@@ -79,36 +79,36 @@ def main():
         for path in possible_paths:
             if path.exists():
                 db_path = path
-                print(f"  ✓ 找到数据库: {db_path}")
+                print(f"Database found: {db_path}")
                 break
     else:
-        print(f"  ✓ 数据库路径: {db_path}")
+        print(f"* Database path: {db_path}")
 
     try:
         db_manager = DatabaseManager(str(db_path), species)
-        print("  ✓ DatabaseManager 创建成功")
+        print("*DatabaseManager created successfully")
         
-        # 加载数据库
-        print("  加载数据库中...")
+        # Loading Database
+        print("Loading database...")
         db_manager.load_databases(databases)
-        print(f"  ✓ 加载了数据库: {databases}")
+        print(f"* Added to database: {databases}")
         
-        # 获取数据
+        # Access to data
         background_set = db_manager.get_background_genes()
         database_data = db_manager.get_all_term_data()
-        print(f"  ✓ 背景基因数: {len(background_set)}")
+        print(f"* Background genes: {len(background_set)}")
         print()
         
     except Exception as e:
-        print(f"  ✗ 数据库加载失败: {e}")
-        print("\n将使用 Mock 模式继续测试...")
+        print(f"Could not close temporary folder: %s{e}")
+        print("\nContinue testing with Mock mode...")
         database_data = {}
         background_set = set()
         db_manager = None
         print()
 
-    # 步骤 3: 运行富集分析
-    print("步骤 3: 运行富集分析...")
+    # Step 3: Run enrichment analysis
+    print("Step 3: Run Enrichment Analysis...")
     try:
         config = Config(
             species=species,
@@ -120,9 +120,9 @@ def main():
         )
         
         analyzer = EnrichmentAnalyzer(config)
-        print("  ✓ EnrichmentAnalyzer 创建成功")
+        print("*EnchmentAnalyzer created successfully")
         
-        # 运行分析
+        # Run Analysis
         if database_data:
             results = analyzer.run_analysis(
                 gene_set=gene_set,
@@ -130,61 +130,61 @@ def main():
                 database_data=database_data,
                 parallel=False
             )
-            print(f"  ✓ 分析完成，生成了 {len(results)} 个数据库的结果")
+            print(f"Enrichment analysis completed for {len(results)} databases")
             
-            # 保存 TSV 结果
+            # Save TSV results
             analyzer.save_results(str(output_dir))
-            print(f"  ✓ 结果已保存到: {output_dir}")
+            print(f"* Results saved to: {output_dir}")
         else:
             results = {}
-            print("  ⚠ 没有数据库数据，跳过富集分析")
+            print("No database data, skipping enrichment analysis")
             
         print()
         
     except Exception as e:
-        print(f"  ✗ 富集分析失败: {e}")
+        print(f"Enrichment analysis failed: {e}")
         import traceback
         traceback.print_exc()
         results = {}
         print()
 
-    # 步骤 4: 生成 AI 解读
-    print("步骤 4: 生成 AI 解读...")
-    print(f"  使用模型: {ai_model}")
+    # Step 4: Generate AI Interpretation
+    print("Step 4: Generate AI Interpretation...")
+    print(f"Use model: {ai_model}")
     
     try:
-        # 创建 DeepSeek 解释器
+        # Create DeepSeek interpreter
         interpreter = create_interpreter(
             backend=ai_backend,
             api_key=ai_api_key,
             model=ai_model
         )
-        print(f"  ✓ {type(interpreter.interpreter).__name__} 创建成功")
+        print(f"✓ {type(interpreter.interpreter).__name__}Create Success")
         
-        # 生成解读
-        print("  正在调用 DeepSeek API...")
+        # Generate interpretation
+        print("Calling DeepSeek API...")
         interpretations = interpreter.interpret_results(results)
-        print(f"  ✓ 生成了 {len(interpretations)} 个解读")
+        print(f"* Generates a {len(interpretations)} *")
         
-        # 显示解读结果
+        # Show interpretation results
         for db_name, interpretation in interpretations.items():
-            print(f"\n--- {db_name} AI 解读 ---")
+            print(f"\n--- {db_name}AI Interpretation---")
             print(interpretation[:500] + "..." if len(interpretation) > 500 else interpretation)
             print()
             
     except Exception as e:
-        print(f"  ✗ AI 解读失败: {e}")
+        print(f"AI Interpretation Failed: {e}")
         import traceback
         traceback.print_exc()
         interpretations = {}
         print()
 
-    # 步骤 5: 生成 HTML 报告
-    print("步骤 5: 生成 HTML 报告...")
+    # Step 5: Generate HTML reports
+    print("Step 5: Generate HTML Report...")
     try:
         report_gen = ReportGenerator(str(output_dir), config)
         
-        # 生成报告
+        # Generate report
         report_file = output_dir / "enrichment_report.html"
         html = report_gen.generate(
             results=results,
@@ -193,27 +193,27 @@ def main():
             ai_interpretation=interpretations
         )
         
-        print(f"  ✓ HTML 报告已生成: {report_file}")
+        print(f"* HTML report generated: {report_file}")
         print()
         
     except Exception as e:
-        print(f"  ✗ HTML 报告生成失败: {e}")
+        print(f"Could not close temporary folder: %s{e}")
         import traceback
         traceback.print_exc()
         print()
 
-    # 总结
+    # Summary
     print("=" * 70)
-    print("测试完成！")
+    print("Test complete!")
     print("=" * 70)
     print()
-    print("输出文件:")
-    print(f"  - 富集分析结果: {output_dir}/")
-    print(f"  - HTML 报告: {output_dir}/enrichment_report.html")
+    print("Output file:")
+    print(f"- Results of the analysis of the enrichment: {output_dir}/")
+    print(f"- HTML report: {output_dir}/enrichment_report.html")
     print()
     
     if interpretations:
-        print("AI 解读摘要:")
+        print("AI Read summary:")
         for db_name, interpretation in interpretations.items():
             print(f"\n  [{db_name}]")
             print(f"  {interpretation[:200]}...")

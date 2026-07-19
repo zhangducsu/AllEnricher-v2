@@ -1,33 +1,25 @@
-"""
-AllEnricher v2.3.0 - 综合性基因集功能富集分析工具
+"""AllEnricher: gene-set enrichment analysis across species and databases.
 
-一个现代化、高性能的基因集富集分析工具，支持多种物种、数据库和算法，
-并提供AI驱动的结果解读功能。
-
-主要功能：
-- 多种富集算法（Fisher精确检验、超几何检验、GSEA、ssGSEA）
-- 多种数据库（GO、KEGG、Reactome、WikiPathways、MSigDB、DO、DisGeNET）
-- 交互式HTML报告生成
-- REST API接口
-- AI驱动的结果解读
-- 并行处理支持
+The package provides over-representation analysis, GSEA, ssGSEA, and GSVA;
+standard pathway, disease, transcription-factor, and custom gene-set libraries;
+HTML reports; a REST API; and optional AI-assisted result interpretation.
 """
 
-__version__ = "2.3.0"       # 版本号
-__author__ = "AllEnricher Team"  # 作者
-__license__ = "MIT"              # 开源许可证
+__version__ = "2.1.0"
+__author__ = "AllEnricher Team"
+__license__ = "MIT"
 
-# 导出核心类，供外部直接使用：from allenricher import EnrichmentAnalyzer, Config, ...
-from allenricher.core.enrichment import EnrichmentAnalyzer    # 富集分析引擎
-from allenricher.core.config import Config                    # 配置管理
-from allenricher.database.manager import DatabaseManager      # 数据库管理器
-from allenricher.visualization.plotter import Plotter          # 可视化绘图
-from allenricher.report.generator import ReportGenerator      # HTML报告生成器
+# Export the primary public API at the package root.
+from allenricher.core.enrichment import EnrichmentAnalyzer    # Fuzzy Analysis Engine
+from allenricher.core.config import Config                    # Configuration management
+from allenricher.database.manager import DatabaseManager      # Database Manager
+from allenricher.visualization.plotter import Plotter          # Visual Drawing
+from allenricher.report.generator import ReportGenerator      # HTML Report Generator
 
 __all__ = [
-    "EnrichmentAnalyzer",   # 富集分析引擎
-    "Config",               # 配置类
-    "DatabaseManager",      # 数据库管理器
-    "Plotter",              # 可视化绘图器
-    "ReportGenerator",      # 报告生成器
+    "EnrichmentAnalyzer",   # Fuzzy Analysis Engine
+    "Config",               # Configure Classes
+    "DatabaseManager",      # Database Manager
+    "Plotter",              # Visualise Drawing
+    "ReportGenerator",      # Report Generator
 ]

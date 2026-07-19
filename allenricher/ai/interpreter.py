@@ -1,156 +1,1028 @@
-"""
-AI-powered result interpretation module for AllEnricher v2.3.0
+"""Optional AI-assisted interpretation for AllEnricher result tables.
 
-Supports multiple AI backends:
-- OpenAI (GPT-4, GPT-3.5)
-- Anthropic (Claude)
-- DeepSeek (国产大模型)
-- GLM / ChatGLM (智谱AI)
-- MiniMax (MiniMax大模型)
-- Local models (via Ollama)
-
-中文模块说明：
-    AI驱动的结果解读模块（AllEnricher v2.3.0）
-
-    本模块提供基于人工智能的基因集富集分析结果解读功能，支持多种AI后端：
-    - OpenAI（GPT-4、GPT-3.5）：云端大语言模型，提供高质量的生物学解读
-    - Anthropic（Claude）：Anthropic公司的Claude系列模型，擅长长文本分析
-    - DeepSeek：国产大模型，性价比高，API兼容OpenAI格式
-    - GLM/ChatGLM：智谱AI的大语言模型，中文能力强
-    - MiniMax：MiniMax大模型，支持长上下文
-    - Ollama：本地部署的开源模型，无需API密钥，适合离线或隐私敏感场景
-    - Mock：测试用模拟后端，无需任何AI服务即可运行
-
-    模块架构：
-    - AIInterpreterBase：抽象基类，定义统一的解读接口
-    - OpenAIInterpreter / ClaudeInterpreter / DeepSeekInterpreter / GLMInterpreter / MiniMaxInterpreter / OllamaInterpreter：具体后端实现
-    - MockInterpreter：用于测试的模拟实现
-    - AIInterpreter：主入口类（门面模式），统一管理不同后端
-    - create_interpreter()：工厂函数，便捷创建解释器实例
-    - get_available_backends()：获取所有可用后端列表
-"""
+All backends implement the same interface. Statistical analysis remains in
+AllEnricher; an interpreter only summarizes already-computed results."""
 
 import os
 import json
 import logging
+import math
+import re
 from abc import ABC, abstractmethod
+from collections import Counter
+from itertools import combinations
 from typing import Dict, List, Optional, Any
 import pandas as pd
 
 logger = logging.getLogger(__name__)
 
+AI_MODES = {"summary", "reviewer", "caption"}
+_AI_SECTIONS = ("core_themes", "biological_meaning", "key_evidence", "limitations", "computational_checks")
+_DEFAULT_EVIDENCE_LIMITS = {"ora": 15, "gsea": 10, "ssgsea": 10, "gsva": 10}
+_SUPPORT_CLASSES = {"convergent", "shared_core", "redundant", "conflicting", "single_signal"}
+_CONFIDENCE_BY_SUPPORT = {
+    "convergent": "high",
+    "shared_core": "moderate",
+    "redundant": "moderate",
+    "conflicting": "exploratory",
+    "single_signal": "exploratory",
+}
+
+
+def _clean_model_text(text: str) -> str:
+    """Remove common replacement-character damage from model/provider output."""
+    return text.replace("\ufffdC", "-").replace("\ufffd", "")
+
+
+def _parse_model_json(text: str) -> Dict[str, Any]:
+    """Parse a JSON object from a model response, allowing harmless surrounding prose."""
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", cleaned, flags=re.IGNORECASE | re.DOTALL).strip()
+    try:
+        payload = json.loads(cleaned)
+    except json.JSONDecodeError as first_error:
+        decoder = json.JSONDecoder()
+        for match in re.finditer(r"\{", cleaned):
+            try:
+                payload, _ = decoder.raw_decode(cleaned[match.start():])
+                break
+            except json.JSONDecodeError:
+                continue
+        else:
+            raise ValueError(f"AI output is not valid JSON: {first_error}") from first_error
+    if not isinstance(payload, dict):
+        raise ValueError("AI output must be a JSON object")
+    return payload
+
+
+def _first_value(row: pd.Series, names: tuple[str, ...], default: Any = None) -> Any:
+    """Return the first non-empty value from a row using known aliases."""
+    for name in names:
+        if name in row.index:
+            value = row.get(name)
+            if value is not None and not (isinstance(value, float) and math.isnan(value)):
+                if str(value).strip().lower() not in {"", "nan", "none", "na"}:
+                    return value
+    return default
+
+
+def _number(value: Any, default: Optional[float] = None) -> Optional[float]:
+    try:
+        number = float(value)
+        return number if math.isfinite(number) else default
+    except (TypeError, ValueError):
+        return default
+
+
+def _json_value(value: Any) -> Any:
+    """Convert pandas/numpy scalar values into JSON-safe values."""
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        return {str(key): _json_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_json_value(item) for item in value]
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    if hasattr(value, "item"):
+        try:
+            return _json_value(value.item())
+        except (TypeError, ValueError):
+            pass
+    if isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)
+
+
+def _split_genes(value: Any) -> List[str]:
+    if value is None:
+        return []
+    text = str(value).strip()
+    if not text or text.lower() in {"nan", "none", "na"}:
+        return []
+    text = text.strip("[]()")
+    return [gene.strip().strip("'\"") for gene in re.split(r"[;,/|\s]+", text) if gene.strip()]
+
+
+def _term_id(row: pd.Series, fallback: Any) -> str:
+    return str(_first_value(row, ("Term_ID", "ID", "term_id", "pathway", "Term"), fallback))
+
+
+def _term_name(row: pd.Series, fallback: Any) -> str:
+    return str(_first_value(row, ("Term_Name", "Description", "term_name", "Name", "pathway", "Term"), fallback))
+
+
+def _database_prefix(database: str) -> str:
+    known = (
+        "PUBLIC_GO_CUSTOM", "WikiPathways", "AnimalTFDB", "DisGeNET",
+        "hTFtarget", "Reactome", "TRRUST", "ChEA3", "KEGG", "CUSTOM", "DO", "GO",
+    )
+    raw = str(database)
+    for prefix in known:
+        if raw == prefix or raw.startswith(prefix + "_"):
+            return prefix
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", raw).strip("._") or "Database"
+
+
+def _is_tf_database(database: str, frame: pd.DataFrame) -> bool:
+    token = str(database).lower()
+    return any(name in token for name in ("trrust", "chea3", "animaltfdb", "htftarget", "tf")) or any(
+        column in frame.columns for column in ("TF", "Target_Genes", "Target_Count", "Library", "Context")
+    )
+
+
+def _row_record(
+    evidence_id: str,
+    database: str,
+    method: str,
+    kind: str,
+    position: int,
+    row: pd.Series,
+    values: Dict[str, Any],
+) -> Dict[str, Any]:
+    term_id = _term_id(row, position)
+    term_name = _term_name(row, term_id)
+    return {
+        "evidence_id": evidence_id,
+        "database": str(database),
+        "method": method,
+        "kind": kind,
+        "row_position": position,
+        "term_id": term_id,
+        "term_name": term_name,
+        "values": {key: _json_value(value) for key, value in values.items()},
+        "raw": {str(key): _json_value(value) for key, value in row.to_dict().items()},
+    }
+
+
+def _rank_rows(frame: pd.DataFrame, q_names: tuple[str, ...], strength_names: tuple[str, ...]) -> List[tuple[int, pd.Series]]:
+    ranked = []
+    for position, (_, row) in enumerate(frame.iterrows()):
+        q_value = _number(_first_value(row, q_names), 1.0)
+        strength = abs(_number(_first_value(row, strength_names), 0.0) or 0.0)
+        ranked.append((q_value if q_value is not None else 1.0, -strength, position, row))
+    ranked.sort(key=lambda item: (item[0], item[1], item[2]))
+    return [(item[2], item[3]) for item in ranked]
+
+
+def _activity_sample_columns(frame: pd.DataFrame) -> List[str]:
+    metadata = {
+        "Term_ID", "Term_Name", "Description", "Hierarchy", "Database", "Gene_Count",
+        "Background_Count", "Term_URL", "NES", "ES", "P_Value", "Adjusted_P_Value",
+        "FDR", "Genes", "Leading_Edge", "leadingEdge", "Rich_Factor", "Gene_Ratio",
+        "Background_Ratio", "Expected_Count", "pval", "padj", "size", "setSize",
+        "pathway", "log2err",
+    }
+    return [
+        str(column) for column in frame.columns
+        if column not in metadata and pd.api.types.is_numeric_dtype(frame[column])
+    ]
+
+
+def _activity_summary(row: pd.Series, sample_columns: List[str], groups: Optional[Dict[str, List[str]]]) -> Dict[str, Any]:
+    values = {sample: _number(row.get(sample)) for sample in sample_columns}
+    group_means: Dict[str, float] = {}
+    if groups:
+        for group, samples in groups.items():
+            observed = [values[sample] for sample in samples if sample in values and values[sample] is not None]
+            if observed:
+                group_means[group] = sum(observed) / len(observed)
+    differences = {}
+    for left, right in combinations(group_means, 2):
+        differences[f"{left} vs {right}"] = group_means[left] - group_means[right]
+    dominant_contrast = max(differences, key=lambda key: abs(differences[key])) if differences else None
+
+    observed_values = [value for value in values.values() if value is not None]
+    outliers: List[str] = []
+    if len(observed_values) >= 4:
+        series = pd.Series(observed_values)
+        lower = series.quantile(0.25)
+        upper = series.quantile(0.75)
+        spread = upper - lower
+        for sample, value in values.items():
+            if value is not None and (value < lower - 1.5 * spread or value > upper + 1.5 * spread):
+                outliers.append(sample)
+    return {
+        "sample_values": values,
+        "group_means": group_means,
+        "group_differences": differences,
+        "dominant_contrast": dominant_contrast,
+        "dominant_difference": differences.get(dominant_contrast) if dominant_contrast else None,
+        "outlier_samples": outliers,
+        "inference_scope": "descriptive_activity_pattern",
+    }
+
+
+def _record_genes(record: Dict[str, Any]) -> set[str]:
+    values = record.get("values", {})
+    for key in ("leading_edge_genes", "genes", "target_genes"):
+        genes = values.get(key)
+        if isinstance(genes, list) and genes:
+            return {str(gene) for gene in genes if str(gene)}
+    return set()
+
+
+def _record_direction(record: Dict[str, Any]) -> Optional[str]:
+    values = record.get("values", {})
+    if values.get("direction") in {"positive", "negative"}:
+        return values["direction"]
+    difference = _number(values.get("dominant_difference"))
+    if difference is not None:
+        return "positive" if difference >= 0 else "negative"
+    return None
+
+
+def _record_adjusted_p(record: Dict[str, Any]) -> Optional[float]:
+    values = record.get("values", {})
+    for key in ("adjusted_p_value", "padj", "fdr", "FDR"):
+        value = _number(values.get(key))
+        if value is not None:
+            return value
+    raw = record.get("raw", {})
+    for key in ("Adjusted_P_Value", "padj", "FDR", "p.adjust"):
+        value = _number(raw.get(key))
+        if value is not None:
+            return value
+    return None
+
+
+def _all_adjusted_non_significant(evidence_ids: List[str], evidence: Dict[str, Any]) -> bool:
+    adjusted = [
+        value for evidence_id in evidence_ids
+        if (value := _record_adjusted_p(evidence["evidence"][evidence_id])) is not None
+    ]
+    return bool(adjusted) and all(value > 0.05 for value in adjusted)
+
+
+def _term_tokens(record: Dict[str, Any]) -> set[str]:
+    generic = {"activity", "pathway", "process", "regulation", "response", "signaling", "signal"}
+    words = re.findall(r"[a-z0-9]+", str(record.get("term_name", "")).lower())
+    return {word for word in words if len(word) > 2 and word not in generic}
+
+
+def _hierarchy_tokens(record: Dict[str, Any]) -> set[str]:
+    hierarchy = record.get("raw", {}).get("Hierarchy")
+    if hierarchy is None:
+        return set()
+    levels = [
+        token.strip().lower()
+        for token in re.split(r"[|>/;]+", str(hierarchy))
+        if token.strip()
+    ]
+    return set(levels[-2:]) if len(levels) > 1 else set()
+
+
+def _build_evidence_relations(evidence: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Describe only deterministic relationships among selected evidence records."""
+    relations = []
+    for (left_id, left), (right_id, right) in combinations(evidence.items(), 2):
+        left_genes, right_genes = _record_genes(left), _record_genes(right)
+        shared = sorted(left_genes & right_genes)
+        union = left_genes | right_genes
+        jaccard = len(shared) / len(union) if union else 0.0
+        overlap = len(shared) / min(len(left_genes), len(right_genes)) if left_genes and right_genes else 0.0
+        left_tokens, right_tokens = _term_tokens(left), _term_tokens(right)
+        token_union = left_tokens | right_tokens
+        name_similarity = len(left_tokens & right_tokens) / len(token_union) if token_union else 0.0
+        same_hierarchy = bool(_hierarchy_tokens(left) & _hierarchy_tokens(right))
+        left_direction, right_direction = _record_direction(left), _record_direction(right)
+        direction_consistent = (
+            left_direction == right_direction
+            if left_direction is not None and right_direction is not None
+            else None
+        )
+        gene_related = len(shared) >= 2 and (jaccard >= 0.2 or overlap >= 0.5)
+        related = gene_related or name_similarity >= 0.5
+        if related and direction_consistent is False:
+            relation_type = "conflicting"
+        elif jaccard >= 0.75 or overlap >= 0.9:
+            relation_type = "redundant"
+        elif gene_related:
+            relation_type = "shared_core"
+        elif name_similarity >= 0.5:
+            relation_type = "related"
+        else:
+            continue
+        relations.append({
+            "evidence_ids": [left_id, right_id],
+            "relation_type": relation_type,
+            "shared_genes": shared,
+            "jaccard_similarity": round(jaccard, 4),
+            "overlap_coefficient": round(overlap, 4),
+            "name_similarity": round(name_similarity, 4),
+            "same_hierarchy": same_hierarchy,
+            "direction_consistent": direction_consistent,
+            "cross_database": left.get("database") != right.get("database"),
+        })
+    return relations
+
+
+def _compact_prompt_relations(relations: List[Dict[str, Any]], neighbours: int = 2) -> List[Dict[str, Any]]:
+    """Keep each record's strongest relationships without flooding the model context."""
+    priority = {"conflicting": 0, "shared_core": 1, "redundant": 2, "related": 3}
+    ranked = sorted(
+        relations,
+        key=lambda item: (
+            priority[item["relation_type"]],
+            -max(item["jaccard_similarity"], item["overlap_coefficient"], item["name_similarity"]),
+            item["evidence_ids"],
+        ),
+    )
+    counts: Counter[str] = Counter()
+    selected = []
+    for relation in ranked:
+        left, right = relation["evidence_ids"]
+        if counts[left] >= neighbours and counts[right] >= neighbours:
+            continue
+        compact = {
+            "evidence_ids": relation["evidence_ids"],
+            "relation_type": relation["relation_type"],
+            "direction_consistent": relation["direction_consistent"],
+            "cross_database": relation["cross_database"],
+        }
+        if relation["shared_genes"]:
+            compact.update({
+                "shared_genes": relation["shared_genes"][:10],
+                "shared_gene_count": len(relation["shared_genes"]),
+                "jaccard_similarity": relation["jaccard_similarity"],
+                "overlap_coefficient": relation["overlap_coefficient"],
+            })
+        if relation["relation_type"] == "related":
+            compact["name_similarity"] = relation["name_similarity"]
+        selected.append(compact)
+        counts[left] += 1
+        counts[right] += 1
+    return selected
+
+
+def _compact_prompt_evidence(evidence: Dict[str, Any]) -> Dict[str, Any]:
+    """Remove traceability-only fields from the model payload while preserving the full JSON output."""
+    records = {}
+    for evidence_id, record in evidence["evidence"].items():
+        values = {}
+        for key, value in record.get("values", {}).items():
+            if key == "sample_values":
+                continue
+            if isinstance(value, list):
+                values[key] = value[:20]
+                if len(value) > 20:
+                    values[f"{key}_total"] = len(value)
+            else:
+                values[key] = value
+        compact_record = {
+            key: record[key]
+            for key in ("evidence_id", "database", "method", "kind", "term_id", "term_name")
+        }
+        hierarchy = record.get("raw", {}).get("Hierarchy")
+        if hierarchy:
+            compact_record["hierarchy"] = hierarchy
+        compact_record["values"] = values
+        records[evidence_id] = compact_record
+    relations = _compact_prompt_relations(evidence.get("relations", []))
+    return {
+        "schema_version": evidence["schema_version"],
+        "method": evidence["method"],
+        "selection": evidence.get("selection", {}),
+        "databases": evidence["databases"],
+        "evidence": records,
+        "relations": relations,
+        "relation_count_total": len(evidence.get("relations", [])),
+        "relation_count_supplied": len(relations),
+    }
+
+
+def build_structured_evidence(
+    results: Dict[str, pd.DataFrame],
+    method: str = "hypergeometric",
+    groups: Optional[Dict[str, List[str]]] = None,
+    top_n: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Build deterministic, method-aware evidence before any AI call."""
+    normalized_method = "ora" if method in {"hypergeometric", "ora"} else str(method).lower()
+    if normalized_method not in _DEFAULT_EVIDENCE_LIMITS:
+        raise ValueError(f"Unsupported AI evidence method: {method}")
+    evidence_limit = _DEFAULT_EVIDENCE_LIMITS[normalized_method] if top_n is None else top_n
+    if not isinstance(evidence_limit, int) or isinstance(evidence_limit, bool) or evidence_limit < 1:
+        raise ValueError("AI evidence top_n must be a positive integer")
+    evidence: Dict[str, Any] = {}
+    databases: Dict[str, Any] = {}
+
+    for database, frame in results.items():
+        frame = frame if isinstance(frame, pd.DataFrame) else pd.DataFrame()
+        database_name = str(database)
+        database_info = {"status": "empty" if frame.empty else "available", "evidence_ids": []}
+        selected: List[Dict[str, Any]] = []
+        prefix = _database_prefix(database_name)
+        tf_database = _is_tf_database(database_name, frame)
+
+        if not frame.empty and normalized_method in {"gsea", "ora"} and not (normalized_method == "ora" and tf_database):
+            if normalized_method == "gsea":
+                ranked = _rank_rows(
+                    frame,
+                    ("padj", "FDR", "Adjusted_P_Value", "p.adjust"),
+                    ("NES", "ES", "nes", "es"),
+                )
+                positive = [item for item in ranked if (_number(_first_value(item[1], ("NES", "nes", "ES", "es")), 0.0) or 0.0) >= 0]
+                negative = [item for item in ranked if (_number(_first_value(item[1], ("NES", "nes", "ES", "es")), 0.0) or 0.0) < 0]
+                selected_rows = positive[:evidence_limit] + negative[:evidence_limit]
+                id_prefix = f"GSEA_{prefix}"
+                for position, row in selected_rows:
+                    nes = _number(_first_value(row, ("NES", "nes")))
+                    gsea_values = {
+                        "pval": _first_value(row, ("pval", "P_Value", "p_value")),
+                        "padj": _first_value(row, ("padj", "FDR", "Adjusted_P_Value", "p.adjust")),
+                        "ES": _first_value(row, ("ES", "es")),
+                        "NES": nes,
+                        "direction": "positive" if (nes or 0) >= 0 else "negative",
+                        "size": _first_value(row, ("size", "setSize", "Gene_Count")),
+                        "leading_edge_genes": _split_genes(_first_value(row, ("leadingEdge", "Lead_genes", "Leading_Edge", "Genes"))),
+                    }
+                    if tf_database:
+                        gsea_values.update({
+                            "target_count": _first_value(row, ("Target_Count", "Gene_Count", "size", "Count")),
+                            "target_genes": _split_genes(_first_value(row, ("Target_Genes", "Genes", "geneID", "leadingEdge"))),
+                            "source": _first_value(row, ("Library", "Source", "Database", "Context"), database_name),
+                            "consistency_rank": _first_value(row, ("Consistency_Score", "Rank", "NES", "ES")),
+                        })
+                    selected.append(_row_record(
+                        f"{id_prefix}:R{len(selected) + 1:03d}", database_name, normalized_method,
+                        "tf" if tf_database else "gsea", position, row, gsea_values,
+                    ))
+            else:
+                ranked = _rank_rows(
+                    frame,
+                    ("Adjusted_P_Value", "padj", "FDR", "p.adjust", "P_Value", "pvalue"),
+                    ("EnrichFactor", "Rich_Factor", "RichFactor", "Gene_Ratio", "Gene_Count", "Count"),
+                )[:evidence_limit]
+                for position, row in ranked:
+                    selected.append(_row_record(
+                        f"{prefix}:R{len(selected) + 1:03d}", database_name, normalized_method, "ora",
+                        position, row, {
+                            "p_value": _first_value(row, ("P_Value", "pvalue", "p_value", "pval")),
+                            "adjusted_p_value": _first_value(row, ("Adjusted_P_Value", "padj", "FDR", "p.adjust")),
+                            "gene_count": _first_value(row, ("Gene_Count", "Count", "gene_count", "size")),
+                            "genes": _split_genes(_first_value(row, ("Genes", "geneID", "gene_ids"))),
+                            "enrich_factor": _first_value(row, ("EnrichFactor", "Rich_Factor", "RichFactor", "Gene_Ratio")),
+                        },
+                    ))
+        elif not frame.empty and normalized_method in {"ssgsea", "gsva"}:
+            sample_columns = _activity_sample_columns(frame)
+            ranked = []
+            for position, (_, row) in enumerate(frame.iterrows()):
+                values = [_number(row.get(column)) for column in sample_columns]
+                observed = [value for value in values if value is not None]
+                activity_summary = _activity_summary(row, sample_columns, groups)
+                differences = [
+                    abs(_number(value, 0.0) or 0.0)
+                    for value in activity_summary["group_differences"].values()
+                ]
+                if differences:
+                    score = max(differences)
+                else:
+                    score = pd.Series(observed).var() if len(observed) > 1 else 0.0
+                ranked.append((-score, position, row))
+            ranked.sort(key=lambda item: (item[0], item[1]))
+            id_prefix = f"{'ssGSEA' if normalized_method == 'ssgsea' else 'GSVA'}_{prefix}"
+            for _, position, row in ranked[:evidence_limit]:
+                selected.append(_row_record(
+                    f"{id_prefix}:R{len(selected) + 1:03d}", database_name, normalized_method, "activity",
+                    position, row, _activity_summary(row, sample_columns, groups),
+                ))
+        elif not frame.empty and tf_database:
+            ranked = _rank_rows(
+                frame,
+                ("FDR", "padj", "Adjusted_P_Value", "p.adjust", "Pvalue", "P_Value", "pvalue"),
+                ("NES", "Consistency_Score", "Rank", "Gene_Count", "Target_Count", "size"),
+            )[:evidence_limit]
+            id_prefix = f"TF_{prefix}"
+            for position, row in ranked:
+                selected.append(_row_record(
+                    f"{id_prefix}:R{len(selected) + 1:03d}", database_name, normalized_method, "tf",
+                    position, row, {
+                        "p_value": _first_value(row, ("Pvalue", "P_Value", "pvalue", "pval")),
+                        "fdr": _first_value(row, ("FDR", "padj", "Adjusted_P_Value", "p.adjust")),
+                        "target_count": _first_value(row, ("Target_Count", "Gene_Count", "size", "Count")),
+                        "target_genes": _split_genes(_first_value(row, ("Target_Genes", "Genes", "geneID", "leadingEdge"))),
+                        "consistency_rank": _first_value(row, ("Consistency_Score", "Rank", "NES", "ES")),
+                        "source": _first_value(row, ("Library", "Source", "Database", "Context"), database_name),
+                    },
+                ))
+
+        for record in selected:
+            evidence_id = record["evidence_id"]
+            evidence[evidence_id] = record
+            database_info["evidence_ids"].append(evidence_id)
+        database_info["evidence_count"] = len(selected)
+        databases[database_name] = database_info
+
+    relations = _build_evidence_relations(evidence)
+    return {
+        "schema_version": 1,
+        "method": normalized_method,
+        "databases": databases,
+        "evidence": evidence,
+        "relations": relations,
+        "selection": {
+            "top_n_per_direction" if normalized_method == "gsea" else "top_n": evidence_limit,
+            "selected_count": len(evidence),
+        },
+    }
+
+
+def build_interpretation_prompt(evidence: Dict[str, Any], mode: str = "summary", context: str = "") -> str:
+    """Build the single shared prompt used by every AI backend."""
+    if mode not in AI_MODES:
+        raise ValueError(f"Unknown AI interpretation mode: {mode}. Available: {sorted(AI_MODES)}")
+    mode_instruction = {
+        "summary": "Write a concise evidence-based summary for a results report.",
+        "reviewer": "Act as a critical reviewer; highlight over-interpretation and statistical limitations.",
+        "caption": "Write concise text suitable for a paper figure caption.",
+    }[mode]
+    prompt_evidence = _compact_prompt_evidence(evidence)
+    return f"""You are interpreting an AllEnricher enrichment analysis as a research evidence synthesizer. {mode_instruction}
+Use the supplied evidence plus cautious, broadly established biological meaning for named pathways or TFs. Do not infer clinical meaning, causality, experimental procedures, or citations.
+Identify recurring biological themes among the selected top results instead of restating every row.
+Overall themes must name a biological program, process, or TF family and explain the evidence pattern; never create a theme that merely lists all positive or negative records.
+Write like a researcher reading an enrichment table: explain what the main programs or TF families usually do, why the cited records support the same story, and what the current analysis can safely imply.
+Avoid filler such as "this evidence is represented" or repeated method labels. The user should not need to look up every pathway or TF to understand the main biology.
+Use the supplied relations to distinguish convergent support, shared-core support, redundant terms, conflicting directions, and single signals.
+You may infer biological semantic convergence from term or TF names and descriptions when at least two cited records support it and their directions do not conflict.
+Hierarchy labels provide context only; never use a shared hierarchy label alone as proof of a biological relationship.
+For TF databases, look for TF families or coherent regulatory programs and shared target patterns, but do not treat target overlap as causal regulation.
+For TF target gene sets, use only the phrases "positive target-set enrichment" and "negative target-set enrichment" for direction, and do not infer regulator activity without supplied signed regulation.
+For TF target gene-set GSEA, do not use words such as activation, activated, repression, repressed, activator, or repressor anywhere in the output.
+Do not count redundant terms as independent corroboration. Cross-database support is not independent when it is driven by the same genes.
+For ssGSEA/GSVA, describe activity patterns only; do not claim statistical significance unless a supplied record contains a test result.
+For GSEA, positive and negative directions mean pathway genes are concentrated near the top or bottom of the ranked list. Do not call this pathway activation, inactivation, upregulation, downregulation, higher expression, or lower expression unless the supplied context explicitly defines the ranking statistic that way.
+Prefer biological wording such as "metabolic and growth-control pathways contribute to the positive GSEA evidence"; avoid repeating "top-ranked" or "bottom-ranked" in prose.
+Avoid phrases such as "biological shift toward" for GSEA unless the ranking statistic and comparison direction are explicitly supplied.
+Do not write tautologies such as "top-ranked enrichment means genes are near the top of the ranked list"; instead explain which biological program contributes to the ranking signal.
+If adjusted P/FDR/padj values are above 0.05 for the cited records, describe the signal as exploratory or low confidence even when nominal P-values are small.
+For disease- or infection-named pathway terms, explain them as annotated gene modules or host-response signatures. Do not imply the sample has that disease, pathogen, or exposure.
+Return JSON only, with no Markdown fences, using exactly this top-level structure:
+{{"schema_version":1,"method":"{evidence['method']}","profile":"{mode}","research_summary":[],"overall_synthesis":[],"databases":{{}}}}
+research_summary is the first-read take-home block. Add 2-4 non-redundant items that state: strongest supported program, exploratory signals, and what should not be over-interpreted. Include confidence in plain language and evidence_ids.
+Do not put generic method cautions in research_summary when they can be placed in limitations.
+overall_synthesis should organize evidence patterns that support the research_summary. Do not repeat the same wording from research_summary.
+For every database include exactly these arrays: core_themes, biological_meaning, key_evidence, limitations, computational_checks.
+Each array item must be an object with a concise text field and an evidence_ids array.
+Every overall_synthesis and core_themes item must also include support_class, chosen from: convergent, shared_core, redundant, conflicting, single_signal.
+Use biological_meaning to explain what the cited pathways, diseases, or TF families usually represent and what their enrichment or activity shift implies in this analysis.
+In biological_meaning, separate term meaning from analysis implication: first state what the terms usually represent, then state the ranked-list enrichment or activity pattern.
+Use key_evidence only for statistics, direction, adjusted P/FDR/padj when supplied, and core genes. Do not repeat the same biological wording across research_summary, core_themes, biological_meaning, and key_evidence.
+Use single_signal for one evidence ID. Other support classes require at least two IDs and a matching supplied relation.
+Use shared_core, redundant, or conflicting only when the supplied relations contain that exact relation_type for the cited IDs; otherwise use convergent for biologically related multi-record themes.
+Never use convergent, shared_core, or redundant for evidence IDs with mixed positive and negative directions; split them into separate direction-specific items or use conflicting.
+Every data-based statement must cite one or more evidence IDs from the supplied evidence; never invent IDs.
+Cite the evidence ID for every specifically named term or TF; do not mention a named record without its own citation.
+Separate positive and negative GSEA directions when applicable. Mention leading-edge genes only when supplied.
+Create at most 5 overall themes. In each database, add at most 3 items per section and leave arrays empty when the database adds no unique information. Keep each text under 30 words.
+{context}
+
+Structured evidence:
+{json.dumps(prompt_evidence, ensure_ascii=False, separators=(",", ":"))}"""
+
+
+def _validate_section_items(database: str, section: str, items: Any, evidence: Dict[str, Any]) -> List[Dict[str, Any]]:
+    valid_ids = set(evidence["evidence"])
+    if not isinstance(items, list):
+        raise ValueError(f"AI output field databases.{database}.{section} must be an array")
+    validated = []
+    for index, item in enumerate(items):
+        if not isinstance(item, dict) or not isinstance(item.get("text"), str):
+            raise ValueError(f"AI output field databases.{database}.{section}[{index}] must contain text")
+        ids = item.get("evidence_ids")
+        if not isinstance(ids, list) or not ids or not all(isinstance(value, str) for value in ids):
+            raise ValueError(
+                f"AI output field databases.{database}.{section}[{index}] must contain at least one evidence_id"
+            )
+        unknown = [value for value in ids if value not in valid_ids]
+        if unknown:
+            raise ValueError(f"AI output references unknown evidence_id(s): {', '.join(unknown)}")
+        text = _clean_model_text(item["text"])
+        auto_normalized_claims = []
+        if section != "limitations":
+            text, auto_normalized = _normalize_gsea_direction_text(text, ids, evidence)
+            if auto_normalized:
+                auto_normalized_claims.append("gsea_direction_wording")
+            text, auto_normalized = _normalize_non_significant_confidence_text(text, ids, evidence)
+            if auto_normalized:
+                auto_normalized_claims.append("non_significant_confidence")
+            text, auto_normalized = _normalize_gsea_tautology_text(text, ids, evidence)
+            if auto_normalized:
+                auto_normalized_claims.append("gsea_tautology")
+            text, auto_normalized = _normalize_gsea_jargon_text(text, ids, evidence)
+            if auto_normalized:
+                auto_normalized_claims.append("gsea_jargon")
+        normalized = {"text": text, "evidence_ids": ids}
+        if auto_normalized_claims:
+            normalized["auto_normalized_claims"] = auto_normalized_claims
+        uncited = sorted(_mentioned_evidence_ids(text, evidence) - set(ids))
+        if uncited:
+            ids.extend(uncited)
+            normalized["evidence_ids"] = ids
+            normalized["auto_linked_evidence_ids"] = uncited
+            logger.warning(
+                "Added omitted evidence links for result terms named by the AI: %s",
+                ", ".join(uncited),
+            )
+        validated.append(normalized)
+    return validated
+
+
+def _relations_for_ids(evidence_ids: List[str], relations: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    selected = set(evidence_ids)
+    return [relation for relation in relations if set(relation.get("evidence_ids", [])) <= selected]
+
+
+def _theme_direction(evidence_ids: List[str], evidence: Dict[str, Any]) -> str:
+    directions = {
+        direction
+        for evidence_id in evidence_ids
+        if (direction := _record_direction(evidence["evidence"][evidence_id])) is not None
+    }
+    if len(directions) == 1:
+        return directions.pop()
+    if len(directions) > 1:
+        return "mixed"
+    return "enriched" if evidence["method"] == "ora" else "not_applicable"
+
+
+def _normalize_gsea_direction_text(text: str, ids: List[str], evidence: Dict[str, Any]) -> tuple[str, bool]:
+    """Replace model overclaims with the direction that GSEA actually supports."""
+    if evidence["method"] != "gsea":
+        return text, False
+    cited_records = [evidence["evidence"][evidence_id] for evidence_id in ids]
+    direction = _theme_direction(ids, evidence)
+    if any(record.get("kind") == "tf" for record in cited_records):
+        normalized, count = re.subn(
+            r"\b(?:activat\w*|repress\w*)\b", "transcriptional regulation", text, flags=re.IGNORECASE
+        )
+        normalized = re.sub(
+            r"\btranscriptional\s+transcriptional\s+regulation\b",
+            "transcriptional regulation",
+            normalized,
+            flags=re.IGNORECASE,
+        )
+        return normalized, count > 0
+
+    replacement = {
+        "positive": "positive GSEA pattern",
+        "negative": "negative GSEA pattern",
+    }.get(direction, "GSEA pattern")
+    normalized, caution_count = re.subn(
+        r"\b(?:do not|does not|cannot|should not)\s+infer\s+pathway\s+"
+        r"(?:activation|inactivation|repression|upregulation|downregulation)"
+        r"(?:\s+or\s+(?:activation|inactivation|repression|upregulation|downregulation))*",
+        "Do not infer pathway activity or regulatory direction",
+        text,
+        flags=re.IGNORECASE,
+    )
+    normalized, repaired_caution_count = re.subn(
+        r"\bdo not infer pathway ranked-list enrichment(?:\s+or\s+ranked-list enrichment)?\b",
+        "Do not infer pathway activity or regulatory direction",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    normalized, count = re.subn(
+        r"\b(?:activation|inactivation|repression|upregulation|downregulation)\b",
+        replacement,
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    location = {
+        "positive": "a positive GSEA pattern",
+        "negative": "a negative GSEA pattern",
+    }.get(direction, "the GSEA pattern")
+    normalized, expression_count = re.subn(
+        r"\b(?:higher|lower|increased|decreased)\s+expression\s+of\s+(?:these|those|the)?\s*genes\b",
+        f"the cited genes support {location}",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    normalized, shift_count = re.subn(
+        r"\b(?:a\s+)?(?:coordinated\s+)?shift\s+toward\b",
+        "a GSEA pattern involving",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    normalized = re.sub(
+        r"\bdo not infer pathway activity or regulatory direction\b",
+        "Do not infer pathway activity or regulatory direction",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    return normalized, caution_count + repaired_caution_count + count + expression_count + shift_count > 0
+
+
+def _normalize_gsea_jargon_text(text: str, ids: List[str], evidence: Dict[str, Any]) -> tuple[str, bool]:
+    if evidence["method"] != "gsea":
+        return text, False
+    normalized = text
+    replacements = (
+        (r"\bTop-ranked enrichment for\b", "Positive GSEA evidence for"),
+        (r"\bBottom-ranked enrichment for\b", "Negative GSEA evidence for"),
+        (r"\btop-ranked enrichment\b", "positive GSEA evidence"),
+        (r"\bbottom-ranked enrichment\b", "negative GSEA evidence"),
+        (r"\bshow(?:s)? top-ranked enrichment\b", "contribute to the positive GSEA evidence"),
+        (r"\bshow(?:s)? bottom-ranked enrichment\b", "contribute to the negative GSEA evidence"),
+        (r"\btop-ranked signal\b", "positive GSEA evidence"),
+        (r"\bbottom-ranked signal\b", "negative GSEA evidence"),
+    )
+    total = 0
+    for pattern, replacement in replacements:
+        normalized, count = re.subn(pattern, replacement, normalized, flags=re.IGNORECASE)
+        total += count
+    return normalized, total > 0
+
+
+def _normalize_non_significant_confidence_text(text: str, ids: List[str], evidence: Dict[str, Any]) -> tuple[str, bool]:
+    if not _all_adjusted_non_significant(ids, evidence):
+        return text, False
+    normalized, count = re.subn(
+        r"\bConfidence:\s*(?:high|moderate)\b(?:\s+due to [^.;]+)?",
+        "Confidence: low because adjusted P/FDR values are not significant",
+        text,
+        flags=re.IGNORECASE,
+    )
+    normalized, extra_count = re.subn(
+        r"\b(?:high|moderate)\s+confidence\b",
+        "low confidence",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    return normalized, count + extra_count > 0
+
+
+def _is_generic_method_caution(item: Dict[str, Any], evidence: Dict[str, Any]) -> bool:
+    if evidence["method"] != "gsea":
+        return False
+    text = str(item.get("text", "")).lower()
+    return (
+        "do not infer pathway activity or regulatory direction" in text
+        or "not their expression level or activity" in text
+        or "gsea direction indicates where pathway genes fall" in text
+    )
+
+
+def _normalize_gsea_tautology_text(text: str, ids: List[str], evidence: Dict[str, Any]) -> tuple[str, bool]:
+    if evidence["method"] != "gsea":
+        return text, False
+    direction = _theme_direction(ids, evidence)
+    program_label = {
+        "positive": "selected positive GSEA pattern",
+        "negative": "selected negative GSEA pattern",
+    }.get(direction, "selected GSEA pattern")
+    normalized = text
+    total = 0
+    normalized, count = re.subn(
+        r"\bThe strongest supported program is a coordinated enrichment of genes near the top of the ranked list for ([^.]+)\.",
+        r"The strongest supported program involves \1.",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    total += count
+    normalized, count = re.subn(
+        r"\bA separate exploratory signal shows genes from ([^.]+?) concentrated near the bottom of the ranked list\.",
+        r"A separate exploratory signal involves \1.",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    total += count
+    normalized, count = re.subn(
+        r"\bTogether, these terms indicate that this biological program contributes to the (?:top|bottom)-ranked signal\.",
+        f"Together, these terms support the {program_label}.",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    total += count
+    normalized, count = re.subn(
+        r"\b(?:Their|This|The)\s+(?:top-ranked|bottom-ranked|ranked-list)\s+enrichment\s+"
+        r"(?:suggests|indicates|means)\s+genes\s+in\s+these\s+pathways\s+"
+        r"(?:are\s+)?(?:coordinately\s+)?(?:positioned|concentrated)\s+near\s+the\s+"
+        r"(?:top|bottom)\s+of\s+the\s+ranked\s+list\.?",
+        f"Together, these pathways support the {program_label}.",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    total += count
+    normalized, count = re.subn(
+        r"\bTheir\s+(?:top-ranked|bottom-ranked)\s+enrichment\s+indicates\s+"
+        r"(?:these\s+gene\s+sets\s+are\s+concentrated\s+near\s+the\s+top\s+of\s+the\s+ranked\s+list|"
+        r"these\s+genes\s+fall\s+near\s+the\s+bottom\s+of\s+the\s+ranked\s+list)\.",
+        f"Together, these terms support the {program_label}.",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    total += count
+    return normalized, total > 0
+
+
+def _shared_genes_for_ids(evidence_ids: List[str], evidence: Dict[str, Any]) -> List[str]:
+    counts = Counter(
+        gene
+        for evidence_id in evidence_ids
+        for gene in _record_genes(evidence["evidence"][evidence_id])
+    )
+    required_count = max(2, math.ceil(len(evidence_ids) / 2))
+    return sorted(gene for gene, count in counts.items() if count >= required_count)
+
+
+def _mentioned_evidence_ids(text: str, evidence: Dict[str, Any]) -> set[str]:
+    mentioned = set()
+    lowered = text.lower()
+    for evidence_id, record in evidence["evidence"].items():
+        term_name = str(record.get("term_name", "")).strip()
+        if len(term_name) >= 6 and term_name.lower() in lowered:
+            mentioned.add(evidence_id)
+            continue
+        if record.get("kind") == "tf":
+            alias = re.split(r"[\s\[]", term_name, maxsplit=1)[0]
+            if len(alias) >= 2 and re.search(rf"(?<![A-Za-z0-9]){re.escape(alias)}(?![A-Za-z0-9])", text, re.IGNORECASE):
+                mentioned.add(evidence_id)
+    return mentioned
+
+
+def _validate_theme_items(location: str, items: Any, evidence: Dict[str, Any]) -> List[Dict[str, Any]]:
+    basic_items = _validate_section_items(location, "core_themes", items, evidence)
+    validated = []
+    for index, (source, item) in enumerate(zip(items, basic_items)):
+        support_class = source.get("support_class")
+        if support_class not in _SUPPORT_CLASSES:
+            raise ValueError(
+                f"AI output field {location}.core_themes[{index}].support_class must be one of {sorted(_SUPPORT_CLASSES)}"
+            )
+        ids = item["evidence_ids"]
+        relation_types = {
+            relation["relation_type"]
+            for relation in _relations_for_ids(ids, evidence.get("relations", []))
+        }
+        relationship_basis = "single_record"
+        confidence = _CONFIDENCE_BY_SUPPORT[support_class]
+        direction = _theme_direction(ids, evidence)
+        if support_class == "single_signal":
+            valid_support = len(ids) == 1
+        elif support_class == "convergent":
+            independent_relation = "related" in relation_types and "redundant" not in relation_types
+            shared_gene_relation = bool(relation_types & {"shared_core", "redundant"})
+            valid_support = len(ids) >= 2 and "conflicting" not in relation_types and direction != "mixed"
+            if independent_relation:
+                relationship_basis = "deterministic_relation"
+                confidence = "high"
+            elif shared_gene_relation:
+                relationship_basis = "shared_gene_pattern"
+                confidence = "moderate"
+            else:
+                relationship_basis = "biological_semantics"
+                confidence = "moderate"
+        elif support_class == "conflicting":
+            deterministic = "conflicting" in relation_types
+            valid_support = len(ids) >= 2 and (deterministic or direction == "mixed")
+            relationship_basis = "deterministic_relation" if deterministic else "biological_semantics"
+            confidence = "exploratory"
+        else:
+            required = {
+                "shared_core": {"shared_core"},
+                "redundant": {"redundant"},
+            }[support_class]
+            valid_support = len(ids) >= 2 and bool(relation_types & required)
+            relationship_basis = "deterministic_relation"
+        if not valid_support:
+            raise ValueError(
+                f"AI output support_class '{support_class}' is not supported by the cited evidence relations"
+            )
+        if _all_adjusted_non_significant(ids, evidence):
+            confidence = "exploratory"
+        shared_core_genes = _shared_genes_for_ids(ids, evidence)
+        item.update({
+            "support_class": support_class,
+            "confidence": confidence,
+            "direction": direction,
+            "relationship_basis": relationship_basis,
+            "shared_core_genes": shared_core_genes[:20],
+            "shared_core_gene_count": len(shared_core_genes),
+        })
+        validated.append(item)
+    return validated
+
+
+def validate_interpretation(payload: Any, evidence: Dict[str, Any], mode: str) -> Dict[str, Any]:
+    """Validate model JSON and attach the code-generated evidence mapping."""
+    if isinstance(payload, str):
+        payload = _parse_model_json(payload)
+    elif not isinstance(payload, dict):
+        raise ValueError("AI output must be a JSON object")
+    if payload.get("schema_version") != 1:
+        raise ValueError("AI output schema_version must be 1")
+    if payload.get("method") != evidence["method"]:
+        raise ValueError("AI output method does not match the analysis method")
+    if payload.get("profile") != mode:
+        raise ValueError("AI output profile does not match --ai-mode")
+    databases = payload.get("databases")
+    expected = set(evidence["databases"])
+    if not isinstance(databases, dict) or set(databases) != expected:
+        missing = sorted(expected - set(databases or {}))
+        extra = sorted(set(databases or {}) - expected)
+        raise ValueError(f"AI output databases do not match evidence (missing={missing}, extra={extra})")
+    research_summary = _validate_section_items(
+        "research_summary", "research_summary", payload.get("research_summary", []), evidence
+    )[:4]
+    research_summary = [
+        item for item in research_summary
+        if not _is_generic_method_caution(item, evidence)
+    ]
+    overall_synthesis = _validate_theme_items(
+        "overall_synthesis", payload.get("overall_synthesis", []), evidence
+    )[:5]
+    normalized_databases = {}
+    for database in evidence["databases"]:
+        source = databases[database]
+        if not isinstance(source, dict):
+            raise ValueError(f"AI output database '{database}' must be an object")
+        normalized_databases[database] = {}
+        for section in _AI_SECTIONS:
+            if section == "core_themes":
+                normalized_databases[database][section] = _validate_theme_items(
+                    f"databases.{database}", source.get(section), evidence
+                )[:3]
+            else:
+                normalized_databases[database][section] = _validate_section_items(
+                    database, section, source.get(section), evidence
+                )[:3]
+    return {
+        "schema_version": 1,
+        "method": evidence["method"],
+        "profile": mode,
+        "research_summary": research_summary,
+        "overall_synthesis": overall_synthesis,
+        "databases": normalized_databases,
+        "evidence": evidence["evidence"],
+        "relations": evidence.get("relations", []),
+    }
+
 
 class AIInterpreterBase(ABC):
-    """
-    AI解释器抽象基类
-
-    定义了所有AI解释器后端必须实现的统一接口。
-    所有具体的后端实现（OpenAI、Claude、Ollama、Mock）都需要继承此类，
-    并实现 interpret() 和 summarize_term() 两个抽象方法。
-
-    设计模式：策略模式（Strategy Pattern），通过统一的接口支持不同的AI后端切换。
-    """
+    """Abstract interface for enrichment-result interpreters."""
 
     @abstractmethod
     def interpret(self, results: Dict[str, pd.DataFrame], context: str = "") -> Dict[str, str]:
-        """
-        对富集分析结果生成AI解读
-
-        参数:
-            results (Dict[str, pd.DataFrame]): 富集分析结果字典，
-                键为数据库名称（如 "GO_Biological_Process"），值为对应的DataFrame结果
-            context (str): 额外的分析上下文信息，用于帮助AI更好地理解分析背景，默认为空字符串
-
-        返回:
-            Dict[str, str]: 解读结果字典，键为数据库名称，值为AI生成的解读文本
-        """
+        """Interpret result tables grouped by database."""
         pass
 
     @abstractmethod
     def summarize_term(self, term_name: str, gene_list: List[str]) -> str:
-        """
-        对单个富集条目进行简要总结
-
-        参数:
-            term_name (str): 富集条目名称（如GO术语、KEGG通路名称等）
-            gene_list (List[str]): 与该条目关联的基因列表
-
-        返回:
-            str: AI生成的该条目的生物学意义总结文本
-        """
+        """Summarize one biological term and its matched genes."""
         pass
 
 
 class OpenAIInterpreter(AIInterpreterBase):
-    """
-    OpenAI GPT后端解释器
-
-    使用OpenAI的GPT系列模型（如GPT-4、GPT-3.5）对富集分析结果进行AI解读。
-    需要提供有效的OpenAI API密钥，可通过构造函数参数或环境变量 OPENAI_API_KEY 配置。
-
-    特点：
-    - 支持GPT-4和GPT-3.5等多种模型
-    - 可自定义生成参数（最大token数、温度等）
-    - 使用系统提示词设定生物信息学专家角色
-    """
+    """Interpret enrichment results with an OpenAI chat model."""
 
     def __init__(
         self,
         api_key: str = None,
         model: str = "gpt-4",
-        max_tokens: int = 2000,
+        max_tokens: int = 4000,
         temperature: float = 0.7
     ):
-        """
-        初始化OpenAI解释器
-
-        参数:
-            api_key (str): OpenAI API密钥，若为None则从环境变量 OPENAI_API_KEY 获取
-            model (str): 使用的模型名称，默认为 "gpt-4"，可选 "gpt-3.5-turbo" 等
-            max_tokens (int): 生成文本的最大token数量，默认为2000
-            temperature (float): 生成温度，控制输出随机性，范围0-1，默认为0.7
-        """
+        """Configure the OpenAI client and generation settings."""
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
         self.model = model
         self.max_tokens = max_tokens
         self.temperature = temperature
 
-        # 未提供API密钥时发出警告，后续调用将跳过AI解读
         if not self.api_key:
             logger.warning("OpenAI API key not provided. AI interpretation will be disabled.")
 
     def _call_api(self, prompt: str) -> str:
-        """
-        调用OpenAI ChatCompletion API
-
-        构建包含系统角色和用户提示的消息列表，发送至OpenAI API并返回生成的文本内容。
-        系统提示将AI角色设定为"基因集富集分析领域的生物信息学专家"。
-
-        参数:
-            prompt (str): 用户提示词，包含需要解读的富集分析数据
-
-        返回:
-            str: AI生成的解读文本；若调用失败则返回错误信息字符串
-        """
+        """Send one interpretation prompt to the OpenAI chat API."""
         try:
             import openai
 
-            # 创建OpenAI客户端实例（openai>=1.0.0 新版API）
             client = openai.OpenAI(api_key=self.api_key)
 
-            # 调用ChatCompletion接口，使用系统提示词设定专家角色
             response = client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    # 系统提示：设定AI为生物信息学专家角色
-                    {"role": "system", "content": "You are a expert bioinformatician specializing in gene set enrichment analysis. Provide clear, accurate, and insightful interpretations of enrichment results."},
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a bioinformatics specialist interpreting gene set "
+                            "enrichment tables. Use only the supplied results, distinguish "
+                            "statistical evidence from biological hypotheses, and do not "
+                            "invent pathways, genes, experimental details, or citations."
+                        ),
+                    },
                     {"role": "user", "content": prompt}
                 ],
                 max_tokens=self.max_tokens,
                 temperature=self.temperature
             )
 
-            # 提取并返回生成的文本内容
             return response.choices[0].message.content
 
         except ImportError:
@@ -161,32 +1033,17 @@ class OpenAIInterpreter(AIInterpreterBase):
             return f"Error: {str(e)}"
 
     def interpret(self, results: Dict[str, pd.DataFrame], context: str = "") -> Dict[str, str]:
-        """
-        对所有富集分析结果生成AI解读
-
-        遍历每个数据库的富集结果，提取前20个最显著的富集条目，
-        构建包含P值和基因数量的详细提示词，调用OpenAI API生成生物学解读。
-
-        参数:
-            results (Dict[str, pd.DataFrame]): 富集分析结果字典，键为数据库名称，值为结果DataFrame
-            context (str): 额外的分析上下文信息，默认为空字符串
-
-        返回:
-            Dict[str, str]: 解读结果字典，键为数据库名称，值为AI生成的生物学解读文本
-        """
+        """Generate a concise interpretation for each non-empty database table."""
         interpretations = {}
 
-        # 若未配置API密钥，直接返回空字典
         if not self.api_key:
             return interpretations
 
         for db_name, df in results.items():
-            # 跳过空结果
             if len(df) == 0:
-                interpretations[db_name] = "No significant enrichment results found for this database."
+                interpretations[db_name] = "No enrichment terms were available for interpretation."
                 continue
 
-            # 提取前20个最显著的富集结果，构建摘要信息
             top_results = df.head(20)
             summary_lines = []
 
@@ -197,108 +1054,69 @@ class OpenAIInterpreter(AIInterpreterBase):
                     f"Genes={row.get('Gene_Count', 0)}"
                 )
 
-            # 构建简洁的英文提示词，分点结构，无客套话
-            prompt = f"""Interpret these {db_name} enrichment results. IMPORTANT: Keep total response under 250 words.
+            prompt = f"""Interpret the following AllEnricher {db_name} result table in no more than 250 words.
+
+Use only the terms, P values, and gene counts shown below. Do not infer the
+experimental design or claim causality. Describe broad patterns as hypotheses
+that require domain review and literature validation.
 
 Top {len(top_results)} enriched terms:
 {chr(10).join(summary_lines)}
 
-Structure (use this exact format):
-**Main themes**: [1-2 sentences]
-**Pathways**: [key terms, comma-separated]
-**Significance**: [1-2 sentences about biological meaning]
-**Genes**: [notable gene patterns, 1 sentence]"""
+Use exactly these headings:
+**Main themes**: [one or two evidence-based sentences]
+**Representative terms**: [comma-separated term names]
+**Statistical context**: [one sentence limited to the supplied statistics]
+**Gene-level observations**: [one sentence, or state that gene details are insufficient]"""
 
-            # 调用API并存储解读结果
             interpretation = self._call_api(prompt)
             interpretations[db_name] = interpretation
 
         return interpretations
 
     def summarize_term(self, term_name: str, gene_list: List[str]) -> str:
-        """
-        对单个富集条目生成简要总结
-
-        构建包含条目名称和关联基因（最多显示前10个）的提示词，
-        调用OpenAI API生成2-3句话的生物学意义总结。
-
-        参数:
-            term_name (str): 富集条目名称
-            gene_list (List[str]): 与该条目关联的基因列表
-
-        返回:
-            str: AI生成的条目总结文本；若未配置API密钥则返回空字符串
-        """
+        """Generate a short description of one enriched term."""
         if not self.api_key:
             return ""
 
-        # 构建提示词，包含条目名称和关联基因（超过10个基因时截断并添加省略号）
         prompt = f"""
-Please provide a brief description of the following biological term and its relevance:
+Briefly describe the established biological meaning of this database term.
+Do not infer the experimental context or claim that the matched genes prove a
+mechanism.
 
 Term: {term_name}
 Associated genes: {', '.join(gene_list[:10])}{'...' if len(gene_list) > 10 else ''}
 
-Provide a 2-3 sentence summary explaining what this term represents and its biological significance.
+Write two or three concise sentences and use only the supplied term and genes.
 """
 
         return self._call_api(prompt)
 
 
 class ClaudeInterpreter(AIInterpreterBase):
-    """
-    Anthropic Claude后端解释器
-
-    使用Anthropic公司的Claude系列模型（如claude-3-opus）对富集分析结果进行AI解读。
-    需要提供有效的Anthropic API密钥，可通过构造函数参数或环境变量 ANTHROPIC_API_KEY 配置。
-
-    特点：
-    - 使用Anthropic Messages API
-    - 擅长长文本分析和细致的推理
-    - 支持claude-3-opus、claude-3-sonnet等多种模型
-    """
+    """Interpret enrichment results with an Anthropic Claude model."""
 
     def __init__(
         self,
         api_key: str = None,
         model: str = "claude-3-opus-20240229",
-        max_tokens: int = 2000
+        max_tokens: int = 4000
     ):
-        """
-        初始化Claude解释器
-
-        参数:
-            api_key (str): Anthropic API密钥，若为None则从环境变量 ANTHROPIC_API_KEY 获取
-            model (str): 使用的模型名称，默认为 "claude-3-opus-20240229"
-            max_tokens (int): 生成文本的最大token数量，默认为2000
-        """
+        """Configure the Anthropic client and model."""
         self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
         self.model = model
         self.max_tokens = max_tokens
 
-        # 未提供API密钥时发出警告，后续调用将跳过AI解读
         if not self.api_key:
             logger.warning("Anthropic API key not provided. AI interpretation will be disabled.")
 
     def _call_api(self, prompt: str) -> str:
-        """
-        调用Anthropic Messages API
-
-        使用Anthropic SDK创建客户端并发送消息请求，返回Claude生成的文本内容。
-
-        参数:
-            prompt (str): 用户提示词，包含需要解读的富集分析数据
-
-        返回:
-            str: Claude生成的解读文本；若调用失败则返回错误信息字符串
-        """
+        """Send one interpretation prompt to the Anthropic Messages API."""
         try:
             import anthropic
 
-            # 创建Anthropic客户端实例
             client = anthropic.Anthropic(api_key=self.api_key)
 
-            # 调用Messages API生成回复
             message = client.messages.create(
                 model=self.model,
                 max_tokens=self.max_tokens,
@@ -307,7 +1125,6 @@ class ClaudeInterpreter(AIInterpreterBase):
                 ]
             )
 
-            # 提取并返回生成的文本内容（content数组的第一个元素）
             return message.content[0].text
 
         except ImportError:
@@ -318,32 +1135,17 @@ class ClaudeInterpreter(AIInterpreterBase):
             return f"Error: {str(e)}"
 
     def interpret(self, results: Dict[str, pd.DataFrame], context: str = "") -> Dict[str, str]:
-        """
-        对所有富集分析结果生成AI解读
-
-        遍历每个数据库的富集结果，提取前20个最显著的富集条目，
-        构建提示词并调用Claude API生成简洁的生物学解读。
-
-        参数:
-            results (Dict[str, pd.DataFrame]): 富集分析结果字典，键为数据库名称，值为结果DataFrame
-            context (str): 额外的分析上下文信息，默认为空字符串
-
-        返回:
-            Dict[str, str]: 解读结果字典，键为数据库名称，值为Claude生成的生物学解读文本
-        """
+        """Generate a concise interpretation for each non-empty database table."""
         interpretations = {}
 
-        # 若未配置API密钥，直接返回空字典
         if not self.api_key:
             return interpretations
 
         for db_name, df in results.items():
-            # 跳过空结果
             if len(df) == 0:
-                interpretations[db_name] = "No significant enrichment results found for this database."
+                interpretations[db_name] = "No enrichment terms were available for interpretation."
                 continue
 
-            # 提取前20个最显著的富集结果，构建摘要信息（包含P值）
             top_results = df.head(20)
             summary_lines = []
 
@@ -353,103 +1155,61 @@ class ClaudeInterpreter(AIInterpreterBase):
                     f"P-value={row.get('P_Value', 1):.2e}"
                 )
 
-            # 构建简洁的英文提示词
-            prompt = f"""Interpret these {db_name} enrichment results. Keep response to ~300 words, organized with clear themes.
+            prompt = f"""Interpret the following AllEnricher {db_name} result table in no more than 300 words.
+
+Use only the supplied terms and P values. Do not infer an experimental design,
+claim causality, or invent genes, pathways, or citations.
 
 Top {len(top_results)} enriched terms:
 {chr(10).join(summary_lines)}
 
-Structure your response as:
-• Main biological themes
-• Key pathways/processes involved
-• Potential biological significance
-• Notable gene patterns
+Use exactly these headings:
+**Main themes**
+**Representative terms**
+**Statistical context**
+**Limitations**
 
-⚠ Disclaimer: This AI-generated interpretation is for reference only and should be reviewed by domain experts. Verify all biological conclusions with literature."""
+End by stating that the interpretation requires domain review and literature validation."""
 
-            # 调用API并存储解读结果
             interpretation = self._call_api(prompt)
             interpretations[db_name] = interpretation
 
         return interpretations
 
     def summarize_term(self, term_name: str, gene_list: List[str]) -> str:
-        """
-        对单个富集条目生成简要总结
-
-        构建包含条目名称的简洁提示词，调用Claude API生成2-3句话的生物学意义总结。
-
-        参数:
-            term_name (str): 富集条目名称
-            gene_list (List[str]): 与该条目关联的基因列表（本实现中未直接使用）
-
-        返回:
-            str: Claude生成的条目总结文本；若未配置API密钥则返回空字符串
-        """
+        """Generate a short description of one enriched term."""
         if not self.api_key:
             return ""
 
-        # 构建简洁的提示词，仅包含条目名称
-        prompt = f"Describe the biological term '{term_name}' and its significance in 2-3 sentences."
+        prompt = (
+            f"Describe the established biological meaning of the database term '{term_name}' "
+            "in two or three concise sentences. Do not infer experimental context or causality."
+        )
         return self._call_api(prompt)
 
 
 class OllamaInterpreter(AIInterpreterBase):
-    """
-    本地Ollama后端解释器
-
-    使用本地部署的Ollama服务运行开源大语言模型（如llama2、mistral等）进行富集分析结果解读。
-    无需API密钥，适合离线环境或对数据隐私有较高要求的场景。
-
-    使用前提：
-    - 需要本地安装并运行Ollama服务（默认地址 http://localhost:11434）
-    - 需要预先拉取所需的模型（如 ollama pull llama2）
-
-    特点：
-    - 完全本地运行，数据不离开本机
-    - 无需API密钥和付费订阅
-    - 支持多种开源模型
-    - 仅提取前20个富集条目，以适配本地模型能力
-    """
+    """Interpret enrichment results with a locally hosted Ollama model."""
 
     def __init__(self, model: str = "llama2", base_url: str = "http://localhost:11434"):
-        """
-        初始化Ollama解释器
-
-        参数:
-            model (str): 使用的模型名称，默认为 "llama2"，需确保该模型已通过Ollama拉取
-            base_url (str): Ollama服务的API地址，默认为 "http://localhost:11434"
-        """
+        """Configure the Ollama model and service URL."""
         self.model = model
         self.base_url = base_url
 
     def _call_api(self, prompt: str) -> str:
-        """
-        调用Ollama本地API
-
-        通过HTTP POST请求调用Ollama的 /api/generate 接口，
-        设置 stream=False 以一次性获取完整响应。
-
-        参数:
-            prompt (str): 用户提示词，包含需要解读的富集分析数据
-
-        返回:
-            str: 模型生成的解读文本；若调用失败则返回错误信息字符串
-        """
+        """Send one interpretation prompt to the local Ollama service."""
         try:
             import requests
 
-            # 向Ollama的生成接口发送POST请求，stream=False表示非流式返回完整结果
             response = requests.post(
                 f"{self.base_url}/api/generate",
                 json={
                     "model": self.model,
                     "prompt": prompt,
-                    "stream": False  # 非流式模式，等待完整响应返回
+                    "stream": False,
                 }
             )
 
-            # 检查HTTP状态码，成功时提取生成的文本
             if response.status_code == 200:
                 return response.json().get("response", "")
             else:
@@ -463,107 +1223,61 @@ class OllamaInterpreter(AIInterpreterBase):
             return f"Error: {str(e)}"
 
     def interpret(self, results: Dict[str, pd.DataFrame], context: str = "") -> Dict[str, str]:
-        """
-        对所有富集分析结果生成AI解读
-
-        遍历每个数据库的富集结果，提取前20个最显著的富集条目，
-        构建简洁的提示词并调用Ollama API生成生物学解读。
-
-        参数:
-            results (Dict[str, pd.DataFrame]): 富集分析结果字典，键为数据库名称，值为结果DataFrame
-            context (str): 额外的分析上下文信息，默认为空字符串（本实现中未使用）
-
-        返回:
-            Dict[str, str]: 解读结果字典，键为数据库名称，值为模型生成的生物学解读文本
-        """
+        """Generate a concise interpretation for each non-empty database table."""
         interpretations = {}
 
         for db_name, df in results.items():
-            # 跳过空结果
             if len(df) == 0:
-                interpretations[db_name] = "No significant enrichment results found for this database."
+                interpretations[db_name] = "No enrichment terms were available for interpretation."
                 continue
 
-            # 提取前20个最显著的富集结果
             top_results = df.head(20)
             summary_lines = []
 
             for _, row in top_results.iterrows():
-                # 仅提取条目名称，不包含详细统计信息
                 summary_lines.append(f"- {row.get('Term_Name', 'N/A')}")
 
-            # 构建简洁的英文提示词，分点结构，无客套话
-            prompt = f"""Interpret these {db_name} enrichment results. IMPORTANT: Keep total response under 250 words.
+            prompt = f"""Interpret the following AllEnricher {db_name} result table in no more than 250 words.
+
+Only term names are provided. Do not infer statistical strength, experimental
+design, causality, genes, or citations that are not shown.
 
 Top {len(top_results)} enriched terms:
 {chr(10).join(summary_lines)}
 
-Structure (use this exact format):
-**Main themes**: [1-2 sentences]
-**Pathways**: [key terms, comma-separated]
-**Significance**: [1-2 sentences about biological meaning]
-**Genes**: [notable gene patterns, 1 sentence]"""
+Use exactly these headings:
+**Main themes**
+**Representative terms**
+**Limitations**"""
 
-            # 调用API并存储解读结果
             interpretation = self._call_api(prompt)
             interpretations[db_name] = interpretation
 
         return interpretations
 
     def summarize_term(self, term_name: str, gene_list: List[str]) -> str:
-        """
-        对单个富集条目生成简要总结
-
-        构建极简提示词，调用Ollama API生成条目描述。
-
-        参数:
-            term_name (str): 富集条目名称
-            gene_list (List[str]): 与该条目关联的基因列表（本实现中未直接使用）
-
-        返回:
-            str: 模型生成的条目描述文本
-        """
-        # 构建极简提示词，仅包含条目名称
-        prompt = f"Describe: {term_name}"
+        """Generate a short local-model description of one term."""
+        prompt = (
+            f"Describe the established biological meaning of the database term '{term_name}' "
+            "in two concise sentences without inferring experimental context."
+        )
         return self._call_api(prompt)
 
 
 class DeepSeekInterpreter(AIInterpreterBase):
-    """
-    DeepSeek 后端解释器
+    """Interpret enrichment results with the DeepSeek API."""
 
-    使用 DeepSeek 大模型（如 deepseek-chat、deepseek-coder）对富集分析结果进行 AI 解读。
-    DeepSeek 是国产大模型，API 兼容 OpenAI 格式，性价比高。
-
-    特点：
-    - API 兼容 OpenAI 格式，可使用 openai SDK
-    - 支持中文和英文解读
-    - 性价比高，适合大规模分析
-
-    使用前提：
-    - 需要获取 DeepSeek API 密钥：https://platform.deepseek.com/
-    - 设置环境变量 DEEPSEEK_API_KEY 或在构造函数中传入
-    """
-
-    # DeepSeek API 基础 URL
+    # DeepSeek API Base URL
     BASE_URL = "https://api.deepseek.com"
 
     def __init__(
         self,
         api_key: str = None,
         model: str = "deepseek-chat",
-        max_tokens: int = 2000,
-        temperature: float = 0.7
+        max_tokens: int = 4000,
+        temperature: float = 0.2
     ):
-        """
-        初始化 DeepSeek 解释器
-
-        参数:
-            api_key (str): DeepSeek API 密钥，若为 None 则从环境变量 DEEPSEEK_API_KEY 获取
-            model (str): 使用的模型名称，默认为 "deepseek-chat"，可选 "deepseek-coder" 等
-            max_tokens (int): 生成文本的最大 token 数量，默认为 2000
-            temperature (float): 生成温度，控制输出随机性，范围 0-1，默认为 0.7
-        """
+        """Configure the DeepSeek client and generation settings."""
         self.api_key = api_key or os.getenv("DEEPSEEK_API_KEY")
         self.model = model
         self.max_tokens = max_tokens
@@ -573,19 +1287,11 @@ class DeepSeekInterpreter(AIInterpreterBase):
             logger.warning("DeepSeek API key not provided. Set DEEPSEEK_API_KEY environment variable.")
 
     def _call_api(self, prompt: str) -> str:
-        """
-        调用 DeepSeek API（OpenAI 兼容格式）
-
-        参数:
-            prompt (str): 用户提示词
-
-        返回:
-            str: AI 生成的解读文本
-        """
+        """Send one interpretation prompt to the DeepSeek chat API."""
         try:
             import openai
 
-            # 使用 OpenAI SDK，指定 DeepSeek 的 base_url
+            # DeepSeek exposes an OpenAI-compatible chat endpoint.
             client = openai.OpenAI(
                 api_key=self.api_key,
                 base_url=self.BASE_URL
@@ -594,7 +1300,18 @@ class DeepSeekInterpreter(AIInterpreterBase):
             response = client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": "你是一位专业的生物信息学专家，擅长基因集富集分析结果的解读。请提供清晰、准确、有洞察力的生物学解读。"},
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a bioinformatics analyst interpreting gene-set enrichment "
+                            "results. Base every statement on the supplied terms and statistics. "
+                            "Do not invent genes, pathways, experimental conditions, causal "
+                            "claims, or references. Clearly identify limitations in the evidence."
+                            " For TF target-set GSEA, use only the directional phrases 'positive "
+                            "target-set enrichment' and 'negative target-set enrichment'; do not "
+                            "infer regulator activity."
+                        ),
+                    },
                     {"role": "user", "content": prompt}
                 ],
                 max_tokens=self.max_tokens,
@@ -611,7 +1328,7 @@ class DeepSeekInterpreter(AIInterpreterBase):
             return f"Error: {str(e)}"
 
     def interpret(self, results: Dict[str, pd.DataFrame], context: str = "") -> Dict[str, str]:
-        """对所有富集分析结果生成 AI 解读"""
+        """Generate interpretations using the shared result-table workflow."""
         interpretations = {}
 
         if not self.api_key:
@@ -619,7 +1336,7 @@ class DeepSeekInterpreter(AIInterpreterBase):
 
         for db_name, df in results.items():
             if len(df) == 0:
-                interpretations[db_name] = "No significant enrichment results found for this database."
+                interpretations[db_name] = "No enrichment terms were available for interpretation."
                 continue
 
             top_results = df.head(20)
@@ -628,78 +1345,52 @@ class DeepSeekInterpreter(AIInterpreterBase):
             for _, row in top_results.iterrows():
                 summary_lines.append(
                     f"- {row.get('Term_Name', 'N/A')}: "
-                    f"P值={row.get('P_Value', 1):.2e}, "
-                    f"基因数={row.get('Gene_Count', 0)}"
+                    f"P value={row.get('P_Value', 1):.2e}, "
+                    f"gene count={row.get('Gene_Count', 0)}"
                 )
 
-            prompt = f"""Interpret these {db_name} enrichment results. IMPORTANT: Keep total response under 250 words.
+            prompt = f"""Interpret the following {db_name} enrichment results in no more than 250 words.
 
 Top {len(top_results)} enriched terms:
 {chr(10).join(summary_lines)}
 
-Structure (use this exact format):
-**Main themes**: [1-2 sentences]
-**Pathways**: [key terms, comma-separated]
-**Significance**: [1-2 sentences about biological meaning]
-**Genes**: [notable gene patterns, 1 sentence]"""
+Use exactly these headings:
+**Main themes**: Summarize the dominant biological themes in one or two sentences.
+**Key terms**: List only terms present above.
+**Interpretation**: Explain what the enrichment supports without inferring causality.
+**Limitations**: State what cannot be concluded from these data alone."""
 
             interpretations[db_name] = self._call_api(prompt)
 
         return interpretations
 
     def summarize_term(self, term_name: str, gene_list: List[str]) -> str:
-        """对单个富集条目生成简要总结"""
+        """Generate a short description of one enriched term."""
         if not self.api_key:
             return ""
 
-        prompt = f"""
-请简要描述以下生物学术语及其相关性:
-
-术语: {term_name}
-关联基因: {', '.join(gene_list[:10])}{'...' if len(gene_list) > 10 else ''}
-
-请用2-3句话解释该术语代表的生物学意义。
-"""
+        genes = ", ".join(gene_list[:10]) or "not provided"
+        prompt = f"""Describe the biological meaning of the enriched term "{term_name}" in two or three sentences.
+Input genes associated with this term: {genes}.
+Use only the supplied term and genes. Do not infer the experimental context or cite unverified sources."""
 
         return self._call_api(prompt)
 
 
 class GLMInterpreter(AIInterpreterBase):
-    """
-    GLM / ChatGLM 后端解释器
+    """Interpret enrichment results with a GLM-compatible API."""
 
-    使用智谱 AI 的 GLM 系列模型（如 glm-4、glm-3-turbo）对富集分析结果进行 AI 解读。
-    GLM 是国产大模型，中文能力强，API 兼容 OpenAI 格式。
-
-    特点：
-    - 中文理解能力强
-    - API 兼容 OpenAI 格式
-    - 支持长上下文
-
-    使用前提：
-    - 需要获取智谱 AI API 密钥：https://open.bigmodel.cn/
-    - 设置环境变量 GLM_API_KEY 或在构造函数中传入
-    """
-
-    # 智谱 AI API 基础 URL
+    # OpenAI-compatible GLM endpoint.
     BASE_URL = "https://open.bigmodel.cn/api/paas/v4"
 
     def __init__(
         self,
         api_key: str = None,
         model: str = "glm-4",
-        max_tokens: int = 2000,
+        max_tokens: int = 4000,
         temperature: float = 0.7
     ):
-        """
-        初始化 GLM 解释器
-
-        参数:
-            api_key (str): 智谱 AI API 密钥，若为 None 则从环境变量 GLM_API_KEY 获取
-            model (str): 使用的模型名称，默认为 "glm-4"，可选 "glm-3-turbo" 等
-            max_tokens (int): 生成文本的最大 token 数量，默认为 2000
-            temperature (float): 生成温度，默认为 0.7
-        """
+        """Configure the GLM client and generation settings."""
         self.api_key = api_key or os.getenv("GLM_API_KEY")
         self.model = model
         self.max_tokens = max_tokens
@@ -709,7 +1400,7 @@ class GLMInterpreter(AIInterpreterBase):
             logger.warning("GLM API key not provided. Set GLM_API_KEY environment variable.")
 
     def _call_api(self, prompt: str) -> str:
-        """调用智谱 AI API（OpenAI 兼容格式）"""
+        """Send one interpretation prompt to the GLM chat API."""
         try:
             import openai
 
@@ -721,7 +1412,14 @@ class GLMInterpreter(AIInterpreterBase):
             response = client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": "你是一位资深的生物信息学研究员，专注于基因功能注释和富集分析。请提供专业、准确的结果解读。"},
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a bioinformatics analyst interpreting gene-set enrichment "
+                            "results. Use only the supplied terms and statistics. Do not invent "
+                            "genes, experimental conditions, causal claims, or references."
+                        ),
+                    },
                     {"role": "user", "content": prompt}
                 ],
                 max_tokens=self.max_tokens,
@@ -738,7 +1436,7 @@ class GLMInterpreter(AIInterpreterBase):
             return f"Error: {str(e)}"
 
     def interpret(self, results: Dict[str, pd.DataFrame], context: str = "") -> Dict[str, str]:
-        """对所有富集分析结果生成 AI 解读"""
+        """Generate interpretations using the shared result-table workflow."""
         interpretations = {}
 
         if not self.api_key:
@@ -746,7 +1444,7 @@ class GLMInterpreter(AIInterpreterBase):
 
         for db_name, df in results.items():
             if len(df) == 0:
-                interpretations[db_name] = "No significant enrichment results found for this database."
+                interpretations[db_name] = "No enrichment terms were available for interpretation."
                 continue
 
             top_results = df.head(20)
@@ -755,53 +1453,41 @@ class GLMInterpreter(AIInterpreterBase):
             for _, row in top_results.iterrows():
                 summary_lines.append(
                     f"- {row.get('Term_Name', 'N/A')}: "
-                    f"P值={row.get('P_Value', 1):.2e}, "
-                    f"基因数={row.get('Gene_Count', 0)}"
+                    f"P value={row.get('P_Value', 1):.2e}, "
+                    f"gene count={row.get('Gene_Count', 0)}"
                 )
 
-            prompt = f"""Interpret these {db_name} enrichment results. IMPORTANT: Keep total response under 250 words.
+            prompt = f"""Interpret the following {db_name} enrichment results in no more than 250 words.
 
 Top {len(top_results)} enriched terms:
 {chr(10).join(summary_lines)}
 
-Structure (use this exact format):
-**Main themes**: [1-2 sentences]
-**Pathways**: [key terms, comma-separated]
-**Significance**: [1-2 sentences about biological meaning]
-**Genes**: [notable gene patterns, 1 sentence]"""
+Use exactly these headings:
+**Main themes**: Summarize the dominant biological themes in one or two sentences.
+**Key terms**: List only terms present above.
+**Interpretation**: Explain what the enrichment supports without inferring causality.
+**Limitations**: State what cannot be concluded from these data alone."""
 
             interpretations[db_name] = self._call_api(prompt)
 
         return interpretations
 
     def summarize_term(self, term_name: str, gene_list: List[str]) -> str:
-        """对单个富集条目生成简要总结"""
+        """Generate a short description of one enriched term."""
         if not self.api_key:
             return ""
 
-        prompt = f"请用2-3句话简要描述生物学术语'{term_name}'的含义及其生物学意义。"
+        genes = ", ".join(gene_list[:10]) or "not provided"
+        prompt = f"""Describe the biological meaning of the enriched term "{term_name}" in two or three sentences.
+Input genes associated with this term: {genes}.
+Use only the supplied term and genes. Do not infer the experimental context or cite unverified sources."""
         return self._call_api(prompt)
 
 
 class MiniMaxInterpreter(AIInterpreterBase):
-    """
-    MiniMax 后端解释器
+    """Interpret enrichment results with the MiniMax API."""
 
-    使用 MiniMax 大模型（如 abab6.5-chat）对富集分析结果进行 AI 解读。
-    MiniMax 是国产大模型，支持长上下文，API 兼容 OpenAI 格式。
-
-    特点：
-    - 支持超长上下文（最高 245k tokens）
-    - API 兼容 OpenAI 格式
-    - 多模态能力
-
-    使用前提：
-    - 需要获取 MiniMax API 密钥：https://www.minimaxi.com/
-    - 设置环境变量 MINIMAX_API_KEY 或在构造函数中传入
-    - 需要设置 Group ID：环境变量 MINIMAX_GROUP_ID 或构造函数传入
-    """
-
-    # MiniMax API 基础 URL
+    # OpenAI-compatible MiniMax endpoint.
     BASE_URL = "https://api.minimax.chat/v1"
 
     def __init__(
@@ -809,19 +1495,10 @@ class MiniMaxInterpreter(AIInterpreterBase):
         api_key: str = None,
         group_id: str = None,
         model: str = "abab6.5s-chat",
-        max_tokens: int = 2000,
+        max_tokens: int = 4000,
         temperature: float = 0.7
     ):
-        """
-        初始化 MiniMax 解释器
-
-        参数:
-            api_key (str): MiniMax API 密钥，若为 None 则从环境变量 MINIMAX_API_KEY 获取
-            group_id (str): MiniMax Group ID，若为 None 则从环境变量 MINIMAX_GROUP_ID 获取
-            model (str): 使用的模型名称，默认为 "abab6.5s-chat"
-            max_tokens (int): 生成文本的最大 token 数量，默认为 2000
-            temperature (float): 生成温度，默认为 0.7
-        """
+        """Configure the MiniMax client, model, and group identifier."""
         self.api_key = api_key or os.getenv("MINIMAX_API_KEY")
         self.group_id = group_id or os.getenv("MINIMAX_GROUP_ID")
         self.model = model
@@ -834,7 +1511,7 @@ class MiniMaxInterpreter(AIInterpreterBase):
             logger.warning("MiniMax Group ID not provided. Set MINIMAX_GROUP_ID environment variable.")
 
     def _call_api(self, prompt: str) -> str:
-        """调用 MiniMax API（OpenAI 兼容格式）"""
+        """Send one interpretation prompt to the MiniMax chat API."""
         try:
             import openai
 
@@ -849,7 +1526,14 @@ class MiniMaxInterpreter(AIInterpreterBase):
             response = client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": "你是一位专业的生物信息学专家，擅长基因集富集分析。请提供准确、专业的生物学解读。"},
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a bioinformatics analyst interpreting gene-set enrichment "
+                            "results. Use only the supplied terms and statistics. Do not invent "
+                            "genes, experimental conditions, causal claims, or references."
+                        ),
+                    },
                     {"role": "user", "content": prompt}
                 ],
                 max_tokens=self.max_tokens,
@@ -866,7 +1550,7 @@ class MiniMaxInterpreter(AIInterpreterBase):
             return f"Error: {str(e)}"
 
     def interpret(self, results: Dict[str, pd.DataFrame], context: str = "") -> Dict[str, str]:
-        """对所有富集分析结果生成 AI 解读"""
+        """Generate interpretations using the shared result-table workflow."""
         interpretations = {}
 
         if not self.api_key or not self.group_id:
@@ -874,7 +1558,7 @@ class MiniMaxInterpreter(AIInterpreterBase):
 
         for db_name, df in results.items():
             if len(df) == 0:
-                interpretations[db_name] = "No significant enrichment results found for this database."
+                interpretations[db_name] = "No enrichment terms were available for interpretation."
                 continue
 
             top_results = df.head(20)
@@ -887,81 +1571,56 @@ class MiniMaxInterpreter(AIInterpreterBase):
                     f"Genes={row.get('Gene_Count', 0)}"
                 )
 
-            prompt = f"""Interpret these {db_name} enrichment results. IMPORTANT: Keep total response under 250 words.
+            prompt = f"""Interpret the following {db_name} enrichment results in no more than 250 words.
 
 Top {len(top_results)} enriched terms:
 {chr(10).join(summary_lines)}
 
-Structure (use this exact format):
-**Main themes**: [1-2 sentences]
-**Pathways**: [key terms, comma-separated]
-**Significance**: [1-2 sentences about biological meaning]
-**Genes**: [notable gene patterns, 1 sentence]"""
+Use exactly these headings:
+**Main themes**: Summarize the dominant biological themes in one or two sentences.
+**Key terms**: List only terms present above.
+**Interpretation**: Explain what the enrichment supports without inferring causality.
+**Limitations**: State what cannot be concluded from these data alone."""
 
             interpretations[db_name] = self._call_api(prompt)
 
         return interpretations
 
     def summarize_term(self, term_name: str, gene_list: List[str]) -> str:
-        """对单个富集条目生成简要总结"""
+        """Generate a short description of one enriched term."""
         if not self.api_key or not self.group_id:
             return ""
 
-        prompt = f"Briefly describe the biological term '{term_name}' and its significance in 2-3 sentences."
+        genes = ", ".join(gene_list[:10]) or "not provided"
+        prompt = f"""Describe the biological meaning of the enriched term "{term_name}" in two or three sentences.
+Input genes associated with this term: {genes}.
+Use only the supplied term and genes. Do not infer the experimental context or cite unverified sources."""
         return self._call_api(prompt)
 
 
 class MockInterpreter(AIInterpreterBase):
-    """
-    测试用模拟解释器
-
-    无需任何AI服务或API密钥，生成固定格式的模拟解读结果。
-    主要用于：
-    - 单元测试和集成测试
-    - 演示和开发调试
-    - 在没有AI服务时的降级方案
-
-    注意：生成的解读内容为模板化文本，不包含真实的生物学分析。
-    """
+    """Deterministic interpreter used by tests and offline examples."""
 
     def interpret(self, results: Dict[str, pd.DataFrame], context: str = "") -> Dict[str, str]:
-        """
-        生成模拟的富集分析解读
-
-        为每个数据库生成包含以下内容的模板化解读：
-        - 数据库名称和富集条目总数
-        - 前20个最显著的富集条目列表
-        - 通用的生物学解读模板
-        - 分析建议
-
-        参数:
-            results (Dict[str, pd.DataFrame]): 富集分析结果字典，键为数据库名称，值为结果DataFrame
-            context (str): 额外的分析上下文信息，默认为空字符串（本实现中未使用）
-
-        返回:
-            Dict[str, str]: 模拟解读结果字典，键为数据库名称，值为模板化的解读文本
-        """
+        """Return deterministic summaries without calling an external service."""
         interpretations = {}
 
         for db_name, df in results.items():
-            # 跳过空结果
             if len(df) == 0:
                 continue
 
-            # 提取前20个富集条目名称
+            # Keep the deterministic fixture compact while preserving term names.
             top_terms = df.head(20)['Term_Name'].tolist()
 
-            # 生成简洁的英文模拟解读（~300 words 格式）
-            # 展示所有 top_terms 条目名称
-            interpretation = f"""Mock Interpretation for {db_name} ({len(df)} terms analyzed, top 20 shown to AI)
+            interpretation = f"""Offline test interpretation for {db_name} ({len(df)} terms analyzed; up to 20 listed)
 
-**Main themes**: The gene set shows enrichment in {db_name} database across multiple biological processes.
+**Main themes**: This deterministic test backend does not infer enrichment themes.
 
-**Pathways**: [see top enriched terms below]
+**Key terms**: See the enriched terms listed below.
 
-**Significance**: Further investigation needed to interpret these findings in biological context.
+**Interpretation**: No biological interpretation was generated because no external language model was used.
 
-**Genes**: Multiple overlapping gene sets suggest coordinated biological functions.
+**Limitations**: This text validates report rendering only and must not be used as a scientific interpretation.
 
 Top {len(top_terms)} enriched terms:
 {chr(10).join([f"- {term}" for term in top_terms])}"""
@@ -971,49 +1630,72 @@ Top {len(top_terms)} enriched terms:
         return interpretations
 
     def summarize_term(self, term_name: str, gene_list: List[str]) -> str:
-        """
-        生成模拟的单个条目总结
-
-        返回包含条目名称和关联基因数量的简单描述。
-
-        参数:
-            term_name (str): 富集条目名称
-            gene_list (List[str]): 与该条目关联的基因列表
-
-        返回:
-            str: 模拟的条目总结文本，格式为 "The term '{term_name}' is associated with {n} genes..."
-        """
+        """Return a deterministic term summary for tests."""
         return f"The term '{term_name}' is associated with {len(gene_list)} genes from your input set."
+
+    def structured_response(self, evidence: Dict[str, Any], mode: str) -> Dict[str, Any]:
+        """Return a deterministic response with the same contract as real backends."""
+        support_by_relation = {
+            "related": "convergent",
+            "shared_core": "shared_core",
+            "redundant": "redundant",
+            "conflicting": "conflicting",
+        }
+
+        def theme(ids: List[str], relation: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+            cited = relation["evidence_ids"] if relation else ids[:1]
+            support_class = support_by_relation[relation["relation_type"]] if relation else "single_signal"
+            return {
+                "text": f"Selected records provide {support_class.replace('_', ' ')} evidence for review.",
+                "evidence_ids": cited,
+                "support_class": support_class,
+            }
+
+        databases = {}
+        for database, info in evidence["databases"].items():
+            ids = list(info["evidence_ids"])
+            relation = next((
+                item for item in evidence.get("relations", [])
+                if set(item["evidence_ids"]) <= set(ids)
+            ), None)
+            databases[database] = {
+                "core_themes": ([theme(ids, relation)] if ids else []),
+                "biological_meaning": ([{
+                    "text": "Interpret the linked terms or TFs by their established database meaning and the observed enrichment direction.",
+                    "evidence_ids": [ids[0]],
+                }] if ids else []),
+                "key_evidence": [
+                    {"text": f"Representative record {evidence_id} is available for review.", "evidence_ids": [evidence_id]}
+                    for evidence_id in ids[:3]
+                ],
+                "limitations": ([{
+                    "text": "This deterministic response does not establish biological causality.",
+                    "evidence_ids": [ids[0]],
+                }] if ids else []),
+                "computational_checks": ([{
+                    "text": "Review the linked source row and test threshold stability before interpretation.",
+                    "evidence_ids": [ids[0]],
+                }] if ids else []),
+            }
+        all_ids = list(evidence["evidence"])
+        overall_relation = next(iter(evidence.get("relations", [])), None)
+        return {
+            "schema_version": 1,
+            "method": evidence["method"],
+            "profile": mode,
+            "research_summary": ([{
+                "text": "Start with the linked evidence rows, then review the detailed sections for biological context.",
+                "evidence_ids": all_ids[:2],
+            }] if all_ids else []),
+            "overall_synthesis": ([theme(all_ids, overall_relation)] if all_ids else []),
+            "databases": databases,
+        }
 
 
 class AIInterpreter:
-    """
-    AI解释器主入口类（门面模式 / Facade Pattern）
+    """Facade that constructs and delegates to the selected backend."""
 
-    作为模块的统一对外接口，屏蔽不同AI后端的实现细节。
-    用户只需通过此类即可使用所有支持的AI后端进行富集分析结果解读。
-
-    使用方式：
-        # 使用OpenAI后端
-        interpreter = AIInterpreter(backend="openai", api_key="sk-xxx")
-        result = interpreter.interpret_results(enrichment_results)
-
-        # 使用本地Ollama后端
-        interpreter = AIInterpreter(backend="ollama", model="mistral")
-        result = interpreter.interpret_results(enrichment_results)
-
-        # 使用测试模拟后端
-        interpreter = AIInterpreter(backend="mock")
-        result = interpreter.interpret_results(enrichment_results)
-
-    支持的后端：
-        - "openai": OpenAI GPT系列（需要API密钥）
-        - "claude": Anthropic Claude系列（需要API密钥）
-        - "ollama": 本地Ollama模型（无需API密钥）
-        - "mock": 测试模拟后端（无需任何配置）
-    """
-
-    # 后端名称到实现类的映射表
+    # Public backend name to implementation class.
     BACKENDS = {
         "openai": OpenAIInterpreter,
         "claude": ClaudeInterpreter,
@@ -1031,34 +1713,14 @@ class AIInterpreter:
         model: str = None,
         **kwargs
     ):
-        """
-        初始化AI解释器
-
-        根据指定的后端名称创建对应的解释器实例。
-        不同后端使用不同的默认模型：
-        - OpenAI: gpt-4
-        - Claude: claude-3-opus
-        - DeepSeek: deepseek-chat
-        - GLM: glm-4
-        - MiniMax: abab6.5s-chat
-        - Ollama: llama2
-
-        参数:
-            backend (str): AI后端名称，可选 "openai"、"claude"、"deepseek"、"glm"、"minimax"、"ollama"、"mock"，默认为 "openai"
-            api_key (str): API密钥，用于云端后端；若为None则从对应环境变量获取
-            model (str): 模型名称，若为None则使用各后端的默认模型
-            **kwargs: 传递给具体后端构造函数的额外参数（如 max_tokens、temperature、group_id 等）
-
-        异常:
-            ValueError: 当指定的后端名称不在支持列表中时抛出
-        """
+        """Initialize one supported interpretation backend."""
         if backend not in self.BACKENDS:
             raise ValueError(f"Unknown backend: {backend}. Available: {list(self.BACKENDS.keys())}")
 
         self.backend_name = backend
         interpreter_class = self.BACKENDS[backend]
 
-        # 根据后端类型，使用适当的参数初始化对应的解释器实例
+        # Each provider has a small set of backend-specific constructor options.
         if backend == "openai":
             self.interpreter = interpreter_class(
                 api_key=api_key,
@@ -1084,7 +1746,7 @@ class AIInterpreter:
                 **kwargs
             )
         elif backend == "minimax":
-            # MiniMax 需要 group_id 参数
+            # MiniMax additionally requires a group identifier.
             group_id = kwargs.pop("group_id", None)
             self.interpreter = interpreter_class(
                 api_key=api_key,
@@ -1098,7 +1760,7 @@ class AIInterpreter:
                 **kwargs
             )
         else:
-            # Mock后端：无需任何参数
+            # The deterministic mock backend requires no credentials.
             self.interpreter = interpreter_class(**kwargs)
     
     def interpret_results(
@@ -1107,68 +1769,81 @@ class AIInterpreter:
         context: str = "",
         include_term_summaries: bool = False
     ) -> Dict[str, Any]:
-        """
-        生成富集分析结果的综合AI解读
-
-        首先调用后端解释器生成各数据库的整体解读，可选地为每个数据库的前20个富集条目
-        生成单独的条目总结。
-
-        参数:
-            results (Dict[str, pd.DataFrame]): 富集分析结果字典，键为数据库名称，值为结果DataFrame
-            context (str): 额外的分析上下文信息（如实验设计、研究目的等），默认为空字符串
-            include_term_summaries (bool): 是否为每个数据库的前20个富集条目生成单独总结，默认为False
-
-        返回:
-            Dict[str, Any]: 综合解读结果字典，包含：
-                - 各数据库名称对应的整体解读文本
-                - 若 include_term_summaries=True，还包含 "{数据库名}_term_summaries" 键，
-                  值为该数据库前20个条目的总结字典
-        """
-        # 调用后端解释器生成各数据库的整体解读
+        """Interpret result tables and return an empty mapping on backend failure."""
         interpretations = self.interpreter.interpret(results, context)
 
-        # 可选：为每个数据库的前20个富集条目生成单独的条目总结
+        # Optional per-term summaries are limited to the first 20 result rows.
         if include_term_summaries:
             for db_name, df in results.items():
                 if len(df) > 0:
                     term_summaries = {}
-                    # 遍历前20个富集条目
                     for _, row in df.head(20).iterrows():
                         term_name = row.get('Term_Name', '')
-                        # 从 'Genes' 列提取基因列表（分号分隔）
+                        # The canonical result schema stores genes as semicolon-separated IDs.
                         genes = row.get('Genes', '').split(';')
                         if term_name:
                             term_summaries[term_name] = self.interpreter.summarize_term(term_name, genes)
 
-                    # 将条目总结以 "{数据库名}_term_summaries" 为键存入结果
                     interpretations[f"{db_name}_term_summaries"] = term_summaries
 
         return interpretations
+
+    def interpret_structured_results(
+        self,
+        results: Dict[str, pd.DataFrame],
+        method: str = "hypergeometric",
+        mode: str = "summary",
+        groups: Optional[Dict[str, List[str]]] = None,
+        context: str = "",
+        top_n: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Build evidence, call one backend, and validate its structured JSON."""
+        if mode not in AI_MODES:
+            raise ValueError(f"Unknown AI interpretation mode: {mode}. Available: {sorted(AI_MODES)}")
+        evidence = build_structured_evidence(results, method=method, groups=groups, top_n=top_n)
+        if self.backend_name == "mock":
+            payload = self.interpreter.structured_response(evidence, mode)
+        else:
+            prompt = build_interpretation_prompt(evidence, mode=mode, context=context)
+            raw = self.interpreter._call_api(prompt)
+            if not isinstance(raw, str) or raw.startswith("Error:"):
+                raise ValueError(f"AI backend failed: {raw}")
+            payload = raw
+        try:
+            return validate_interpretation(payload, evidence, mode)
+        except ValueError as exc:
+            retryable = (
+                "must not translate TF target-set GSEA direction" in str(exc)
+                or "must describe GSEA direction as ranked-list enrichment" in str(exc)
+                or "not supported by the cited evidence relations" in str(exc)
+                or "must contain at least one evidence_id" in str(exc)
+            )
+            if self.backend_name == "mock" or not retryable:
+                raise
+            repair_prompt = (
+                f"{prompt}\n\nThe previous JSON was rejected because it overstated GSEA direction. "
+                "Rewrite the same JSON. Describe positive/negative GSEA only as top-ranked or "
+                "bottom-ranked gene-set enrichment. Avoid activation, inactivation, upregulation, "
+                "downregulation, higher expression, lower expression, activated, repressed, activator, and repressor in all non-limitation "
+                "sections. Use shared_core, redundant, or conflicting only when a supplied relation has "
+                "that exact relation_type for the cited IDs; otherwise use convergent or single_signal. "
+                "Every item in every array must include at least one valid evidence_id. Keep the same "
+                "schema and evidence IDs."
+            )
+            repaired = self.interpreter._call_api(repair_prompt)
+            if not isinstance(repaired, str) or repaired.startswith("Error:"):
+                raise ValueError(f"AI backend failed during correction: {repaired}") from exc
+            return validate_interpretation(repaired, evidence, mode)
     
     def generate_report_section(
         self,
         results: Dict[str, pd.DataFrame],
         context: str = ""
     ) -> str:
-        """
-        生成AI解读的HTML报告段落
-
-        将AI解读结果渲染为HTML格式的报告段落，包含：
-        - 段落标题和AI免责声明（提示用户需由领域专家审核）
-        - 各数据库的解读内容（跳过条目总结，仅展示整体解读）
-        - 使用Font Awesome图标增强视觉效果
-
-        参数:
-            results (Dict[str, pd.DataFrame]): 富集分析结果字典，键为数据库名称，值为结果DataFrame
-            context (str): 额外的分析上下文信息，默认为空字符串
-
-        返回:
-            str: 完整的HTML字符串，可直接嵌入报告页面中
-        """
-        # 获取AI解读结果
+        """Render interpretation text as an HTML report section."""
         interpretations = self.interpret_results(results, context)
 
-        # 构建HTML段落的开头：包含标题和AI免责声明
+        # Begin with an explicit review disclaimer.
         html_parts = ['''
         <div class="section" id="ai-interpretation">
             <h2><i class="fas fa-brain"></i> AI-Powered Interpretation</h2>
@@ -1178,13 +1853,11 @@ class AIInterpreter:
             </p>
         '''.format(self.backend_name)]
 
-        # 遍历解读结果，为每个数据库生成HTML展示块
         for db_name, interpretation in interpretations.items():
-            # 跳过条目总结（仅展示整体解读）
+            # Per-term summaries are data for other clients, not report sections.
             if db_name.endswith('_term_summaries'):
                 continue
 
-            # 将解读文本中的换行符替换为HTML换行标签
             html_parts.append(f'''
             <div class="ai-interpretation">
                 <h3><i class="fas fa-robot"></i> {db_name}</h3>
@@ -1194,18 +1867,12 @@ class AIInterpreter:
             </div>
             ''')
 
-        # 闭合HTML段落
         html_parts.append('</div>')
         return ''.join(html_parts)
 
 
 def get_available_backends() -> List[str]:
-    """
-    获取所有可用的AI后端名称列表
-
-    返回:
-        List[str]: 支持的后端名称列表，包含 ["openai", "claude", "deepseek", "glm", "minimax", "ollama", "mock"]
-    """
+    """Return the supported interpreter backend names."""
     return list(AIInterpreter.BACKENDS.keys())
 
 
@@ -1215,87 +1882,21 @@ def create_interpreter(
     model: str = None,
     **kwargs
 ) -> AIInterpreter:
-    """
-    工厂函数：创建AI解释器实例
+    """Create the facade for one backend.
 
-    提供便捷的方式来创建AIInterpreter实例，无需直接导入AIInterpreter类。
-    默认使用 "mock" 后端，确保在没有AI服务配置的情况下也能正常使用。
-
-    参数:
-        backend (str): AI后端名称，可选 "openai"、"claude"、"deepseek"、"glm"、"minimax"、"ollama"、"mock"，默认为 "mock"
-        api_key (str): API密钥，用于云端后端（openai、claude、deepseek、glm、minimax）
-        model (str): 模型名称，若为None则使用各后端的默认模型
-        **kwargs: 传递给具体后端构造函数的额外参数（如 minimax 的 group_id）
-
-    返回:
-        AIInterpreter: 初始化完成的AI解释器实例
-
-    使用示例:
-        # 创建一个OpenAI解释器
-        interpreter = create_interpreter(backend="openai", api_key="sk-xxx")
-
-        # 创建一个DeepSeek解释器（国产大模型，性价比高）
-        interpreter = create_interpreter(backend="deepseek", api_key="sk-xxx")
-
-        # 创建一个GLM解释器（智谱AI，中文能力强）
-        interpreter = create_interpreter(backend="glm", api_key="xxx")
-
-        # 创建一个MiniMax解释器（需要group_id）
-        interpreter = create_interpreter(backend="minimax", api_key="xxx", group_id="xxx")
-
-        # 创建一个本地Ollama解释器
-        interpreter = create_interpreter(backend="ollama", model="mistral")
-
-        # 创建一个测试用模拟解释器
-        interpreter = create_interpreter()
-    """
+    Backend-specific keyword arguments are forwarded without changing analysis
+    results or configuration outside the interpreter."""
     return AIInterpreter(backend=backend, api_key=api_key, model=model, **kwargs)
 
 
 def create_interpreter_from_config(config, backend: str = None) -> AIInterpreter:
-    """
-    从Config对象创建AI解释器实例
-
-    从YAML配置文件加载的Config对象中读取AI后端配置，创建对应的解释器实例。
-    支持多后端密钥配置，优先级：YAML ai_backends > 全局ai_api_key > 环境变量
-
-    参数:
-        config: Config对象，包含ai_backends、ai_backend、ai_api_key等配置
-        backend (str): 指定后端名称，若为None则使用config.ai_backend
-
-    返回:
-        AIInterpreter: 初始化完成的AI解释器实例
-
-    使用示例:
-        # 从YAML加载配置
-        config = Config.from_file("config.yaml")
-
-        # 使用默认后端（config.ai_backend）
-        interpreter = create_interpreter_from_config(config)
-
-        # 指定使用特定后端
-        interpreter = create_interpreter_from_config(config, backend="deepseek")
-
-    YAML配置示例:
-        ai_backend: "openai"  # 默认后端
-        ai_backends:
-          openai:
-            api_key: "sk-xxx"
-            model: "gpt-4"
-          deepseek:
-            api_key: "ds-xxx"
-            model: "deepseek-chat"
-          minimax:
-            api_key: "mm-xxx"
-            group_id: "group-xxx"
-    """
-    # 确定使用的后端
+    """Create an interpreter from an AllEnricher configuration object."""
     backend_name = backend or getattr(config, 'ai_backend', 'mock')
 
-    # 获取API密钥（优先级：YAML ai_backends > 全局ai_api_key > 环境变量）
+    # Backend-specific configuration takes precedence over global settings.
     api_key = config.get_ai_api_key(backend_name)
 
-    # 获取模型名称（优先级：YAML ai_backends > 全局ai_model > 后端默认值）
+    # Resolve the model after the backend so provider defaults remain explicit.
     default_models = {
         "openai": "gpt-4",
         "claude": "claude-3-opus-20240229",
@@ -1307,15 +1908,14 @@ def create_interpreter_from_config(config, backend: str = None) -> AIInterpreter
     }
     model = config.get_ai_model(backend_name, default_models.get(backend_name))
 
-    # 获取额外参数
     kwargs = {}
 
-    # base_url（用于Ollama或自定义API端点）
+    # Custom endpoint, primarily used by Ollama-compatible deployments.
     base_url = config.get_ai_base_url(backend_name)
     if base_url:
         kwargs['base_url'] = base_url
 
-    # group_id（用于MiniMax）
+    # MiniMax provider account identifier.
     group_id = config.get_ai_group_id(backend_name)
     if group_id:
         kwargs['group_id'] = group_id

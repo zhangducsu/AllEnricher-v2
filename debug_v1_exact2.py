@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-精确模拟v1的计算逻辑 - 修正gene_total计算
+Accurate simulation of the calculation logic of v1 - fixes the gene_tal calculation
 """
 
 import gzip
@@ -11,7 +11,7 @@ from allenricher.database.manager import DatabaseManager
 from allenricher.core.enrichment import EnrichmentAnalyzer
 from allenricher.core.config import Config
 
-# 读取gene_info作为background_list
+# Read gene_info as Background_list
 gene_info_file = r'F:\OneDrive\Documents\TraeSOLO\AllEnricher\AllEnricher-v1\database\organism\v20190612\hsa\hsa.gene_info'
 background_list = set()
 with open(gene_info_file, 'r') as f:
@@ -24,28 +24,28 @@ with open(gene_info_file, 'r') as f:
             if gene_symbol:
                 background_list.add(gene_symbol)
 
-print(f"background_list (gene_info) 基因数: {len(background_list)}")
+print(f"Gene count: {len(background_list)}")
 
-# 加载数据库
+# Loading Database
 db_manager = DatabaseManager(
     r'F:\OneDrive\Documents\TraeSOLO\AllEnricher\AllEnricher-v1\database\organism\v20190612\hsa',
     'hsa'
 )
 db_manager.load_databases(['GO'])
 
-# 获取GO数据库数据
+# Get GO database data
 go_data = db_manager.databases['GO']
 
-# 统计background_total（GO文件中的唯一基因数）
+# Statistical Background_ttal (only gene in GO)
 go_genes = set()
 for term_id, term_info in go_data.items():
     for gene in term_info['genes']:
         go_genes.add(gene)
 
 background_total = len(go_genes)
-print(f"background_total (GO文件中的基因数): {background_total}")
+print(f"The genetics in the Go file: {background_total}")
 
-# 加载输入基因
+# Loading input gene
 config = Config(
     input_file=r'F:\OneDrive\Documents\TraeSOLO\AllEnricher\AllEnricher-v1\example\allenricher\example.glist',
     output_dir=r'F:\OneDrive\Documents\TraeSOLO\AllEnricher\AllEnricher-v2\test_output\debug',
@@ -54,10 +54,10 @@ config = Config(
 )
 analyzer = EnrichmentAnalyzer(config)
 gene_set = analyzer.load_gene_list(config.input_file)
-gene_list = {g: 1 for g in gene_set}  # 模拟v1的%gene_list
+gene_list = {g: 1 for g in gene_set}  # Simulate v1%gene_list
 
-# 模拟v1的完整分析逻辑 - 先计算所有条目的匹配基因
-gene_list1 = {}  # 模拟v1的%gene_list1 - 所有条目中匹配基因的去重集合
+# The complete analytical logic of simulation v1 - calculate the matching genes for all entries first
+gene_list1 = {}  # Simulate v1%géne_list1 - To reassemble in all entries matching genes
 
 for term_id, term_info in go_data.items():
     term_genes = {g: 1 for g in term_info['genes']}
@@ -66,9 +66,9 @@ for term_id, term_info in go_data.items():
             gene_list1[gene] = 1
 
 gene_total = len(gene_list1)
-print(f"gene_total (所有条目中匹配基因的去重数): {gene_total}")
+print(f"Gene_ttal (de-weighting of all entries matching genes): {gene_total}")
 
-# 现在计算特定条目的期望值
+# Calculating expectations for specific entries
 term_id = 'GO:0051301'
 term_info = go_data[term_id]
 term_genes = {g: 1 for g in term_info['genes']}
@@ -84,11 +84,11 @@ for gene in term_genes:
 
 expected = num_in_C / background_total * gene_total if background_total > 0 else 0
 
-print(f"\n条目 {term_id} ({term_info['name']}):")
-print(f"  num_in_C (在background_list中的条目基因): {num_in_C}")
-print(f"  num_in_O (在输入基因列表中的条目基因): {num_in_O}")
+print(f"\nEntry{term_id} ({term_info['name']}):")
+print(f"Num_in_C (in blackground_list for entry): {num_in_C}")
+print(f"Num_in_O (entry gene in the gene list): {num_in_O}")
 print(f"  gene_total: {gene_total}")
 print(f"  background_total: {background_total}")
-print(f"\n  计算期望值: ({num_in_C} / {background_total}) * {gene_total} = {expected:.6f}")
-print(f"  v1实际期望值: 17.347928")
-print(f"  差异: {abs(expected - 17.347928):.6f}")
+print(f"\nCalculate expectations: ({num_in_C} / {background_total}) * {gene_total} = {expected: .6f}")
+print(f"V1 Actual expected value: 17.347928")
+print(f"Variance: {abs(expected - 17.347928): .6f}")

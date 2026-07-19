@@ -1,9 +1,6 @@
-"""
-AI 解读模块全面单元测试
+"""Tests for AI interpretation backends and the interpreter facade.
 
-覆盖所有后端解释器、门面类、工厂函数的测试。
-使用 unittest.mock 模拟外部依赖（openai、anthropic、requests），
-确保测试可独立运行，无需真实的 API 密钥或网络连接。
+External clients are mocked so the suite runs without network access or API keys.
 """
 
 import pytest
@@ -16,15 +13,15 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
 # ---------------------------------------------------------------------------
-# 测试数据工厂
+# Shared result fixtures
 # ---------------------------------------------------------------------------
 
 def _make_results(n_terms=5, include_genes_col=False):
-    """创建模拟富集分析结果 DataFrame。
+    """Create a synthetic enrichment result table.
 
-    参数:
-        n_terms: 富集条目数量
-        include_genes_col: 是否包含 'Genes' 列（分号分隔的基因字符串）
+    Args:
+        n_terms: Number of enrichment terms.
+        include_genes_col: Include a semicolon-delimited ``Genes`` column.
     """
     data = {
         "Term_ID": [f"GO:{1000 + i}" for i in range(n_terms)],
@@ -40,19 +37,19 @@ def _make_results(n_terms=5, include_genes_col=False):
 
 
 def _make_empty_results():
-    """创建空结果的 DataFrame。"""
+    """Create an empty enrichment result table."""
     return {"GO_Biological_Process": pd.DataFrame()}
 
 
 # ===========================================================================
-# 1. MockInterpreter 测试
+# 1. MockInterpreter Test
 # ===========================================================================
 
 class TestMockInterpreter:
-    """测试 MockInterpreter 模拟解释器。"""
+    """Tests for deterministic mock interpretations."""
 
     def test_interpret_normal(self):
-        """interpret() 正常工作（传入 mock DataFrame）。"""
+        """Verify interpretation of a non-empty result table."""
         from allenricher.ai.interpreter import MockInterpreter
 
         interpreter = MockInterpreter()
@@ -64,18 +61,18 @@ class TestMockInterpreter:
         assert "5 terms" in interpretations["GO_Biological_Process"]
 
     def test_interpret_empty_results(self):
-        """interpret() 空结果时不返回该数据库的解读。"""
+        """Verify that empty database results do not produce an interpretation."""
         from allenricher.ai.interpreter import MockInterpreter
 
         interpreter = MockInterpreter()
         results = _make_empty_results()
         interpretations = interpreter.interpret(results)
 
-        # MockInterpreter 对空结果直接 continue，不放入字典
+        # Empty database results are omitted from the interpretation mapping.
         assert "GO_Biological_Process" not in interpretations
 
     def test_interpret_fewer_than_20(self):
-        """interpret() 不足 20 条时按实际数量展示。"""
+        """When the number of interpret() is not enough, the number of items is displayed in real terms."""
         from allenricher.ai.interpreter import MockInterpreter
 
         interpreter = MockInterpreter()
@@ -84,12 +81,12 @@ class TestMockInterpreter:
         interpretations = interpreter.interpret(results)
 
         text = interpretations["GO_Biological_Process"]
-        # 应包含全部 n 个条目名称
+        # should contain all n entry names
         for i in range(n):
             assert f"biological_process_{i}" in text
 
     def test_interpret_exactly_20(self):
-        """interpret() 恰好 20 条时全部展示。"""
+        """Interpret() is displayed at exactly 20 times."""
         from allenricher.ai.interpreter import MockInterpreter
 
         interpreter = MockInterpreter()
@@ -101,7 +98,7 @@ class TestMockInterpreter:
             assert f"biological_process_{i}" in text
 
     def test_interpret_more_than_20(self):
-        """interpret() 超过 20 条时只展示前 20 条。"""
+        """Only the previous 20 when the interpret() exceeds 20."""
         from allenricher.ai.interpreter import MockInterpreter
 
         interpreter = MockInterpreter()
@@ -109,14 +106,14 @@ class TestMockInterpreter:
         interpretations = interpreter.interpret(results)
 
         text = interpretations["GO_Biological_Process"]
-        # 前 20 个应出现
+        # Top 20 should appear
         for i in range(20):
             assert f"biological_process_{i}" in text
-        # 第 21 个不应出现（head(20) 截断）
+        # 21 should not appear (head (20) cut)
         assert "biological_process_20" not in text
 
     def test_summarize_term(self):
-        """summarize_term() 正常工作。"""
+        """Summarize_term() is working normally."""
         from allenricher.ai.interpreter import MockInterpreter
 
         interpreter = MockInterpreter()
@@ -126,7 +123,7 @@ class TestMockInterpreter:
         assert "3 genes" in summary
 
     def test_summarize_term_empty_genes(self):
-        """summarize_term() 空基因列表。"""
+        """Qualified by the name of the name of the person."""
         from allenricher.ai.interpreter import MockInterpreter
 
         interpreter = MockInterpreter()
@@ -136,7 +133,7 @@ class TestMockInterpreter:
         assert "0 genes" in summary
 
     def test_create_interpreter_mock(self):
-        """create_interpreter("mock") 返回 MockInterpreter 后端。"""
+        """Create_interpreter("mock") returns the MockInterpreter backend."""
         from allenricher.ai.interpreter import create_interpreter
 
         interpreter = create_interpreter("mock")
@@ -145,14 +142,14 @@ class TestMockInterpreter:
 
 
 # ===========================================================================
-# 2. OpenAIInterpreter 测试
+# OpenAIInterpreter test
 # ===========================================================================
 
 class TestOpenAIInterpreter:
-    """测试 OpenAIInterpreter（mock openai 包）。"""
+    """Test OpenAIInterpreter (mock openaii package)."""
 
     def test_call_api_success(self):
-        """_call_api() 正常调用返回结果。"""
+        """_call_api() returns the normal call."""
         from allenricher.ai.interpreter import OpenAIInterpreter
 
         interpreter = OpenAIInterpreter(api_key="test-key")
@@ -172,20 +169,20 @@ class TestOpenAIInterpreter:
             mock_client.chat.completions.create.assert_called_once()
 
     def test_call_api_import_error(self):
-        """_call_api() ImportError 降级处理。"""
+        """_call_api() ImportError downgraded."""
         from allenricher.ai.interpreter import OpenAIInterpreter
 
         interpreter = OpenAIInterpreter(api_key="test-key")
 
         with patch.dict("sys.modules", {"openai": None}):
-            # 让 import openai 抛出 ImportError
+            # Let the import openaii throw ImportError
             with patch("builtins.__import__", side_effect=ImportError("No module named openai")):
                 result = interpreter._call_api("test prompt")
                 assert "Error" in result
                 assert "not installed" in result
 
     def test_call_api_exception(self):
-        """_call_api() 其他异常处理。"""
+        """_call_api() other anomalies."""
         from allenricher.ai.interpreter import OpenAIInterpreter
 
         interpreter = OpenAIInterpreter(api_key="test-key")
@@ -199,7 +196,7 @@ class TestOpenAIInterpreter:
             assert "API connection failed" in result
 
     def test_interpret_extracts_top_20(self):
-        """interpret() 提取 Top 20 条目。"""
+        """Interpret() extracts Top 20 entries."""
         from allenricher.ai.interpreter import OpenAIInterpreter
 
         interpreter = OpenAIInterpreter(api_key="test-key")
@@ -218,7 +215,7 @@ class TestOpenAIInterpreter:
             interpretations = interpreter.interpret(results)
 
             assert "GO_Biological_Process" in interpretations
-            # 验证 prompt 中只包含前 20 条
+            # The prompt includes at most the top 20 terms.
             call_args = mock_client.chat.completions.create.call_args
             prompt = call_args[1]["messages"][1]["content"]
             assert "Top 20" in prompt
@@ -227,7 +224,7 @@ class TestOpenAIInterpreter:
             assert "biological_process_20" not in prompt
 
     def test_interpret_empty_results_no_api_call(self):
-        """interpret() 空结果不调用 API。"""
+        """An empty result does not call API."""
         from allenricher.ai.interpreter import OpenAIInterpreter
 
         interpreter = OpenAIInterpreter(api_key="test-key")
@@ -237,11 +234,11 @@ class TestOpenAIInterpreter:
             interpretations = interpreter.interpret(results)
 
             assert "GO_Biological_Process" in interpretations
-            assert "No significant enrichment" in interpretations["GO_Biological_Process"]
+            assert "No enrichment terms were available" in interpretations["GO_Biological_Process"]
             mock_call.assert_not_called()
 
     def test_interpret_no_api_key(self):
-        """interpret() 无 API key 时返回空字典。"""
+        """returns an empty dictionary when you have no API key."""
         from allenricher.ai.interpreter import OpenAIInterpreter
 
         interpreter = OpenAIInterpreter(api_key=None)
@@ -253,7 +250,7 @@ class TestOpenAIInterpreter:
             assert interpretations == {}
 
     def test_summarize_term_with_api_key(self):
-        """summarize_term() 有 API key 时正常调用。"""
+        """The submarize_term() is normally called when API key is available."""
         from allenricher.ai.interpreter import OpenAIInterpreter
 
         interpreter = OpenAIInterpreter(api_key="test-key")
@@ -272,7 +269,7 @@ class TestOpenAIInterpreter:
             assert result == "Cell division summary."
 
     def test_summarize_term_no_api_key(self):
-        """summarize_term() 无 API key 时返回空字符串。"""
+        """The empty string is returned when the sumarize_term() does not have API key."""
         from allenricher.ai.interpreter import OpenAIInterpreter
 
         interpreter = OpenAIInterpreter(api_key=None)
@@ -282,7 +279,7 @@ class TestOpenAIInterpreter:
         assert result == ""
 
     def test_summarize_term_truncates_long_gene_list(self):
-        """summarize_term() 超过 10 个基因时截断。"""
+        """Summarize_term() is cut when more than 10 genes are passed."""
         from allenricher.ai.interpreter import OpenAIInterpreter
 
         interpreter = OpenAIInterpreter(api_key="test-key")
@@ -302,21 +299,21 @@ class TestOpenAIInterpreter:
 
             call_args = mock_client.chat.completions.create.call_args
             prompt = call_args[1]["messages"][1]["content"]
-            # 前 10 个基因应出现，第 11 个不应出现
+            # The first 10 genes should appear, the eleventh should not appear.
             assert "GENE9" in prompt
             assert "GENE10" not in prompt
             assert "..." in prompt
 
 
 # ===========================================================================
-# 3. ClaudeInterpreter 测试
+# 3. ClaudeInterpreter test
 # ===========================================================================
 
 class TestClaudeInterpreter:
-    """测试 ClaudeInterpreter（mock anthropic 包）。"""
+    """Test Claude Interpreter (mock anthropological package)."""
 
     def test_call_api_success(self):
-        """_call_api() 正常调用返回结果。"""
+        """_call_api() returns the normal call."""
         from allenricher.ai.interpreter import ClaudeInterpreter
 
         interpreter = ClaudeInterpreter(api_key="test-key")
@@ -338,7 +335,7 @@ class TestClaudeInterpreter:
             mock_client.messages.create.assert_called_once()
 
     def test_call_api_import_error(self):
-        """_call_api() ImportError 降级处理。"""
+        """_call_api() ImportError downgraded."""
         from allenricher.ai.interpreter import ClaudeInterpreter
 
         interpreter = ClaudeInterpreter(api_key="test-key")
@@ -349,7 +346,7 @@ class TestClaudeInterpreter:
             assert "not installed" in result
 
     def test_call_api_exception(self):
-        """_call_api() 其他异常处理。"""
+        """_call_api() other anomalies."""
         from allenricher.ai.interpreter import ClaudeInterpreter
 
         interpreter = ClaudeInterpreter(api_key="test-key")
@@ -363,7 +360,7 @@ class TestClaudeInterpreter:
             assert "Claude API error" in result
 
     def test_interpret_no_api_key(self):
-        """interpret() 无 API key 时返回空字典。"""
+        """returns an empty dictionary when you have no API key."""
         from allenricher.ai.interpreter import ClaudeInterpreter
 
         interpreter = ClaudeInterpreter(api_key=None)
@@ -374,7 +371,7 @@ class TestClaudeInterpreter:
         assert interpretations == {}
 
     def test_interpret_empty_results(self):
-        """interpret() 空结果不调用 API。"""
+        """An empty result does not call API."""
         from allenricher.ai.interpreter import ClaudeInterpreter
 
         interpreter = ClaudeInterpreter(api_key="test-key")
@@ -384,11 +381,11 @@ class TestClaudeInterpreter:
             interpretations = interpreter.interpret(results)
 
             assert "GO_Biological_Process" in interpretations
-            assert "No significant enrichment" in interpretations["GO_Biological_Process"]
+            assert "No enrichment terms were available" in interpretations["GO_Biological_Process"]
             mock_call.assert_not_called()
 
     def test_summarize_term_no_api_key(self):
-        """summarize_term() 无 API key 时返回空字符串。"""
+        """The empty string is returned when the sumarize_term() does not have API key."""
         from allenricher.ai.interpreter import ClaudeInterpreter
 
         interpreter = ClaudeInterpreter(api_key=None)
@@ -399,14 +396,14 @@ class TestClaudeInterpreter:
 
 
 # ===========================================================================
-# 4. OllamaInterpreter 测试
+# 4. OlamaInterpreter test
 # ===========================================================================
 
 class TestOllamaInterpreter:
-    """测试 OllamaInterpreter（mock requests.post）。"""
+    """Test OlamaInterpreter (mock recests.post)."""
 
     def test_call_api_success(self):
-        """_call_api() 正常调用返回结果。"""
+        """_call_api() returns the normal call."""
         from allenricher.ai.interpreter import OllamaInterpreter
 
         interpreter = OllamaInterpreter(model="llama2")
@@ -419,14 +416,14 @@ class TestOllamaInterpreter:
             result = interpreter._call_api("test prompt")
             assert result == "Ollama generated text."
             mock_post.assert_called_once()
-            # 验证请求 URL 和参数
+            # Validation request URL and parameters
             call_args = mock_post.call_args
             assert "localhost:11434/api/generate" in call_args[0][0]
             assert call_args[1]["json"]["model"] == "llama2"
             assert call_args[1]["json"]["stream"] is False
 
     def test_call_api_connection_failure(self):
-        """_call_api() 连接失败处理。"""
+        """_call_api() Connection failed to process."""
         from allenricher.ai.interpreter import OllamaInterpreter
 
         interpreter = OllamaInterpreter()
@@ -437,7 +434,7 @@ class TestOllamaInterpreter:
             assert "Connection refused" in result
 
     def test_call_api_http_error(self):
-        """_call_api() HTTP 错误状态码处理。"""
+        """_call_api() HTTP error state code processing."""
         from allenricher.ai.interpreter import OllamaInterpreter
 
         interpreter = OllamaInterpreter()
@@ -451,7 +448,7 @@ class TestOllamaInterpreter:
             assert "500" in result
 
     def test_call_api_import_error(self):
-        """_call_api() requests 未安装时降级处理。"""
+        """_call_api() downgrade when not installed."""
         from allenricher.ai.interpreter import OllamaInterpreter
 
         interpreter = OllamaInterpreter()
@@ -462,7 +459,7 @@ class TestOllamaInterpreter:
             assert "not installed" in result
 
     def test_interpret_empty_results(self):
-        """interpret() 空结果不调用 API。"""
+        """An empty result does not call API."""
         from allenricher.ai.interpreter import OllamaInterpreter
 
         interpreter = OllamaInterpreter()
@@ -472,11 +469,11 @@ class TestOllamaInterpreter:
             interpretations = interpreter.interpret(results)
 
             assert "GO_Biological_Process" in interpretations
-            assert "No significant enrichment" in interpretations["GO_Biological_Process"]
+            assert "No enrichment terms were available" in interpretations["GO_Biological_Process"]
             mock_call.assert_not_called()
 
     def test_interpret_normal(self):
-        """interpret() 正常工作。"""
+        """Interpret() is working."""
         from allenricher.ai.interpreter import OllamaInterpreter
 
         interpreter = OllamaInterpreter()
@@ -489,7 +486,7 @@ class TestOllamaInterpreter:
             assert interpretations["GO_Biological_Process"] == "Ollama interpretation."
 
     def test_summarize_term(self):
-        """summarize_term() 正常工作。"""
+        """Summarize_term() is working normally."""
         from allenricher.ai.interpreter import OllamaInterpreter
 
         interpreter = OllamaInterpreter()
@@ -500,14 +497,14 @@ class TestOllamaInterpreter:
 
 
 # ===========================================================================
-# 5. DeepSeek / GLM / MiniMaxInterpreter 测试
+# DeepSeek / GLM / MiniMaxInterpreter
 # ===========================================================================
 
 class TestDeepSeekInterpreter:
-    """测试 DeepSeekInterpreter。"""
+    """Test DeepSeekInterpreter."""
 
     def test_init_no_api_key(self):
-        """初始化时无 API key 的降级行为。"""
+        """API key is not downgraded at initialization."""
         from allenricher.ai.interpreter import DeepSeekInterpreter
 
         interpreter = DeepSeekInterpreter(api_key=None)
@@ -515,7 +512,7 @@ class TestDeepSeekInterpreter:
         assert interpreter.model == "deepseek-chat"
 
     def test_interpret_no_api_key(self):
-        """无 API key 时 interpret() 返回空字典。"""
+        """Returns empty dictionary when no API key() is available."""
         from allenricher.ai.interpreter import DeepSeekInterpreter
 
         interpreter = DeepSeekInterpreter(api_key=None)
@@ -526,7 +523,7 @@ class TestDeepSeekInterpreter:
         assert interpretations == {}
 
     def test_summarize_term_no_api_key(self):
-        """无 API key 时 summarize_term() 返回空字符串。"""
+        """The empty string returns the summarize_term() when there is no API key."""
         from allenricher.ai.interpreter import DeepSeekInterpreter
 
         interpreter = DeepSeekInterpreter(api_key=None)
@@ -536,7 +533,7 @@ class TestDeepSeekInterpreter:
         assert result == ""
 
     def test_call_api_success(self):
-        """_call_api() 正常调用（使用 openai SDK 兼容格式）。"""
+        """_call_api() is normally called (in openaii SDK compatible format)."""
         from allenricher.ai.interpreter import DeepSeekInterpreter
 
         interpreter = DeepSeekInterpreter(api_key="test-key")
@@ -553,14 +550,14 @@ class TestDeepSeekInterpreter:
 
             result = interpreter._call_api("test prompt")
             assert result == "DeepSeek result."
-            # 验证使用了 DeepSeek 的 base_url
+            # Validation uses base URL for DeepSeek
             mock_openai.OpenAI.assert_called_once_with(
                 api_key="test-key",
                 base_url="https://api.deepseek.com"
             )
 
     def test_call_api_import_error(self):
-        """_call_api() ImportError 降级。"""
+        """_call_api() ImportError downgrade."""
         from allenricher.ai.interpreter import DeepSeekInterpreter
 
         interpreter = DeepSeekInterpreter(api_key="test-key")
@@ -572,10 +569,10 @@ class TestDeepSeekInterpreter:
 
 
 class TestGLMInterpreter:
-    """测试 GLMInterpreter。"""
+    """Test GLMInterpreter."""
 
     def test_init_no_api_key(self):
-        """初始化时无 API key 的降级行为。"""
+        """API key is not downgraded at initialization."""
         from allenricher.ai.interpreter import GLMInterpreter
 
         interpreter = GLMInterpreter(api_key=None)
@@ -583,7 +580,7 @@ class TestGLMInterpreter:
         assert interpreter.model == "glm-4"
 
     def test_interpret_no_api_key(self):
-        """无 API key 时 interpret() 返回空字典。"""
+        """Returns empty dictionary when no API key() is available."""
         from allenricher.ai.interpreter import GLMInterpreter
 
         interpreter = GLMInterpreter(api_key=None)
@@ -594,7 +591,7 @@ class TestGLMInterpreter:
         assert interpretations == {}
 
     def test_summarize_term_no_api_key(self):
-        """无 API key 时 summarize_term() 返回空字符串。"""
+        """The empty string returns the summarize_term() when there is no API key."""
         from allenricher.ai.interpreter import GLMInterpreter
 
         interpreter = GLMInterpreter(api_key=None)
@@ -604,7 +601,7 @@ class TestGLMInterpreter:
         assert result == ""
 
     def test_call_api_success(self):
-        """_call_api() 正常调用。"""
+        """_call_api() is on normal call."""
         from allenricher.ai.interpreter import GLMInterpreter
 
         interpreter = GLMInterpreter(api_key="test-key")
@@ -621,7 +618,7 @@ class TestGLMInterpreter:
 
             result = interpreter._call_api("test prompt")
             assert result == "GLM result."
-            # 验证使用了 GLM 的 base_url
+            # Validate base_url using GLM
             mock_openai.OpenAI.assert_called_once_with(
                 api_key="test-key",
                 base_url="https://open.bigmodel.cn/api/paas/v4"
@@ -629,10 +626,10 @@ class TestGLMInterpreter:
 
 
 class TestMiniMaxInterpreter:
-    """测试 MiniMaxInterpreter。"""
+    """Test MiniMax Interpreter."""
 
     def test_init_no_api_key(self):
-        """初始化时无 API key 的降级行为。"""
+        """API key is not downgraded at initialization."""
         from allenricher.ai.interpreter import MiniMaxInterpreter
 
         interpreter = MiniMaxInterpreter(api_key=None, group_id=None)
@@ -641,7 +638,7 @@ class TestMiniMaxInterpreter:
         assert interpreter.model == "abab6.5s-chat"
 
     def test_interpret_no_api_key(self):
-        """无 API key 或 group_id 时 interpret() 返回空字典。"""
+        """Returns empty dictionary when no API key or group_id is available."""
         from allenricher.ai.interpreter import MiniMaxInterpreter
 
         interpreter = MiniMaxInterpreter(api_key=None, group_id=None)
@@ -651,7 +648,7 @@ class TestMiniMaxInterpreter:
         assert interpretations == {}
 
     def test_interpret_no_group_id(self):
-        """有 API key 但无 group_id 时 interpret() 返回空字典。"""
+        """API key returns an empty dictionary when there is no group_id"""
         from allenricher.ai.interpreter import MiniMaxInterpreter
 
         interpreter = MiniMaxInterpreter(api_key="test-key", group_id=None)
@@ -661,7 +658,7 @@ class TestMiniMaxInterpreter:
         assert interpretations == {}
 
     def test_summarize_term_no_api_key(self):
-        """无 API key 时 summarize_term() 返回空字符串。"""
+        """The empty string returns the summarize_term() when there is no API key."""
         from allenricher.ai.interpreter import MiniMaxInterpreter
 
         interpreter = MiniMaxInterpreter(api_key=None, group_id=None)
@@ -670,19 +667,19 @@ class TestMiniMaxInterpreter:
         assert result == ""
 
     def test_call_api_no_credentials(self):
-        """_call_api() 无凭证时返回错误。"""
+        """_call_api() returns error when no documents are available."""
         from allenricher.ai.interpreter import MiniMaxInterpreter
 
         interpreter = MiniMaxInterpreter(api_key=None, group_id=None)
 
-        # 需要 mock openai 包使 import 成功，但 api_key/group_id 检查在调用前
+        # %1 requires a lock openanai package to make the import successful, but api_key/group_idCheck before calling
         with patch.dict("sys.modules", {"openai": MagicMock()}):
             result = interpreter._call_api("test prompt")
             assert "Error" in result
             assert "not configured" in result
 
     def test_call_api_success(self):
-        """_call_api() 正常调用。"""
+        """_call_api() is on normal call."""
         from allenricher.ai.interpreter import MiniMaxInterpreter
 
         interpreter = MiniMaxInterpreter(api_key="test-key", group_id="test-group")
@@ -702,14 +699,14 @@ class TestMiniMaxInterpreter:
 
 
 # ===========================================================================
-# 6. AIInterpreter 门面类测试
+# 6. AIInterpreter Dock Test
 # ===========================================================================
 
 class TestAIInterpreterFacade:
-    """测试 AIInterpreter 门面类。"""
+    """Test the AIInterpreter frontal class."""
 
     def test_interpret_results_calls_backend(self):
-        """interpret_results() 调用后端并返回结果。"""
+        """Interpret_revers() calls backend and returns result."""
         from allenricher.ai.interpreter import AIInterpreter
 
         interpreter = AIInterpreter(backend="mock")
@@ -721,7 +718,7 @@ class TestAIInterpreterFacade:
         assert "enrichment" in interpretations["GO_Biological_Process"].lower()
 
     def test_interpret_results_empty(self):
-        """interpret_results() 空结果处理。"""
+        """An empty result process."""
         from allenricher.ai.interpreter import AIInterpreter
 
         interpreter = AIInterpreter(backend="mock")
@@ -729,22 +726,22 @@ class TestAIInterpreterFacade:
 
         interpretations = interpreter.interpret_results(results)
 
-        # MockInterpreter 对空结果不放入字典
+        # MockiInterpreter does not put results in dictionaries.
         assert len(interpretations) == 0
 
     def test_interpret_results_with_context(self):
-        """interpret_results() 传入 context 参数。"""
+        """Enter_ret_results() into the context parameter."""
         from allenricher.ai.interpreter import AIInterpreter
 
         interpreter = AIInterpreter(backend="mock")
         results = _make_results(n_terms=2)
 
-        # MockInterpreter 不使用 context，但不应抛出异常
+        # MockiInterpreter does not use context, but should not throw out an anomaly.
         interpretations = interpreter.interpret_results(results, context="cancer research")
         assert "GO_Biological_Process" in interpretations
 
     def test_interpret_results_include_term_summaries(self):
-        """include_term_summaries=True 时生成条目总结。"""
+        """Include_term_summaries=True generates a summary of entries."""
         from allenricher.ai.interpreter import AIInterpreter
 
         interpreter = AIInterpreter(backend="mock")
@@ -754,19 +751,19 @@ class TestAIInterpreterFacade:
             results, include_term_summaries=True
         )
 
-        # 应包含整体解读
+        # It should be read in its entirety.
         assert "GO_Biological_Process" in interpretations
-        # 应包含条目总结
+        # Summary of entries to be included
         assert "GO_Biological_Process_term_summaries" in interpretations
         term_summaries = interpretations["GO_Biological_Process_term_summaries"]
         assert isinstance(term_summaries, dict)
         assert len(term_summaries) == 3
-        # 验证每个条目总结包含基因数量信息
+        # Verify that each entry summary contains gene-set information
         for term_name, summary in term_summaries.items():
             assert "genes" in summary.lower()
 
     def test_interpret_results_include_term_summaries_empty(self):
-        """include_term_summaries=True 但结果为空时不生成条目总结。"""
+        """Include_term_summaries=True but results are empty and do not result in an entry summary."""
         from allenricher.ai.interpreter import AIInterpreter
 
         interpreter = AIInterpreter(backend="mock")
@@ -779,7 +776,7 @@ class TestAIInterpreterFacade:
         assert "GO_Biological_Process_term_summaries" not in interpretations
 
     def test_generate_report_section(self):
-        """generate_report_section() 生成 HTML。"""
+        """Generates HTML."""
         from allenricher.ai.interpreter import AIInterpreter
 
         interpreter = AIInterpreter(backend="mock")
@@ -795,7 +792,7 @@ class TestAIInterpreterFacade:
         assert "ai-disclaimer" in html
 
     def test_generate_report_section_empty_results(self):
-        """generate_report_section() 空结果时生成 HTML（无解读内容）。"""
+        """......................"""
         from allenricher.ai.interpreter import AIInterpreter
 
         interpreter = AIInterpreter(backend="mock")
@@ -805,11 +802,11 @@ class TestAIInterpreterFacade:
 
         assert "<div" in html
         assert "AI-Powered Interpretation" in html
-        # 不应包含任何数据库解读块
+        # Should not contain any database reading blocks
         assert "GO_Biological_Process" not in html
 
     def test_generate_report_section_with_context(self):
-        """generate_report_section() 传入 context 参数。"""
+        """Generate_report_section() to enter parameters."""
         from allenricher.ai.interpreter import AIInterpreter
 
         interpreter = AIInterpreter(backend="mock")
@@ -819,7 +816,7 @@ class TestAIInterpreterFacade:
         assert "AI-Powered Interpretation" in html
 
     def test_generate_report_section_excludes_term_summaries(self):
-        """generate_report_section() 不包含条目总结（仅整体解读）。"""
+        """Generate_report_section() does not include the summary of entries (read as a whole only)."""
         from allenricher.ai.interpreter import AIInterpreter
 
         interpreter = AIInterpreter(backend="mock")
@@ -827,11 +824,11 @@ class TestAIInterpreterFacade:
 
         html = interpreter.generate_report_section(results)
 
-        # HTML 中不应出现 _term_summaries 相关内容
+        # _term_summaries
         assert "_term_summaries" not in html
 
     def test_backend_name_stored(self):
-        """backend_name 正确存储。"""
+        """The right memory."""
         from allenricher.ai.interpreter import AIInterpreter
 
         for backend in ["mock", "openai", "claude", "ollama", "deepseek", "glm", "minimax"]:
@@ -843,21 +840,21 @@ class TestAIInterpreterFacade:
 
 
 # ===========================================================================
-# 7. 工厂函数测试
+# 7. Factorial function testing
 # ===========================================================================
 
 class TestFactoryFunctions:
-    """测试 create_interpreter() 和 get_available_backends() 工厂函数。"""
+    """Tests the Create_interpreter() and get_available_backends() factory functions."""
 
     def test_create_interpreter_mock(self):
-        """create_interpreter("mock") 返回正确实例。"""
+        """Create_interpreter("mock") returns the correct example."""
         from allenricher.ai.interpreter import create_interpreter
 
         interpreter = create_interpreter("mock")
         assert interpreter.backend_name == "mock"
 
     def test_create_interpreter_openai(self):
-        """create_interpreter("openai") 返回正确实例。"""
+        """returns correct examples."""
         from allenricher.ai.interpreter import create_interpreter
 
         interpreter = create_interpreter("openai", api_key="test-key")
@@ -865,7 +862,7 @@ class TestFactoryFunctions:
         assert interpreter.interpreter.api_key == "test-key"
 
     def test_create_interpreter_claude(self):
-        """create_interpreter("claude") 返回正确实例。"""
+        """returns correct examples."""
         from allenricher.ai.interpreter import create_interpreter
 
         interpreter = create_interpreter("claude", api_key="test-key")
@@ -873,7 +870,7 @@ class TestFactoryFunctions:
         assert interpreter.interpreter.api_key == "test-key"
 
     def test_create_interpreter_ollama(self):
-        """create_interpreter("ollama") 返回正确实例。"""
+        """Create_interpreter("olama") returns the correct example."""
         from allenricher.ai.interpreter import create_interpreter
 
         interpreter = create_interpreter("ollama", model="mistral")
@@ -881,7 +878,7 @@ class TestFactoryFunctions:
         assert interpreter.interpreter.model == "mistral"
 
     def test_create_interpreter_deepseek(self):
-        """create_interpreter("deepseek") 返回正确实例。"""
+        """Create_interpret ("deepseek") returns the correct example."""
         from allenricher.ai.interpreter import create_interpreter
 
         interpreter = create_interpreter("deepseek", api_key="test-key")
@@ -889,7 +886,7 @@ class TestFactoryFunctions:
         assert interpreter.interpreter.api_key == "test-key"
 
     def test_create_interpreter_glm(self):
-        """create_interpreter("glm") 返回正确实例。"""
+        """returns correct examples."""
         from allenricher.ai.interpreter import create_interpreter
 
         interpreter = create_interpreter("glm", api_key="test-key")
@@ -897,7 +894,7 @@ class TestFactoryFunctions:
         assert interpreter.interpreter.api_key == "test-key"
 
     def test_create_interpreter_minimax(self):
-        """create_interpreter("minimax") 返回正确实例。"""
+        """returns correct examples."""
         from allenricher.ai.interpreter import create_interpreter
 
         interpreter = create_interpreter(
@@ -908,21 +905,21 @@ class TestFactoryFunctions:
         assert interpreter.interpreter.group_id == "test-group"
 
     def test_create_interpreter_invalid(self):
-        """create_interpreter("invalid") 抛出 ValueError。"""
+        """"Create_interpreter" throws down ValueError."""
         from allenricher.ai.interpreter import create_interpreter
 
         with pytest.raises(ValueError, match="Unknown backend"):
             create_interpreter("invalid")
 
     def test_create_interpreter_default_backend(self):
-        """create_interpreter() 默认使用 mock 后端。"""
+        """Create_interpreter() uses the mock backend by default."""
         from allenricher.ai.interpreter import create_interpreter
 
         interpreter = create_interpreter()
         assert interpreter.backend_name == "mock"
 
     def test_get_available_backends(self):
-        """get_available_backends() 返回列表。"""
+        """get_available_backends() returns the list."""
         from allenricher.ai.interpreter import get_available_backends
 
         backends = get_available_backends()
@@ -933,28 +930,28 @@ class TestFactoryFunctions:
 
 
 # ===========================================================================
-# 8. 抽象基类接口一致性测试
+# 8. Consistency testing for the abstract base-based interface
 # ===========================================================================
 
 class TestAbstractBaseInterface:
-    """验证所有后端实现都遵循统一的抽象接口。"""
+    """Validates that all backends are performed following a unified abstract interface."""
 
     @pytest.fixture(params=["mock", "ollama"])
     def concrete_interpreter(self, request):
-        """创建不需要 API key 的具体解释器实例。"""
+        """Creates specific examples of interpretors that do not require API key."""
         from allenricher.ai.interpreter import AIInterpreter
 
         return AIInterpreter(backend=request.param)
 
     def test_interpret_signature(self, concrete_interpreter):
-        """interpret() 方法接受 Dict[str, DataFrame] 参数。"""
+        """Method accepts the Dit [str, DataFrame] parameter."""
         results = _make_results(n_terms=2)
-        # 不应抛出异常
+        # There's no need to throw out the anomaly.
         result = concrete_interpreter.interpreter.interpret(results)
         assert isinstance(result, dict)
 
     def test_summarize_term_signature(self, concrete_interpreter):
-        """summarize_term() 方法接受 str 和 List[str] 参数。"""
+        """The summarize_term() method accepts the st and list[str] parameters."""
         result = concrete_interpreter.interpreter.summarize_term("test_term", ["GENE1"])
         assert isinstance(result, str)
 

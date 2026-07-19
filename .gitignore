@@ -30,7 +30,7 @@ htmlcov/
 # Project specific
 .cache/
 /database/
-/results/
+results/
 
 # OS
 .DS_Store
@@ -43,16 +43,21 @@ Thumbs.db
 test_output/
 test_artifacts/
 test_reports/
-test_e2e_2026/
+test_e2e_2026/*
+!test_e2e_2026/audit_e2e_outputs.py
+!test_e2e_2026/create_visual_contact_sheet.py
+!test_e2e_2026/18_real_world_sci/
+!test_e2e_2026/18_real_world_sci/**
+test_e2e_2026/18_real_world_sci/__pycache__/
 gsea_test_output/
 test_wikipathways_output/
 database_test/
 test_results.xml
 test_output.log
+Rplots.pdf
+demo_output/
 serve_test_*.txt
 temp_*.txt
-Rplots.pdf
-**/Rplots.pdf
 
 # Temporary input data
 00_input_data/

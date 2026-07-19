@@ -1,4 +1,4 @@
-"""AI模块 - 提供AI驱动的富集分析结果解读，支持OpenAI、Claude、DeepSeek、GLM、MiniMax、Ollama等后端"""
+"""AI module - Provides an AI-driven interpretation of the enrichment analysis results in support of backends such as OpenAI, Claude, DeepSeek, GLM, MiniMax, Ollama"""
 from allenricher.ai.interpreter import (
     AIInterpreter,
     create_interpreter,
@@ -9,7 +9,10 @@ from allenricher.ai.interpreter import (
     GLMInterpreter,
     MiniMaxInterpreter,
     OllamaInterpreter,
-    MockInterpreter
+    MockInterpreter,
+    build_structured_evidence,
+    build_interpretation_prompt,
+    validate_interpretation,
 )
 
 __all__ = [
@@ -22,5 +25,8 @@ __all__ = [
     "GLMInterpreter",
     "MiniMaxInterpreter",
     "OllamaInterpreter",
-    "MockInterpreter"
+    "MockInterpreter",
+    "build_structured_evidence",
+    "build_interpretation_prompt",
+    "validate_interpretation",
 ]

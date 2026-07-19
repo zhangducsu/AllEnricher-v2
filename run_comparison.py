@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-运行v2富集分析并与v1结果进行对比
+Run v2 enrichment analysis and compare with v1 results
 """
 
 import sys
@@ -9,7 +9,7 @@ from pathlib import Path
 import pandas as pd
 import numpy as np
 
-# 添加项目路径
+# Add Item Path
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
@@ -19,7 +19,7 @@ from allenricher.database.manager import DatabaseManager
 
 
 def load_v1_results(v1_results_dir):
-    """加载v1的结果文件"""
+    """Loading of the outcome document of v1"""
     results = {}
     v1_dir = Path(v1_results_dir)
     
@@ -36,63 +36,63 @@ def load_v1_results(v1_results_dir):
         if filepath.exists():
             try:
                 df = pd.read_csv(filepath, sep='\t')
-                # 确保TermID是字符串格式
+                # Make sure TermID is string formatting
                 if 'TermID' in df.columns:
                     df['TermID'] = df['TermID'].astype(str)
                 results[db_name] = df
-                print(f"✓ 加载v1 {db_name} 结果: {len(df)} 个条目")
+                print(f"* Loadingv1{db_name}Outcome: {len(df)}Entry")
             except Exception as e:
-                print(f"✗ 加载v1 {db_name} 失败: {e}")
+                print(f"Failed to load {db_name} from v1: {e}")
     
     return results
 
 
 def main():
     print("=" * 80)
-    print("AllEnricher v1 vs v2 对比分析")
+    print("AllEnricher v1 vs v2 Comparative analysis")
     print("=" * 80)
     
-    # 路径设置
+    # Path Settings
     v1_dir = Path(__file__).parent.parent / "AllEnricher-v1"
     v1_results_dir = v1_dir / "example" / "allenricher" / "fisher" / "Q0.05"
     v1_db_dir = v1_dir / "database" / "organism" / "v20190612" / "hsa"
     v2_output_dir = Path(__file__).parent / "comparison_output"
     
-    # 创建输出目录
+    # Create Output Directory
     v2_output_dir.mkdir(exist_ok=True)
     
-    # 1. 加载基因列表
-    print("\n1. 加载基因列表...")
+    # 1. Listing of loaded genes
+    print("\n1. Loading of gene lists...")
     gene_list_file = Path(__file__).parent / "example_genes.txt"
     with open(gene_list_file, 'r') as f:
         genes = [line.strip() for line in f if line.strip()]
-    print(f"   输入基因数: {len(genes)}")
+    print(f"Entering number of genes: {len(genes)}")
     
-    # 2. 配置分析
-    print("\n2. 配置分析...")
+    # 2. Configuration analysis
+    print("\n2. Configuration analysis...")
     config = Config(
         species="hsa",
         databases=["GO", "KEGG", "Reactome", "DO"],
         method="fisher",
         correction="BH",
-        pvalue_cutoff=1.0,  # 不做截断，获取完整结果以便对比
+        pvalue_cutoff=1.0,  # No cut, get the full results for comparison.
         qvalue_cutoff=1.0,
         output_dir=str(v2_output_dir),
         generate_report=False
     )
     
-    # 3. 加载数据库
-    print("\n3. 加载数据库...")
+    # 3. Loading of databases
+    print("\n3. Loading of databases...")
     try:
         db_manager = DatabaseManager(
             database_dir=str(v1_db_dir),
             species="hsa"
         )
         db_manager.load_databases(["GO", "KEGG", "Reactome", "DO"])
-        print("✓ 数据库加载成功")
+        print("* Database loaded successfully")
     except Exception as e:
-        print(f"✗ 数据库加载失败: {e}")
-        print(f"  尝试使用test_db...")
+        print(f"Could not close temporary folder: %s{e}")
+        print(f"Try using test_db...")
         test_db_dir = Path(__file__).parent / "test_db"
         if test_db_dir.exists():
             try:
@@ -101,52 +101,52 @@ def main():
                     species="hsa"
                 )
                 db_manager.load_databases(["GO", "KEGG"])
-                print("✓ test_db 加载成功")
+                print("* Test_db loaded successfully")
             except Exception as e2:
-                print(f"✗ test_db 也加载失败: {e2}")
+                print(f"test_db failed to load: {e2}")
                 return
         else:
-            print(f"✗ test_db 不存在: {test_db_dir}")
+            print(f"test_db does not exist: {test_db_dir}")
             return
     
-    # 4. 运行v2分析
-    print("\n4. 运行v2富集分析...")
+    # 4. Operational v2 analysis
+    print("\n4. Run v2 enrichment analysis...")
     try:
         analyzer = EnrichmentAnalyzer(config)
         database_data = db_manager.get_all_term_data()
         
-        # 加载背景基因
+        # Load background genes
         background_genes = db_manager.get_background_genes()
-        print(f"   背景基因数: {len(background_genes)}")
+        print(f"Background genes: {len(background_genes)}")
         
-        # 运行分析
+        # Run Analysis
         v2_results = analyzer.run_analysis(
             gene_set=set(genes),
             background_set=background_genes,
             database_data=database_data
         )
         
-        print(f"✓ 分析完成，结果数据库数: {len(v2_results)}")
+        print(f"• Analysis completed, result database number: {len(v2_results)}")
         
-        # 保存v2结果
+        # Save v2 results
         for db_name, df in v2_results.items():
             output_file = v2_output_dir / f"v2_{db_name}.tsv"
             df.to_csv(output_file, sep='\t', index=False)
-            print(f"   保存 {db_name}: {len(df)} 个条目 → {output_file.name}")
+            print(f"Save{db_name}: {len(df)}Entry{output_file.name}")
         
     except Exception as e:
-        print(f"✗ 分析失败: {e}")
+        print(f"Analysis failed: {e}")
         import traceback
         traceback.print_exc()
         return
     
-    # 5. 加载v1结果进行对比
-    print("\n5. 加载v1结果...")
+    # 5. Comparison of the results with the loading of v1
+    print("\n5. Loading v1 results...")
     v1_results = load_v1_results(v1_results_dir)
     
-    # 6. 对比结果
+    # 6. Comparative results
     print("\n" + "=" * 80)
-    print("结果对比")
+    print("Comparison of results")
     print("=" * 80)
     
     comparison_report = []
@@ -157,15 +157,15 @@ def main():
         v1_df = v1_results[db_name]
         v2_df = v2_results[db_name]
         
-        # 基本统计
-        print(f"  v1 条目数: {len(v1_df)}")
-        print(f"  v2 条目数: {len(v2_df)}")
+        # Basic statistics
+        print(f"v1 Entry: {len(v1_df)}")
+        print(f"v2 Entry: {len(v2_df)}")
         
-        # 尝试找到共同的列名进行对比
+        # Try to find a common listing to compare
         v1_cols = set(v1_df.columns)
         v2_cols = set(v2_df.columns)
         
-        # 找出共同条目
+        # Find common entry
         term_id_col_v1 = 'TermID' if 'TermID' in v1_cols else None
         term_id_col_v2 = None
         for col in ['TermID', 'term_id', 'ID']:
@@ -181,11 +181,11 @@ def main():
             v1_only = v1_terms - v2_terms
             v2_only = v2_terms - v1_terms
             
-            print(f"  共同条目: {len(common)}")
-            print(f"  v1特有: {len(v1_only)}")
-            print(f"  v2特有: {len(v2_only)}")
+            print(f"Common entry: {len(common)}")
+            print(f"v1 Specialized: {len(v1_only)}")
+            print(f"v2 Specialized: {len(v2_only)}")
             
-            # 找出显著条目（Q<0.05）
+            # Identify salient entries (Q<0.05)
             if 'adjP' in v1_df.columns and 'adjusted_pvalue' in v2_df.columns:
                 v1_sig = set(v1_df[v1_df['adjP'] < 0.05][term_id_col_v1].astype(str))
                 v2_sig = set(v2_df[v2_df['adjusted_pvalue'] < 0.05][term_id_col_v2].astype(str))
@@ -194,14 +194,14 @@ def main():
                 sig_v1_only = v1_sig - v2_sig
                 sig_v2_only = v2_sig - v1_sig
                 
-                print(f"\n  显著条目 (Q<0.05):")
+                print(f"\n  Significant Entry (Q<0.05):")
                 print(f"    v1: {len(v1_sig)}")
                 print(f"    v2: {len(v2_sig)}")
-                print(f"    共同显著: {len(sig_common)}")
-                print(f"    v1特有显著: {len(sig_v1_only)}")
-                print(f"    v2特有显著: {len(sig_v2_only)}")
+                print(f"Commonly significant: {len(sig_common)}")
+                print(f"V1 is very significant: {len(sig_v1_only)}")
+                print(f"V2 is remarkable: {len(sig_v2_only)}")
                 
-                # 保存对比结果
+                # Save comparison results
                 comparison_report.append({
                     'database': db_name,
                     'v1_total': len(v1_df),
@@ -214,11 +214,11 @@ def main():
                     'sig_v2_only': len(sig_v2_only)
                 })
                 
-                # 详细对比前几个条目
+                # Compare previous entries in detail
                 if len(sig_common) > 0:
-                    print(f"\n  共同显著条目对比 (前5个):")
+                    print(f"The \n common cross-references (previous five):")
                     
-                    # 获取共同条目的数据
+                    # Get data for common entries
                     common_sig_v1 = v1_df[v1_df[term_id_col_v1].astype(str).isin(sig_common)].head()
                     common_sig_v2 = v2_df[v2_df[term_id_col_v2].astype(str).isin(sig_common)].head()
                     
@@ -238,16 +238,16 @@ def main():
                             print(f"      v1: p={v1_p:.6g}, q={v1_q:.6g}")
                             print(f"      v2: p={v2_p:.6g}, q={v2_q:.6g}")
     
-    # 7. 保存对比报告
+    # 7. Preservation of comparative reports
     print("\n" + "=" * 80)
     if comparison_report:
         comparison_df = pd.DataFrame(comparison_report)
         report_file = v2_output_dir / "comparison_report.tsv"
         comparison_df.to_csv(report_file, sep='\t', index=False)
-        print(f"✓ 对比报告已保存至: {report_file}")
+        print(f"* Comparative report saved to: {report_file}")
     
-    print("\n完成!")
-    print(f"输出目录: {v2_output_dir}")
+    print("\nDone!")
+    print(f"Output directory: {v2_output_dir}")
 
 
 if __name__ == "__main__":

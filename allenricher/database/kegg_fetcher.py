@@ -1,18 +1,7 @@
-"""KEGG REST API 数据获取器
-
-通过 KEGG REST API 批量接口获取物种通路数据，替代 v1 的 HTML 网页爬取。
-
-API 接口：
-  - list/pathway/{org}          → 物种所有通路 ID + 名称
-  - link/{org}/pathway          → 所有基因-通路关联
-  - conv/{org}/ncbi-geneid      → KEGG ID ↔ NCBI Gene ID 映射
-
-性能：仅 3 次 API 请求即可获取全部数据（vs v1 的 ~340 次 HTML 请求）。
-
-对应 v1 脚本：keggMapGrab.R + pathway2tab.pl + makeDB.kegg.v1.1.sh
-"""
+"""Retrieve species-specific pathway annotations through the KEGG REST API."""
 
 import gzip
+import re
 import time
 import urllib.request
 import urllib.error
@@ -21,110 +10,92 @@ from typing import Dict, List, Optional, Tuple
 
 
 class KEGGFetcher:
-    """KEGG REST API 数据获取器
-
-    Usage::
-
-        fetcher = KEGGFetcher(cache_dir='./database/basic/kegg')
-        gene2pathway, pathway_summary = fetcher.fetch_species_data('hsa', 'gene_info.gz')
-    """
+    """Fetch pathway membership, names, and categories for one KEGG organism."""
 
     BASE_URL = "https://rest.kegg.jp"
-    # KEGG 要求每秒不超过 10 次请求
-    REQUEST_INTERVAL = 0.15  # 秒
+    # Kegg requires no more than 10 requests per second
+    REQUEST_INTERVAL = 0.15  # sec
+    MAX_RETRIES = 3
     UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 
     def __init__(self, cache_dir: str, overwrite: bool = False):
         """
         Args:
-            cache_dir: 缓存目录（存放下载的原始数据和生成的文件）
-            overwrite: 是否覆盖已缓存的数据
+cache_dir: Cache Directory (Store downloaded raw data and generated files)
+overwrite: Whether to overwrite the cached data
         """
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.overwrite = overwrite
 
     # ================================================================
-    # 公共接口
+    # Public interface
     # ================================================================
 
     def fetch_species_data(
         self,
         species: str,
         gene_info_path: str,
+        taxid: Optional[int] = None,
     ) -> Tuple[str, str]:
-        """获取物种 KEGG 数据并生成标准格式文件
-
-        通过 3 次 KEGG REST API 请求获取全部数据，结合 gene_info.gz
-        中的基因 Symbol 映射，生成与 KEGGParser 兼容的输入文件。
-
-        Args:
-            species: KEGG 物种代码（如 'hsa', 'mmu'）
-            gene_info_path: gene_info.gz 文件路径
-
-        Returns:
-            (gene2pathway_path, pathway_summary_path)
-            可直接传给 KEGGParser.build_database()
-        """
+        """Retrieve and convert source annotations for one species."""
         print(f"\n{'='*60}")
-        print(f"KEGG REST API 数据获取 (species={species})")
+        print(f"KEGREST API Data Acquisition (SPECies={species})")
         print(f"{'='*60}")
 
-        # Step 1: 获取通路列表
+        # Step 1: Retrieve the pathway list.
         pathways = self._list_pathways(species)
-        print(f"|--- 通路列表: {len(pathways)} 个通路")
+        print(f"|--- Retrieved {len(pathways)} KEGG pathways.")
 
-        # Step 2: 获取基因-通路关联
+        # Step 2: Retrieve pathway-to-gene associations.
         gene_pathway_links = self._get_gene_pathway_links(species)
-        print(f"|--- 基因-通路关联: {len(gene_pathway_links)} 个基因")
+        print(f"|---Gene-pathway associations: {len(gene_pathway_links)}")
 
-        # Step 3: 获取 KEGG ID → NCBI Gene ID 映射
+        # Step 3: Get KEGID *NCBI Gene ID map
         kegg_to_ncbi = self._get_kegg_ncbi_mapping(species)
-        print(f"|--- ID 映射: {len(kegg_to_ncbi)} 个 KEGG 基因")
+        print(f"|---ID map: {len(kegg_to_ncbi)}KEGG Gene")
 
-        # Step 4: 构建 NCBI Gene ID → Symbol 映射
-        ncbi_to_symbol = self._ncbi_id_to_symbol(gene_info_path)
-        print(f"|--- 基因 Symbol: {len(ncbi_to_symbol)} 个")
+        # Step 4: Build NCBI Gene ID & Symbol Map
+        ncbi_to_symbol = self._ncbi_id_to_symbol(gene_info_path, taxid)
+        print(f"|---Symbol: {len(ncbi_to_symbol)}One.")
 
-        # Step 5: 生成 gene2pathway.txt
+        # Step 5: Generate Gene2pathway.txt
         gene2pathway_path = self._build_gene2pathway(
             species, gene_pathway_links, kegg_to_ncbi, ncbi_to_symbol, pathways
         )
 
-        # Step 6: 生成 pathway_summary.txt
+        # Step 6: Generate path_summary.txt
         pathway_summary_path = self._build_pathway_summary(species, pathways)
 
-        print(f"|--- KEGG 数据获取完成")
+        print(f"|---Kegg Data Acquisition Completed")
         return str(gene2pathway_path), str(pathway_summary_path)
 
     # ================================================================
-    # API 调用
+    # API Call
     # ================================================================
 
     def _api_get(self, endpoint: str) -> str:
-        """调用 KEGG REST API
-
-        Args:
-            endpoint: API 端点（如 'list/pathway/hsa'）
-
-        Returns:
-            响应文本
-
-        Raises:
-            RuntimeError: API 请求失败
-        """
+        """Call a KEGG REST endpoint with retry handling."""
         url = f"{self.BASE_URL}/{endpoint}"
 
-        # 优先使用 requests（如果有）
+        # Use priority (if any); the big response will occasionally be cut in advance by KEGG.
+        requests_error = None
         try:
             import requests
-            resp = requests.get(url, headers={"User-Agent": self.UA}, timeout=60)
-            resp.raise_for_status()
-            return resp.text
         except ImportError:
-            pass
+            requests = None
+        if requests is not None:
+            for attempt in range(1, self.MAX_RETRIES + 1):
+                try:
+                    resp = requests.get(url, headers={"User-Agent": self.UA}, timeout=60)
+                    resp.raise_for_status()
+                    return resp.text
+                except requests.RequestException as exc:
+                    requests_error = exc
+                    if attempt < self.MAX_RETRIES:
+                        time.sleep(0.5 * (2 ** (attempt - 1)))
 
-        # 回退到 urllib
+        # Back to urllib
         req = urllib.request.Request(url)
         req.add_header("User-Agent", self.UA)
 
@@ -134,35 +105,31 @@ class KEGGFetcher:
         except urllib.error.HTTPError as e:
             raise RuntimeError(f"KEGG API HTTP {e.code}: {url}") from e
         except urllib.error.URLError as e:
-            raise RuntimeError(f"KEGG API 网络错误: {e.reason}: {url}") from e
+            detail = f"error: {requests_error}" if requests_error else ""
+            raise RuntimeError(f"KEGAPI error: {e.reason}: {url}{detail}") from e
 
     def _list_pathways(self, species: str) -> List[Tuple[str, str]]:
-        """获取物种所有通路列表
-
-        API: list/pathway/{species}
-        格式: pathway_id\\tname (with hierarchy prefix)
-
-        Returns:
-            [(pathway_id, pathway_name), ...]
-            其中 pathway_id 已去除物种前缀（如 '00010'）
-        """
+        """Return all pathways assigned to the selected KEGG organism."""
         cache_file = self.cache_dir / f"{species}_pathways.txt"
 
         if cache_file.exists() and not self.overwrite:
-            print(f"|--- 已缓存，跳过: list/pathway/{species}")
+            print(f"|---Cached, Skipping: list/pathway/{species}")
             pathways = []
             with open(cache_file, "r") as f:
                 for line in f:
                     parts = line.strip().split("\t", 1)
                     if len(parts) == 2:
-                        pathways.append((parts[0], parts[1]))
+                        pathway_id = parts[0]
+                        if pathway_id.startswith(species):
+                            pathway_id = pathway_id[len(species):]
+                        pathways.append((pathway_id, parts[1]))
             return pathways
 
         print(f"|--- API: list/pathway/{species}")
         data = self._api_get(f"list/pathway/{species}")
         time.sleep(self.REQUEST_INTERVAL)
 
-        # 解析通路列表，提取分类层级
+        # Solve path lists, extract classification levels
         pathways = []
         pathway_names: Dict[str, str] = {}  # pathway_id → full name
 
@@ -173,30 +140,23 @@ class KEGGFetcher:
             full_id = parts[0].strip()
             full_name = parts[1].strip()
 
-            # 提取纯通路编号（去除物种前缀）
+            # Extracting a pure circuit number (specify prefixes)
             pathway_id = full_id.replace(species, "", 1)
             pathway_names[pathway_id] = full_name
 
-        # 保存缓存
+        # Save Cache
         with open(cache_file, "w") as f:
             for pid, pname in pathway_names.items():
-                f.write(f"{species}{pid}\t{pname}\n")
+                f.write(f"{pid}\t{pname}\n")
 
         return [(pid, pname) for pid, pname in pathway_names.items()]
 
     def _get_gene_pathway_links(self, species: str) -> Dict[str, List[str]]:
-        """获取所有基因-通路关联（批量接口）
-
-        API: link/{species}/pathway
-        格式: path:{species}00010\\t{species}:10327
-
-        Returns:
-            {kegg_gene_id: [pathway_id, ...], ...}
-        """
+        """Retrieve gene-to-pathway memberships from KEGG."""
         cache_file = self.cache_dir / f"{species}_gene_pathway_links.txt"
 
         if cache_file.exists() and not self.overwrite:
-            print(f"|--- 已缓存，跳过: link/{species}/pathway")
+            print(f"|---Cached, Skipping: link/{species}/pathway")
             links = {}
             with open(cache_file, "r") as f:
                 for line in f:
@@ -221,7 +181,7 @@ class KEGGFetcher:
             gene = parts[1].replace(f"{species}:", "")
             links.setdefault(gene, []).append(pw)
 
-        # 保存缓存
+        # Save Cache
         with open(cache_file, "w") as f:
             for gene, pws in links.items():
                 for pw in pws:
@@ -230,18 +190,11 @@ class KEGGFetcher:
         return links
 
     def _get_kegg_ncbi_mapping(self, species: str) -> Dict[str, str]:
-        """获取 KEGG ID → NCBI Gene ID 映射
-
-        API: conv/{species}/ncbi-geneid
-        格式: ncbi-geneid:7157\\thsa:10327
-
-        Returns:
-            {kegg_gene_id: ncbi_gene_id, ...}
-        """
+        """Retrieve KEGG-to-NCBI gene identifier mappings."""
         cache_file = self.cache_dir / f"{species}_kegg_ncbi_map.txt"
 
         if cache_file.exists() and not self.overwrite:
-            print(f"|--- 已缓存，跳过: conv/{species}/ncbi-geneid")
+            print(f"|---Cached, Skipped: conv/{species}/ncbi-geneid")
             mapping = {}
             with open(cache_file, "r") as f:
                 for line in f:
@@ -264,22 +217,19 @@ class KEGGFetcher:
             kegg = parts[1].replace(f"{species}:", "")
             mapping[kegg] = ncbi
 
-        # 保存缓存
+        # Save Cache
         with open(cache_file, "w") as f:
             for kegg, ncbi in mapping.items():
                 f.write(f"{ncbi}\t{kegg}\n")
 
         return mapping
 
-    def _ncbi_id_to_symbol(self, gene_info_path: str) -> Dict[str, str]:
-        """从 gene_info.gz 构建 NCBI Gene ID → Symbol 映射
-
-        Args:
-            gene_info_path: gene_info.gz 文件路径
-
-        Returns:
-            {ncbi_gene_id: gene_symbol, ...}
-        """
+    def _ncbi_id_to_symbol(
+        self,
+        gene_info_path: str,
+        taxid: Optional[int] = None,
+    ) -> Dict[str, str]:
+        """Build an NCBI Gene ID-to-symbol mapping for one TaxID."""
         mapping: Dict[str, str] = {}
         opener = gzip.open if gene_info_path.endswith(".gz") else open
 
@@ -289,13 +239,13 @@ class KEGGFetcher:
                 if not line or line.startswith("#"):
                     continue
                 parts = line.split("\t")
-                if len(parts) >= 3:
+                if len(parts) >= 3 and (taxid is None or parts[0] == str(taxid)):
                     mapping[parts[1]] = parts[2]  # gene_id → symbol
 
         return mapping
 
     # ================================================================
-    # 文件生成
+    # File Generation
     # ================================================================
 
     def _build_gene2pathway(
@@ -306,11 +256,7 @@ class KEGGFetcher:
         ncbi_to_symbol: Dict[str, str],
         pathways: List[Tuple[str, str]],
     ) -> Path:
-        """生成 gene2pathway.txt
-
-        格式: gene_symbol\\tentrez_id\\tpathway_id\\tpathway_name
-        与 KEGGParser.build_database() 兼容。
-        """
+        """Write normalized gene-to-pathway memberships."""
         pathway_names = {pid: pname for pid, pname in pathways}
         out_file = self.cache_dir / f"{species}_gene2pathway.txt"
 
@@ -327,12 +273,12 @@ class KEGGFetcher:
 
                 for pw_id in pw_ids:
                     pw_name = pathway_names.get(pw_id, pw_id)
-                    # 去除名称中的 " - Homo sapiens (human)" 后缀
+                    # Remove the suffix " -Homo sapiens (human)" from the name
                     pw_name = self._clean_pathway_name(pw_name)
                     f.write(f"{symbol}\t{ncbi_id}\t{pw_id}\t{pw_name}\n")
                     n += 1
 
-        print(f"|--- gene2pathway.txt: {n} 条关联")
+        print(f"|--- gene2pathway.txt: {n}Article Link")
         return out_file
 
     def _build_pathway_summary(
@@ -340,19 +286,15 @@ class KEGGFetcher:
         species: str,
         pathways: List[Tuple[str, str]],
     ) -> Path:
-        """生成 pathway_summary.txt
-
-        格式: Category\\tSubcategory\\tpathway_id\\tpathway_name\\turl
-        与 KEGGParser.build_database() 兼容。
-        """
+        """Write pathway identifiers, names, and category metadata."""
         out_file = self.cache_dir / f"{species}_pathway_summary.txt"
 
-        # 解析通路层级（从 list/pathway 的缩进推断分类）
-        # KEGG 的 list 输出中，分类行以 pathway ID 开头但无数字编号
-        # 实际上 list/pathway/{org} 只返回通路条目，不包含分类层级
-        # 分类信息需要从通路名称推断或使用全局分类
+        # Solve path level (from list/pathwaythe indentation of the
+        # In the list output of KEGG, the row starts with a path ID without a number
+        # Actually, list/pathway/{org}Only return to the access entry, not the classification level
+        # Classification information requires a general name to extrapolate or use a global classification
 
-        # 从 KEGG API 获取真实分类信息
+        # Fetch real classified information from KEGAPI
         brite_categories = self._get_brite_categories(species, pathways)
 
         n = 0
@@ -361,41 +303,25 @@ class KEGGFetcher:
                 pw_name_clean = self._clean_pathway_name(pw_name)
                 url = f"https://www.kegg.jp/entry/{species}{pw_id}"
 
-                # 获取通路分类（从 KEGG API CLASS 字段）
+                # Retrieve access classifications (from KEGG API CLASS field)
                 category, subcategory = brite_categories.get(pw_id, ("Uncategorized", "Uncategorized"))
 
                 f.write(f"{category}\t{subcategory}\t{pw_id}\t{pw_name_clean}\t{url}\n")
                 n += 1
 
-        print(f"|--- pathway_summary.txt: {n} 个通路")
+        print(f"|--- Wrote {n} pathways to pathway_summary.txt.")
         return out_file
 
     @staticmethod
     def _clean_pathway_name(name: str) -> str:
-        """清理通路名称
-
-        去除 " - Homo sapiens (human)" 等物种后缀。
-        """
-        import re
-        # 匹配 " - Species name (common name)" 后缀
-        # 例如: "Glycolysis / Gluconeogenesis - Homo sapiens (human)"
-        cleaned = re.sub(r"\s*-\s*[\w\s]+\(\w+\)\s*$", "", name)
+        """Remove organism suffixes from a KEGG pathway name."""
+        # Match " -Species name (common name)" after
+        # For example: "Glycolysis / Gluconeogenesis - Homo sapiens (human)"
+        cleaned = re.sub(r"\s*-\s*[\w\s]+\([^)]*\)\s*$", "", name)
         return cleaned.strip()
 
     def fetch_organism_list(self) -> List[Tuple[str, str, int, int]]:
-        """获取KEGG全部物种列表（用于构建注册表）
-
-        调用 KEGG API: list/organism
-        返回: [(kegg_code, latin_name, taxid, gene_count), ...]
-
-        API 返回格式 (TSV):
-            第1列: kegg_code (如 "hsa")
-            第2列: name (如 "Homo sapiens (human)", 需要去掉括号部分)
-            第3列: taxid (如 "9606")
-            第4列: classification (不需要)
-            第5列: definition (不需要)
-            第6列: gene_count (如 "22345")
-        """
+        """Retrieve the KEGG organism catalogue for registry generation."""
         import re
 
         data = self._api_get("list/organism")
@@ -409,55 +335,55 @@ class KEGGFetcher:
             name = cols[1]
             taxid = int(cols[2])
             gene_count = int(cols[5])
-            # 去掉括号部分 (如 "Homo sapiens (human)" -> "Homo sapiens")
+            # Remove the brackets from the brackets (e.g. "Homo sapiens" - "Homo sapiens")
             latin_name = re.sub(r"\s*\(.*?\)\s*$", "", name).strip()
             result.append((kegg_code, latin_name, taxid, gene_count))
 
         return result
 
     def _get_brite_categories(self, species: str, pathways: List[Tuple[str, str]]) -> Dict[str, Tuple[str, str]]:
-        """获取 KEGG 通路分类映射
-
-        从 KEGG API 获取每个通路的 CLASS 信息，包含真实的层级分类。
-
-        Args:
-            species: 物种代码
-            pathways: 通路列表 [(pathway_id, pathway_name), ...]
-
-        Returns:
-            {pathway_id: (category, subcategory), ...}
-        """
+        """Retrieve KEGG BRITE pathway category assignments."""
         cache_file = self.cache_dir / f"{species}_pathway_classes.txt"
 
-        # 如果已有缓存，直接读取
+        # Read it directly if there is an existing cache
         if cache_file.exists() and not self.overwrite:
-            print(f"|--- 从缓存加载通路分类")
+            print(f"|---Loading access from cache")
             categories: Dict[str, Tuple[str, str]] = {}
+            pathway_ids = {pathway_id for pathway_id, _ in pathways}
             with open(cache_file, 'r', encoding='utf-8') as f:
                 for line in f:
                     parts = line.strip().split('\t')
                     if len(parts) == 3:
                         pw_id, cat, subcat = parts
-                        categories[pw_id] = (cat, subcat)
+                        bare_id = re.sub(r"^[A-Za-z]{3}(?=\d{5}$)", "", pw_id)
+                        if bare_id in pathway_ids:
+                            current = categories.get(bare_id)
+                            if current is None or (
+                                current[0] == "Uncategorized" and cat != "Uncategorized"
+                            ):
+                                categories[bare_id] = (cat, subcat)
             return categories
 
-        print(f"|--- 从 KEGG API 获取通路分类信息")
+        print(f"|---Fetch access classification information from KEGAPI")
         categories: Dict[str, Tuple[str, str]] = {}
 
         try:
-            # KEGG API 支持批量查询，每次最多 10 个通路
-            # 格式: get/pathway/hsa04110+hsa00010
+            # The KEGG API accepts at most 10 pathway entries per batch request.
+            # Format: get/hsa04110+hsa00010
             pw_ids = [pw_id for pw_id, _ in pathways]
             batch_size = 10
             fetched = 0
 
             for i in range(0, len(pw_ids), batch_size):
                 batch = pw_ids[i:i + batch_size]
-                ids_str = '+'.join(batch)
+                ids_str = '+'.join(
+                    pw_id if pw_id.startswith(species) else f"{species}{pw_id}"
+                    for pw_id in batch
+                )
                 data = self._api_get(f"get/{ids_str}")
 
-                # 解析 CLASS 字段
-                # 批量返回格式：多个通路数据拼接，每个通路以 ENTRY 开始，以 /// 结束
+                # Parsing CLASS fields
+                # Batch Back Format: Multiple circuit data integration, each starting with ENTRY, with///Over.
                 # ENTRY -> NAME -> CLASS -> ... -> ///
                 lines = data.split('\n')
 
@@ -467,68 +393,54 @@ class KEGGFetcher:
                     class_line = None
 
                     for line in lines:
-                        # 检测 ENTRY 行，确认是当前通路
+                        # Confirm that the returned ENTRY matches the requested pathway.
                         if line.startswith("ENTRY") and pw_id in line:
                             in_entry = True
                             continue
 
-                        # 检测通路结束标记
+                        # Stop at the KEGG record terminator.
                         if line.startswith("///"):
                             in_entry = False
                             continue
 
-                        # 在当前通路中查找 CLASS
+                        # Find CLASS in current access
                         if in_entry and line.startswith("CLASS"):
                             class_line = line.replace("CLASS", "").strip()
                             break
 
                     if class_line:
-                        # 格式: "Cellular Processes; Cell growth and death"
+                        # Format: "Cellular Services; Cell Growth and Death"
                         parts = class_line.split("; ")
                         category = parts[0].replace(" ", "_") if parts else "Uncategorized"
                         subcategory = parts[1].replace(" ", "_") if len(parts) > 1 else "Uncategorized"
                         categories[pw_id] = (category, subcategory)
                     else:
-                        # 未找到 CLASS，使用默认分类
+                        # CLASS not found, using default classification
                         categories[pw_id] = ("Uncategorized", "Uncategorized")
 
                     fetched += 1
                     if fetched % 50 == 0:
-                        print(f"|--- 已获取 {fetched}/{len(pw_ids)} 个通路分类")
+                        print(f"|--- Retrieved categories for {fetched}/{len(pw_ids)} pathways")
 
                 time.sleep(self.REQUEST_INTERVAL)
 
         except Exception as e:
-            print(f"|--- API 获取失败，使用备用分类映射: {e}")
-            # 使用硬编码的分类映射
-            categories = self._get_hardcoded_categories()
-            # 只保留有分类的
-            for pw_id, _ in pathways:
-                if pw_id not in categories:
-                    categories[pw_id] = ("Uncategorized", "Uncategorized")
+            raise RuntimeError(f"KEGG Access Failed: {e}") from e
 
-        # 保存缓存
+        # Save Cache
         with open(cache_file, 'w', encoding='utf-8') as f:
             for pw_id, (cat, subcat) in categories.items():
                 f.write(f"{pw_id}\t{cat}\t{subcat}\n")
 
-        print(f"|--- 获取了 {len(categories)} 个通路分类")
+        print(f"|---Got it.{len(categories)}A traffic class.")
         return categories
 
     @staticmethod
     def _get_hardcoded_categories() -> Dict[str, Tuple[str, str]]:
-        """获取硬编码的 KEGG 通路分类映射
-
-        作为 KEGG API 不可用时的备用方案。
-        包含人类 KEGG 通路的常见分类。
-        注意: 键使用 `hsa` 前缀（如 hsa00010）
-
-        Returns:
-            {pathway_id: (category, subcategory), ...}
-        """
-        # 硬编码的分类映射（使用 hsa 前缀）
+        """Return fallback KEGG categories for known pathways."""
+        # Hard-coded classification map (using hsa prefix)
         categories = {
-            # 代谢通路
+            # Metabolic pathways
             "hsa00010": ("Metabolism", "Carbohydrate_Metabolism"),
             "hsa00020": ("Metabolism", "Carbohydrate_Metabolism"),
             "hsa00030": ("Metabolism", "Carbohydrate_Metabolism"),
@@ -610,7 +522,7 @@ class KEGGFetcher:
             "hsa00980": ("Metabolism", "Metabolism_of_Cofactors"),
             "hsa00982": ("Metabolism", "Xenobiotics_Biodegradation"),
             "hsa00983": ("Metabolism", "Xenobiotics_Biodegradation"),
-            # 细胞过程
+            # Cell process
             "hsa04110": ("Cellular_Processes", "Cell_Cycle"),
             "hsa04111": ("Cellular_Processes", "Cell_Cycle"),
             "hsa04112": ("Cellular_Processes", "Cell_Cycle"),
@@ -628,7 +540,7 @@ class KEGGFetcher:
             "hsa04146": ("Cellular_Processes", "Autophagy"),
             "hsa04150": ("Cellular_Processes", "Signal_Transduction"),
             "hsa04151": ("Cellular_Processes", "Signal_Transduction"),
-            # 信号传导
+            # Signal transduction
             "hsa04010": ("Environmental_Information_Processing", "Signal_Transduction"),
             "hsa04012": ("Environmental_Information_Processing", "Signal_Transduction"),
             "hsa04014": ("Environmental_Information_Processing", "Signal_Transduction"),
@@ -648,7 +560,7 @@ class KEGGFetcher:
             "hsa04215": ("Environmental_Information_Processing", "Signal_Transduction"),
             "hsa04217": ("Environmental_Information_Processing", "Signal_Transduction"),
             "hsa04218": ("Environmental_Information_Processing", "Signal_Transduction"),
-            # DNA 复制和修复
+            # DNA, copy and repair.
             "hsa03030": ("Genetic_Information_Processing", "Replication_and_Repair"),
             "hsa03040": ("Genetic_Information_Processing", "Replication_and_Repair"),
             "hsa03410": ("Genetic_Information_Processing", "Replication_and_Repair"),
@@ -657,15 +569,15 @@ class KEGGFetcher:
             "hsa03440": ("Genetic_Information_Processing", "Replication_and_Repair"),
             "hsa03450": ("Genetic_Information_Processing", "Replication_and_Repair"),
             "hsa03460": ("Genetic_Information_Processing", "Replication_and_Repair"),
-            # 转录
+            # Transcription
             "hsa03020": ("Genetic_Information_Processing", "Transcription"),
-            # 翻译
+            # Translation
             "hsa03010": ("Genetic_Information_Processing", "Translation"),
             "hsa03013": ("Genetic_Information_Processing", "Translation"),
             "hsa03015": ("Genetic_Information_Processing", "Translation"),
-            # 折叠和降解
+            # Collapse and degradation
             "hsa04130": ("Genetic_Information_Processing", "Folding_and_Degradation"),
-            # 免疫系统
+            # Immunization system
             "hsa04612": ("Organismal_Systems", "Immune_System"),
             "hsa04620": ("Organismal_Systems", "Immune_System"),
             "hsa04621": ("Organismal_Systems", "Immune_System"),
@@ -677,7 +589,7 @@ class KEGGFetcher:
             "hsa04650": ("Organismal_Systems", "Immune_System"),
             "hsa04611": ("Organismal_Systems", "Immune_System"),
             "hsa04657": ("Human_Diseases", "Infectious_Disease"),
-            # 内分泌系统
+            # Endocrine system
             "hsa04910": ("Organismal_Systems", "Endocrine_System"),
             "hsa04911": ("Organismal_Systems", "Endocrine_System"),
             "hsa04912": ("Organismal_Systems", "Endocrine_System"),
@@ -704,7 +616,7 @@ class KEGGFetcher:
             "hsa04933": ("Organismal_Systems", "Endocrine_System"),
             "hsa04934": ("Organismal_Systems", "Endocrine_System"),
             "hsa04935": ("Organismal_Systems", "Endocrine_System"),
-            # 消化系统
+            # Imposing system
             "hsa04970": ("Organismal_Systems", "Digestive_System"),
             "hsa04971": ("Organismal_Systems", "Digestive_System"),
             "hsa04972": ("Organismal_Systems", "Digestive_System"),
@@ -715,7 +627,7 @@ class KEGGFetcher:
             "hsa04977": ("Organismal_Systems", "Digestive_System"),
             "hsa04978": ("Organismal_Systems", "Digestive_System"),
             "hsa04979": ("Organismal_Systems", "Digestive_System"),
-            # 神经系统
+            # The nervous system.
             "hsa04710": ("Organismal_Systems", "Nervous_System"),
             "hsa04711": ("Organismal_Systems", "Nervous_System"),
             "hsa04720": ("Organismal_Systems", "Nervous_System"),
@@ -733,7 +645,7 @@ class KEGGFetcher:
             "hsa04744": ("Organismal_Systems", "Sensory_System"),
             "hsa04750": ("Organismal_Systems", "Sensory_System"),
             "hsa04710": ("Organismal_Systems", "Nervous_System"),
-            # 传染病
+            # Epidemic diseases
             "hsa05160": ("Human_Diseases", "Infectious_Disease"),
             "hsa05161": ("Human_Diseases", "Infectious_Disease"),
             "hsa05162": ("Human_Diseases", "Infectious_Disease"),
@@ -745,7 +657,7 @@ class KEGGFetcher:
             "hsa05169": ("Human_Diseases", "Infectious_Disease"),
             "hsa05170": ("Human_Diseases", "Infectious_Disease"),
             "hsa05171": ("Human_Diseases", "Infectious_Disease"),
-            # 癌症
+            # Cancer
             "hsa05200": ("Human_Diseases", "Cancer"),
             "hsa05210": ("Human_Diseases", "Cancer"),
             "hsa05211": ("Human_Diseases", "Cancer"),

@@ -1,4 +1,4 @@
-# 临时测试配置
+# Temporary Test Configuration
 species: "hsa"
 databases:
   - "GO"

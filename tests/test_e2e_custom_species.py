@@ -1,12 +1,12 @@
 """
-自定义物种 A (specA) 全量端对端测试
+Custom species A (speca) full-end-endpoint test
 
-模拟用户完整工作流：
-1. 提供自定义注释文件 → build 构建数据库（自动生成 GMT）
-2. 提供 200 个差异基因列表 → ORA 分析
-3. 提供排序基因列表 → GSEA 分析
-4. 提供全基因表达矩阵 → GSVA 分析（3 种方法）
-5. 提供全基因表达矩阵 → ssGSEA 分析
+Simulate complete workflow:
+1. Provide a custom annotation file → build Build Database (Auto Generate GMT)
+2. Provision 200 A list of the different genes → ORA Analysis
+3. Provides a sorted list of genes → GSEA Analysis
+4. Provide a full-gene representation matrix → GSVA Analysis (3 Methods)
+5. Provide a full-gene representation matrix → ssGSEA Analysis
 """
 
 import gzip
@@ -28,7 +28,7 @@ TEST_DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "test_data", "cust
 
 
 def load_test_data():
-    """加载测试数据"""
+    """Loading test data"""
     annot_file = os.path.join(TEST_DATA_DIR, "specA_annotation.tsv")
     deg_file = os.path.join(TEST_DATA_DIR, "specA_de_genes.txt")
     with open(deg_file) as f:
@@ -57,7 +57,7 @@ def load_test_data():
 
 
 def load_gmt_from_db(db_dir, species, db_name):
-    """从构建的数据库目录加载 GMT 文件"""
+    """Load GMT files from the built database directory"""
     gmt_path = os.path.join(db_dir, f"{species}.{db_name}.gmt.gz")
     gene_sets = {}
     with gzip.open(gmt_path, 'rt', encoding='utf-8') as f:
@@ -71,18 +71,18 @@ def load_gmt_from_db(db_dir, species, db_name):
 
 
 def load_gene_matrix(db_dir, species, db_name):
-    """从构建的数据库加载基因矩阵"""
+    """Loading gene matrices from built databases"""
     matrix_path = os.path.join(db_dir, f"{species}.{db_name}2gene.tab.gz")
     df = pd.read_csv(matrix_path, sep='\t', compression='gzip')
     return df
 
 
 class TestCustomSpeciesBuild:
-    """Step 1: 自定义数据库构建"""
+    """Step 1: Customize database construction"""
 
     @pytest.fixture(scope="class")
     def built_db(self):
-        """构建自定义数据库，返回数据库目录"""
+        """Build a custom database and return the database directory"""
         data = load_test_data()
         with tempfile.TemporaryDirectory() as tmpdir:
             builder = CustomDatabaseBuilder(root_dir=os.path.join(tmpdir, "database"))
@@ -95,18 +95,18 @@ class TestCustomSpeciesBuild:
             yield outdir
 
     def test_build_creates_all_files(self, built_db):
-        """构建生成 3 个必需文件"""
+        """Build generates 3 required files"""
         assert os.path.exists(os.path.join(built_db, "specA.CustomSpecies2gene.tab.gz"))
         assert os.path.exists(os.path.join(built_db, "CustomSpecies2disc.gz"))
         assert os.path.exists(os.path.join(built_db, "specA.CustomSpecies.gmt.gz"))
 
     def test_gmt_term_count(self, built_db):
-        """GMT 文件包含 65 个 term（与元数据一致）"""
+        """GMT files contain 65 term (consistent with metadata)"""
         gene_sets = load_gmt_from_db(built_db, "specA", "CustomSpecies")
         assert len(gene_sets) == 65
 
     def test_gmt_gene_coverage(self, built_db):
-        """GMT 基因集覆盖大部分基因"""
+        """Verify that the GMT fixture covers most genes in the custom species."""
         gene_sets = load_gmt_from_db(built_db, "specA", "CustomSpecies")
         all_genes_in_gmt = set()
         for genes in gene_sets.values():
@@ -114,13 +114,13 @@ class TestCustomSpeciesBuild:
         assert len(all_genes_in_gmt) >= 5400
 
     def test_gene_matrix_shape(self, built_db):
-        """基因矩阵维度正确 (6000 genes x 65 terms + Gene column)"""
+        """Genome Matrix is correct in dimensions (6, 000 Genes x 65 terms + Gene Colomn)"""
         df = load_gene_matrix(built_db, "specA", "CustomSpecies")
         assert df.shape[0] >= 5900
         assert df.shape[1] == 66  # Gene + 65 terms
 
     def test_description_hierarchy(self, built_db):
-        """描述文件包含三层级信息"""
+        """The description document contains three levels of information"""
         disc_path = os.path.join(built_db, "CustomSpecies2disc.gz")
         with gzip.open(disc_path, 'rt', encoding='utf-8') as f:
             lines = [l.strip() for l in f if l.strip()]
@@ -133,11 +133,11 @@ class TestCustomSpeciesBuild:
 
 
 class TestCustomSpeciesORA:
-    """Step 2: ORA 富集分析"""
+    """Step 2: ORA enrichment analysis"""
 
     @pytest.fixture(scope="class")
     def ora_results(self):
-        """执行 ORA 分析"""
+        """Execute ORA analysis"""
         data = load_test_data()
         with tempfile.TemporaryDirectory() as tmpdir:
             builder = CustomDatabaseBuilder(root_dir=os.path.join(tmpdir, "database"))
@@ -167,7 +167,7 @@ class TestCustomSpeciesORA:
                     'name': descriptions.get(term, {}).get('name', term),
                     'description': descriptions.get(term, {}).get('description', term),
                 }
-            # 使用 FisherExactTest 直接进行 ORA 分析
+            # Direct OLA analysis with FisherExactTest
             method = FisherExactTest()
             gene_set = set(data['de_genes'])
             background_set = set(data['background'])
@@ -186,7 +186,7 @@ class TestCustomSpeciesORA:
                 if result:
                     results["CustomSpecies"].append(result)
             
-            # 转换为 DataFrame
+            # Convert to DataFrame
             if results["CustomSpecies"]:
                 df_data = []
                 for r in results["CustomSpecies"]:
@@ -209,20 +209,20 @@ class TestCustomSpeciesORA:
             yield results
 
     def test_ora_returns_results(self, ora_results):
-        """ORA 返回结果"""
+        """ORA returns result"""
         assert "CustomSpecies" in ora_results
         df = ora_results["CustomSpecies"]
         assert len(df) > 0
 
     def test_ora_columns(self, ora_results):
-        """ORA 结果包含标准列"""
+        """OLA results include standard columns"""
         df = ora_results["CustomSpecies"]
         expected_cols = ["Term_ID", "P_value", "Adjusted_P_value"]
         for col in expected_cols:
             assert col in df.columns or any(col.lower() in c.lower() for c in df.columns)
 
     def test_ora_significant_terms(self, ora_results):
-        """ORA 有显著富集结果"""
+        """ORA has a remarkable abundance of results."""
         df = ora_results["CustomSpecies"]
         pval_col = None
         for col in df.columns:
@@ -235,11 +235,11 @@ class TestCustomSpeciesORA:
 
 
 class TestCustomSpeciesGSEA:
-    """Step 3: GSEA 分析"""
+    """Step 3: GSEA analysis"""
 
     @pytest.fixture(scope="class")
     def gsea_results(self):
-        """执行 GSEA 分析"""
+        """Implementation GSEA analysis"""
         data = load_test_data()
         with tempfile.TemporaryDirectory() as tmpdir:
             builder = CustomDatabaseBuilder(root_dir=os.path.join(tmpdir, "database"))
@@ -259,27 +259,27 @@ class TestCustomSpeciesGSEA:
             yield results
 
     def test_gsea_returns_dataframe(self, gsea_results):
-        """GSEA 返回 DataFrame"""
+        """GSEA returns DataFrame"""
         assert isinstance(gsea_results, pd.DataFrame)
         assert len(gsea_results) > 0
 
     def test_gsea_shape(self, gsea_results):
-        """GSEA 结果行数大于 0"""
+        """GSEA Results Lines > 0"""
         assert gsea_results.shape[0] > 0
 
     def test_gsea_has_samples(self, gsea_results):
-        """GSEA 结果包含样本列"""
-        # GSEA.analyze_matrix 返回行=通路, 列=样本的矩阵
-        assert gsea_results.shape[1] == 6  # 6 个样本
+        """GSEA results include sample columns"""
+        # GSEA.analyze_matrix returns row = route, column = matrix of samples
+        assert gsea_results.shape[1] == 6  # 6 samples
         assert list(gsea_results.columns) == ['Sample_1', 'Sample_2', 'Sample_3', 'Sample_4', 'Sample_5', 'Sample_6']
 
 
 class TestCustomSpeciesGSVA:
-    """Step 4: GSVA 分析（3 种方法）"""
+    """Step 4: GSVA analysis (3 methods)"""
 
     @pytest.fixture(scope="class")
     def gsva_data(self):
-        """准备 GSVA 数据"""
+        """Preparing GSVA data"""
         data = load_test_data()
         with tempfile.TemporaryDirectory() as tmpdir:
             builder = CustomDatabaseBuilder(root_dir=os.path.join(tmpdir, "database"))
@@ -298,7 +298,7 @@ class TestCustomSpeciesGSVA:
 
     @pytest.mark.parametrize("method", ["gsva", "plage", "zscore"])
     def test_gsva_method(self, gsva_data, method):
-        """GSVA 三种方法均返回正确结果"""
+        """GSVA returns the correct result in all three methods"""
         gsva = GSVA(method=method, min_size=10, max_size=500)
         results = gsva.analyze_matrix(
             expression_matrix=gsva_data['expr_matrix'],
@@ -310,11 +310,11 @@ class TestCustomSpeciesGSVA:
 
 
 class TestCustomSpeciesSsGSEA:
-    """Step 5: ssGSEA 分析"""
+    """Step 5: ssGSEA analysis"""
 
     @pytest.fixture(scope="class")
     def ssgsea_results(self):
-        """执行 ssGSEA 分析"""
+        """Execute ssGSEA analysis"""
         data = load_test_data()
         with tempfile.TemporaryDirectory() as tmpdir:
             builder = CustomDatabaseBuilder(root_dir=os.path.join(tmpdir, "database"))
@@ -334,21 +334,21 @@ class TestCustomSpeciesSsGSEA:
             yield results
 
     def test_ssgsea_returns_dataframe(self, ssgsea_results):
-        """ssGSEA 返回 DataFrame"""
+        """sGSEA returns DataFrame"""
         assert isinstance(ssgsea_results, pd.DataFrame)
         assert len(ssgsea_results) > 0
 
     def test_ssgsea_shape(self, ssgsea_results):
-        """ssGSEA 结果维度正确"""
+        """SGSEA results are in the right dimension"""
         assert ssgsea_results.shape[0] > 0
         assert ssgsea_results.shape[1] == 6
 
 
 class TestCustomSpeciesFullWorkflow:
-    """Step 6: 完整工作流"""
+    """Step 6: Full workflow"""
 
     def test_full_workflow_no_errors(self):
-        """完整工作流无异常"""
+        """The whole job is in order."""
         data = load_test_data()
         with tempfile.TemporaryDirectory() as tmpdir:
             # 1. Build
@@ -360,7 +360,7 @@ class TestCustomSpeciesFullWorkflow:
                 db_name="CustomSpecies"
             )
             assert os.path.exists(db_dir)
-            # 2. 加载 GMT
+            # 2. Load GMT
             gene_sets = load_gmt_from_db(db_dir, "specA", "CustomSpecies")
             gene_sets_filtered = {k: v for k, v in gene_sets.items() if 10 <= len(v) <= 500}
             assert len(gene_sets_filtered) > 0
@@ -385,7 +385,7 @@ class TestCustomSpeciesFullWorkflow:
                     'name': descriptions.get(term, {}).get('name', term),
                     'description': descriptions.get(term, {}).get('description', term),
                 }
-            # 使用 FisherExactTest 直接进行 ORA 分析
+            # Direct OLA analysis with FisherExactTest
             method = FisherExactTest()
             gene_set = set(data['de_genes'])
             background_set = set(data['background'])
@@ -404,7 +404,7 @@ class TestCustomSpeciesFullWorkflow:
                 if result:
                     ora_results_list.append(result)
             
-            # 转换为 DataFrame
+            # Convert to DataFrame
             if ora_results_list:
                 df_data = []
                 for r in ora_results_list:
@@ -446,7 +446,7 @@ class TestCustomSpeciesFullWorkflow:
             )
             assert isinstance(ssgsea_results, pd.DataFrame)
 
-            # 7. 生成 HTML 报告（含图表）
+            # 7. Generate HTML reports (including graphs)
             report_output_dir = os.path.join(TEST_DATA_DIR, "e2e_results")
             os.makedirs(report_output_dir, exist_ok=True)
             report_file = os.path.join(report_output_dir, "specA_enrichment_report.html")
@@ -459,27 +459,25 @@ class TestCustomSpeciesFullWorkflow:
                 gsea_results=gsea_results,
                 gsea_gene_sets=gene_sets_filtered,
                 gsva_results=gsva_results,
-                analysis_method="fisher",
+                analysis_method="hypergeometric",
             )
             assert os.path.exists(html_path)
             assert os.path.getsize(html_path) > 1000
 
-            # 8. 生成可视化图表并保存
+            # 8. Generate visualized charts and save
             import matplotlib
             matplotlib.use('Agg')
             import matplotlib.pyplot as plt
-            from allenricher.visualization.gsea_plots import (
-                plot_gsea_dotplot, plot_gsea_nes_barplot
-            )
+            from allenricher.visualization.gsea_plots import plot_gsea_lollipop
             from allenricher.visualization.gsva_plots import plot_pathway_heatmap
 
             plots_dir = os.path.join(report_output_dir, "plots")
             os.makedirs(plots_dir, exist_ok=True)
 
-            # 构建 GSEA 可视化所需的 DataFrame（逐通路计算 NES）
+            # DataFrame for building GSEA visualize (no route NES)
             gsea_viz_data = []
             for pathway_name, pathway_genes in gene_sets_filtered.items():
-                # 取第一个样本的排序基因做可视化
+                # Use the first sample to exercise the ranked-gene visualization path.
                 sample_expr = data['expr_matrix']['Sample_1']
                 ranked_genes = sample_expr.sort_values(ascending=False).index.tolist()
                 _, nes, pval, _, _ = gsea_inst.calculate_normalized_es(
@@ -493,27 +491,16 @@ class TestCustomSpeciesFullWorkflow:
                 })
             gsea_viz_df = pd.DataFrame(gsea_viz_data)
 
-            # GSEA NES barplot
-            gsea_bar_path = os.path.join(plots_dir, "gsea_nes_barplot.png")
-            plot_gsea_nes_barplot(
+            # GSEA lollipop
+            gsea_lollipop_path = os.path.join(plots_dir, "gsea_lollipop.png")
+            plot_gsea_lollipop(
                 results_df=gsea_viz_df,
                 top_n=15,
-                title='GSEA NES Ranking (specA)',
-                output_file=gsea_bar_path,
+                title='GSEA Enrichment Lollipop (specA)',
+                output_file=gsea_lollipop_path,
             )
             plt.close('all')
-            assert os.path.exists(gsea_bar_path)
-
-            # GSEA dotplot
-            gsea_dotplot_path = os.path.join(plots_dir, "gsea_dotplot.png")
-            plot_gsea_dotplot(
-                results_df=gsea_viz_df,
-                top_n=15,
-                title='GSEA Enrichment Dotplot (specA)',
-                output_file=gsea_dotplot_path,
-            )
-            plt.close('all')
-            assert os.path.exists(gsea_dotplot_path)
+            assert os.path.exists(gsea_lollipop_path)
 
             # GSVA heatmap
             gsva_heatmap_path = os.path.join(plots_dir, "gsva_heatmap.png")

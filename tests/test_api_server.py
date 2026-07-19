@@ -1,23 +1,23 @@
 """
-FastAPI 服务端点测试
+FastAPI Service Endpoint Test
 ====================
 
-使用 FastAPI TestClient 对所有 API 端点进行单元测试，
-不启动真实服务器。所有耗时分析操作均通过 mock 替代。
+Use FastAPI TestClient All API Ends to test the unit,
+Do not start the real server.All time-consuming analysis operations passed mock Alternative.
 
-覆盖端点：
-    1.  GET /                        - 服务信息
-    2.  GET /api/species             - 物种列表
-    3.  GET /api/databases           - 数据库列表
-    4.  POST /api/analyze            - 提交分析（mock 后台任务）
-    5.  POST /api/upload             - 文件上传（mock）
-    6.  GET /api/status/{job_id}     - 任务状态（正常 + 404）
-    7.  GET /api/results/{job_id}    - 结果获取（JSON/TSV）
-    8.  GET /api/results/{job_id}/plot  - 图表获取
-    9.  GET /api/results/{job_id}/report - 报告获取
-    10. DELETE /api/jobs/{job_id}    - 删除任务
-    11. 路径遍历防护测试
-    12. 无效请求体 422 测试
+Overwrite peer:
+1.  GET /                        - Service information
+2.  GET /api/species             - List of species
+3.  GET /api/databases           - Database List
+4.  POST /api/analyze            - Submit analysis (mock Backstage task)
+5.  POST /api/upload             - File Upload (mock)
+6.  GET /api/status/{job_id}     - Task Status (Normal + 404)
+7.  GET /api/results/{job_id}    - Get results (JSON/TSV)
+8.  GET /api/results/{job_id}/plot  - Chart Access
+9.  GET /api/results/{job_id}/report - Access to reports
+10. DELETE /api/jobs/{job_id}    - Delete a job
+11. Paths through protective tests
+12. Invalid Request 422 Test
 """
 
 import sys
@@ -29,14 +29,15 @@ from unittest.mock import patch, MagicMock, AsyncMock
 
 import pytest
 
-# 确保项目根目录在 sys.path 中
+# Ensure that root directory in sys.path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-# 如果 fastapi 或 httpx 未安装，跳过整个模块
+# Skip the whole module if fastapi or httpx is not installed
 fastapi = pytest.importorskip("fastapi")
 pytest.importorskip("httpx")
 
 from fastapi.testclient import TestClient
+from allenricher import __version__
 
 
 # ---------------------------------------------------------------------------
@@ -45,9 +46,9 @@ from fastapi.testclient import TestClient
 
 @pytest.fixture
 def client():
-    """创建 TestClient 实例，每个测试用例共享独立的 jobs 存储。"""
+    """Creates a TestClient example, each test with a separate Jobs store."""
     from allenricher.api.server import app, jobs
-    # 每次测试前清空 jobs 字典，确保测试隔离
+    # Empty the dictionaries of the Jobs before each test, ensure the test is isolated
     jobs.clear()
     with TestClient(app) as c:
         yield c
@@ -57,8 +58,8 @@ def client():
 @pytest.fixture
 def completed_job(client):
     """
-    在 jobs 字典中直接注入一个已完成的任务，用于测试结果/图表/报告端点。
-    返回注入的 job_id。
+Yes. jobs Inject a job directly into the dictionary, For test results/Chart/Report Endpoint.
+Back to the infused. job_id.
     """
     from allenricher.api.server import jobs
     import tempfile
@@ -66,18 +67,38 @@ def completed_job(client):
     job_id = "test-completed-job-001"
     output_dir = tempfile.mkdtemp(prefix="test_allenricher_")
 
-    # 创建 plots 子目录和一个模拟 PDF 文件
+    # Create a plots subdirectories and a simulation PDF file
     plots_dir = Path(output_dir) / "plots"
     plots_dir.mkdir(parents=True, exist_ok=True)
     (plots_dir / "GO_barplot.pdf").write_bytes(b"%PDF-1.4 mock plot content")
 
-    # 创建模拟 TSV 结果文件
+    # Create Simulate TSV Outcome
     tsv_file = Path(output_dir) / "results.tsv"
     tsv_file.write_text("Term_ID\tTerm_Name\tP_Value\nGO:0005576\textracellular region\t1e-5\n")
 
-    # 创建模拟 HTML 报告
+    # Create Simulation HTML Report
     report_file = Path(output_dir) / "report.html"
     report_file.write_text("<html><body>AllEnricher Test Report</body></html>")
+    (Path(output_dir) / "analysis_metadata.json").write_text(
+        json.dumps({
+            "allenricher_version": "2.0-test",
+            "analysis_method": "hypergeometric",
+            "species": "hsa",
+            "databases": ["GO", "KEGG"],
+            "database_versions": {"GO": "v1", "KEGG": "v1"},
+            "parameters": {
+                "background_mode": "annotated",
+                "correction": "BH",
+                "pvalue_cutoff": 0.05,
+                "qvalue_cutoff": 0.05,
+                "gene_set_size_by_database": {
+                    "GO": {"min": 3, "max": "Inf"},
+                    "KEGG": {"min": 3, "max": "Inf"},
+                },
+            },
+        }),
+        encoding="utf-8",
+    )
 
     jobs[job_id] = {
         "status": "completed",
@@ -120,7 +141,7 @@ def completed_job(client):
 
     yield job_id
 
-    # 清理临时目录
+    # Clear temporary directory
     import shutil
     if os.path.exists(output_dir):
         shutil.rmtree(output_dir, ignore_errors=True)
@@ -128,7 +149,7 @@ def completed_job(client):
 
 @pytest.fixture
 def running_job(client):
-    """注入一个正在运行中的任务。"""
+    """Injecting an running job."""
     from allenricher.api.server import jobs
 
     job_id = "test-running-job-002"
@@ -146,7 +167,7 @@ def running_job(client):
 
 @pytest.fixture
 def failed_job(client):
-    """注入一个失败的任务。"""
+    """Inject a failed job."""
     from allenricher.api.server import jobs
 
     job_id = "test-failed-job-003"
@@ -163,42 +184,43 @@ def failed_job(client):
 
 
 # ===========================================================================
-# 1. GET / - 服务信息
+# 1. GET/ - Service information
 # ===========================================================================
 
 class TestRootEndpoint:
-    """测试根端点 GET /"""
+    """Test root GET/"""
 
     def test_root_returns_service_info(self, client):
-        """根端点应返回 Web 界面或 API 信息"""
+        """Root endpoint should return the Web interface or API information"""
         response = client.get("/")
         assert response.status_code == 200
-        # 根路由现在返回 HTML (Web 界面)，验证响应包含 HTML 内容
+        # Root route returns HTML (Web interface) now, the validation response contains HTML content
         content_type = response.headers.get("content-type", "")
         assert "text/html" in content_type or "application/json" in content_type
+        assert f"AllEnricher <small>v{__version__}</small>" in response.text
 
     def test_root_endpoints_keys(self, client):
-        """根端点返回的 endpoints 应包含所有主要端点"""
-        # 根路由现在返回 HTML，跳过 JSON 断言
-        # API 信息可通过 /docs 查看
+        """Endpoints returned by root should contain all major endpoints"""
+        # The router returns HTML now, skips JSON's assertion
+        # API information can be viewed through the /docs
         pass
 
     def test_root_endpoint_values(self, client):
-        """端点路径应与预期一致"""
-        # 根路由现在返回 HTML，跳过 JSON 断言
-        # API 信息可通过 /docs 查看
+        """Endpoint path should match expectations"""
+        # The router returns HTML now, skips JSON's assertion
+        # API information can be viewed through the /docs
         pass
 
 
 # ===========================================================================
-# 2. GET /api/species - 物种列表
+# 2. GET /api/species- species list
 # ===========================================================================
 
 class TestSpeciesEndpoint:
-    """测试物种列表端点 GET /api/species"""
+    """Test species list endpoint GET/api/species"""
 
     def test_species_returns_list(self, client):
-        """应返回物种列表（数组）"""
+        """The list of species should be returned (groups)"""
         response = client.get("/api/species")
         assert response.status_code == 200
         data = response.json()
@@ -206,7 +228,7 @@ class TestSpeciesEndpoint:
         assert len(data) > 0
 
     def test_species_contains_human(self, client):
-        """列表中应包含人类 (hsa)"""
+        """List should include humans (hsa)"""
         response = client.get("/api/species")
         data = response.json()
         human = next((s for s in data if s["code"] == "hsa"), None)
@@ -215,7 +237,7 @@ class TestSpeciesEndpoint:
         assert human["taxonomy_id"] == 9606
 
     def test_species_contains_mouse(self, client):
-        """列表中应包含小鼠 (mmu)"""
+        """List should contain mouse (mmu)"""
         response = client.get("/api/species")
         data = response.json()
         mouse = next((s for s in data if s["code"] == "mmu"), None)
@@ -223,7 +245,7 @@ class TestSpeciesEndpoint:
         assert mouse["display_name"] == "Mouse"
 
     def test_species_schema_fields(self, client):
-        """每个物种条目应包含 code, name, taxonomy_id, display_name"""
+        """Each species entry should contain code, name, taxony_id, display_name"""
         response = client.get("/api/species")
         data = response.json()
         for species in data:
@@ -233,16 +255,42 @@ class TestSpeciesEndpoint:
             assert "display_name" in species
             assert isinstance(species["taxonomy_id"], int)
 
+    def test_species_summary_matches_registry(self, client, monkeypatch):
+        from allenricher.database.species_registry import SpeciesRegistry
+
+        registry = MagicMock()
+        registry.get_summary.return_value = {
+            "total_species": 42124,
+            "go": {"count": 32443},
+            "kegg": {"count": 10871},
+            "disgenet": {"count": 1},
+            "trrust": {"count": 2},
+            "chea3": {"count": 1},
+            "animaltfdb": {"count": 183},
+            "htftarget": {"count": 1},
+        }
+        monkeypatch.setattr(SpeciesRegistry, "load_default", lambda *_: registry)
+
+        response = client.get("/api/species/summary")
+
+        assert response.status_code == 200
+        assert response.json()["total_species"] == 42124
+        assert response.json()["go"]["count"] == 32443
+        assert response.json()["trrust"]["count"] == 2
+        assert response.json()["chea3"]["count"] == 1
+        assert response.json()["animaltfdb"]["count"] == 183
+        assert response.json()["htftarget"]["count"] == 1
+
 
 # ===========================================================================
-# 3. GET /api/databases - 数据库列表
+# 3. GET /api/databases- Database List
 # ===========================================================================
 
 class TestDatabasesEndpoint:
-    """测试数据库列表端点 GET /api/databases"""
+    """Test database list endpoint GET/api/databases"""
 
     def test_databases_returns_object(self, client):
-        """应返回包含 databases 键的对象"""
+        """The object that contains the databases key should be returned"""
         response = client.get("/api/databases")
         assert response.status_code == 200
         data = response.json()
@@ -250,38 +298,52 @@ class TestDatabasesEndpoint:
         assert isinstance(data["databases"], list)
 
     def test_databases_contains_core(self, client):
-        """应包含核心数据库 GO 和 KEGG"""
+        """should contain core databases GO and KEGG"""
         response = client.get("/api/databases")
         db_names = [db["name"] for db in response.json()["databases"]]
         assert "GO" in db_names
         assert "KEGG" in db_names
 
     def test_databases_all_expected(self, client):
-        """应包含所有预期的数据库"""
+        """should include all anticipated databases"""
         response = client.get("/api/databases")
         db_names = [db["name"] for db in response.json()["databases"]]
-        expected = {"GO", "KEGG", "Reactome", "WikiPathways", "MSigDB", "DO", "DisGeNET"}
-        assert expected.issubset(set(db_names))
+        expected = {
+            "GO", "KEGG", "Reactome", "WikiPathways", "DO", "DisGeNET",
+            "TRRUST", "ChEA3", "AnimalTFDB", "hTFtarget", "CUSTOM",
+        }
+        assert set(db_names) == expected
+        assert "MSigDB" not in db_names
 
     def test_databases_schema_fields(self, client):
-        """每个数据库条目应包含 name, description, species"""
+        """Each database entry should contain name, description, references"""
         response = client.get("/api/databases")
         for db in response.json()["databases"]:
             assert "name" in db
             assert "description" in db
             assert "species" in db
 
+    def test_disgenet_exposes_the_v1_snapshot_label(self, client):
+        response = client.get("/api/databases")
+        disgenet = next(
+            item for item in response.json()["databases"]
+            if item["name"] == "DisGeNET"
+        )
+
+        assert disgenet["display_name"] == "DisGeNET (v20190612)"
+        assert disgenet["source_version"] == "v20190612"
+
 
 # ===========================================================================
-# 4. POST /api/analyze - 提交分析
+# 4. POST /api/analyze- Submit analysis
 # ===========================================================================
 
 class TestAnalyzeEndpoint:
-    """测试分析提交端点 POST /api/analyze"""
+    """Test Analysis Submission Endpoint POST/api/analyze"""
 
     @patch("allenricher.api.server.run_analysis")
     def test_analyze_returns_job_id(self, mock_run, client):
-        """提交分析应返回 job_id 和 pending 状态"""
+        """Submit analysis to return to the job_id and pending state"""
         mock_run.return_value = None
 
         payload = {
@@ -300,7 +362,7 @@ class TestAnalyzeEndpoint:
 
     @patch("allenricher.api.server.run_analysis")
     def test_analyze_job_created_in_jobs_dict(self, mock_run, client):
-        """提交后 jobs 字典中应存在该任务"""
+        """This task should exist in the jobs dictionary after submission"""
         mock_run.return_value = None
 
         payload = {"genes": ["TP53", "BRCA1"]}
@@ -314,7 +376,7 @@ class TestAnalyzeEndpoint:
 
     @patch("allenricher.api.server.run_analysis")
     def test_analyze_default_parameters(self, mock_run, client):
-        """使用默认参数提交分析"""
+        """Submit analysis using default parameters"""
         mock_run.return_value = None
 
         payload = {"genes": ["TP53"]}
@@ -325,15 +387,15 @@ class TestAnalyzeEndpoint:
         job_id = response.json()["job_id"]
         req = jobs[job_id]["request"]
         assert req["species"] == "hsa"
-        assert req["method"] == "fisher"
+        assert req["method"] == "hypergeometric"
         assert req["correction"] == "BH"
         assert req["pvalue_cutoff"] == 0.05
         assert req["qvalue_cutoff"] == 0.05
-        assert req["min_genes"] == 2
+        assert req["min_genes"] == 3
 
     @patch("allenricher.api.server.run_analysis")
     def test_analyze_custom_parameters(self, mock_run, client):
-        """使用自定义参数提交分析"""
+        """Submit analysis using a custom parameter"""
         mock_run.return_value = None
 
         payload = {
@@ -362,7 +424,7 @@ class TestAnalyzeEndpoint:
 
     @patch("allenricher.api.server.run_analysis")
     def test_analyze_multiple_submissions_unique_ids(self, mock_run, client):
-        """多次提交应返回不同的 job_id"""
+        """Multiple submissions should return different job_id"""
         mock_run.return_value = None
 
         payload = {"genes": ["TP53"]}
@@ -375,15 +437,15 @@ class TestAnalyzeEndpoint:
 
 
 # ===========================================================================
-# 5. POST /api/upload - 文件上传
+# 5. POST /api/upload- File upload.
 # ===========================================================================
 
 class TestUploadEndpoint:
-    """测试文件上传端点 POST /api/upload"""
+    """Test file uploads peer POST /api/upload"""
 
     @patch("allenricher.api.server.run_analysis")
     def test_upload_gene_file(self, mock_run, client):
-        """上传基因列表文件应返回 job_id"""
+        """Uploading a gene list file should return a job_id"""
         mock_run.return_value = None
 
         gene_file_content = b"TP53\nBRCA1\nEGFR\nKRAS\n"
@@ -399,7 +461,7 @@ class TestUploadEndpoint:
 
     @patch("allenricher.api.server.run_analysis")
     def test_upload_parses_genes(self, mock_run, client):
-        """上传后应正确解析基因列表"""
+        """Uploading should correctly resolve the list of genes"""
         mock_run.return_value = None
 
         gene_file_content = b"TP53\nBRCA1\nEGFR\n"
@@ -414,7 +476,7 @@ class TestUploadEndpoint:
 
     @patch("allenricher.api.server.run_analysis")
     def test_upload_with_query_params(self, mock_run, client):
-        """上传时通过查询参数指定分析配置"""
+        """Specify profile for uploading through query parameters"""
         mock_run.return_value = None
 
         gene_file_content = b"TP53\n"
@@ -430,12 +492,13 @@ class TestUploadEndpoint:
         from allenricher.api.server import jobs
         job_id = response.json()["job_id"]
         req = jobs[job_id]["request"]
-        # upload 端点使用 form data，method 参数可能被默认值覆盖
-        assert req["method"] in ["hypergeometric", "fisher"]
+        assert req["species"] == "mmu"
+        assert req["databases"] == ["Reactome", "KEGG"]
+        assert req["method"] == "hypergeometric"
 
     @patch("allenricher.api.server.run_analysis")
     def test_upload_skips_empty_lines(self, mock_run, client):
-        """上传文件中的空行应被忽略"""
+        """The empty line that uploads the file should be ignored"""
         mock_run.return_value = None
 
         gene_file_content = b"TP53\n\n\nBRCA1\n\n"
@@ -450,7 +513,7 @@ class TestUploadEndpoint:
 
     @patch("allenricher.api.server.run_analysis")
     def test_upload_strips_whitespace(self, mock_run, client):
-        """上传文件中的基因名前后空白应被去除"""
+        """Ignore blank gene identifiers in an uploaded gene list."""
         mock_run.return_value = None
 
         gene_file_content = b"  TP53  \n  BRCA1 \n"
@@ -464,20 +527,20 @@ class TestUploadEndpoint:
         assert req["genes"] == ["TP53", "BRCA1"]
 
     def test_upload_missing_file_returns_422(self, client):
-        """不提供文件应返回 422 错误"""
+        """The non-provision of files should return 422 error"""
         response = client.post("/api/upload")
         assert response.status_code == 422
 
 
 # ===========================================================================
-# 6. GET /api/status/{job_id} - 任务状态
+# 6. GET /api/status/{job_id}- Job status.
 # ===========================================================================
 
 class TestStatusEndpoint:
-    """测试任务状态端点 GET /api/status/{job_id}"""
+    """Test Task State Endpoint/api/status/{job_id}"""
 
     def test_status_completed(self, client, completed_job):
-        """查询已完成任务的状态"""
+        """Querying Status of Completed Tasks"""
         response = client.get(f"/api/status/{completed_job}")
         assert response.status_code == 200
         data = response.json()
@@ -489,7 +552,7 @@ class TestStatusEndpoint:
         assert data["error"] is None
 
     def test_status_running(self, client, running_job):
-        """查询运行中任务的状态"""
+        """Querying the status of active jobs"""
         response = client.get(f"/api/status/{running_job}")
         assert response.status_code == 200
         data = response.json()
@@ -499,7 +562,7 @@ class TestStatusEndpoint:
         assert data["completed_at"] is None
 
     def test_status_failed(self, client, failed_job):
-        """查询失败任务的状态"""
+        """Query failed task status"""
         response = client.get(f"/api/status/{failed_job}")
         assert response.status_code == 200
         data = response.json()
@@ -508,13 +571,13 @@ class TestStatusEndpoint:
         assert data["error"] is not None
 
     def test_status_not_found(self, client):
-        """查询不存在的任务应返回 404"""
+        """Query for non-existent tasks should return 404"""
         response = client.get("/api/status/nonexistent-job-id")
         assert response.status_code == 404
         assert "not found" in response.json()["detail"].lower()
 
     def test_status_results_summary(self, client, completed_job):
-        """已完成任务应包含 results_summary"""
+        """Completed should include results_summary"""
         response = client.get(f"/api/status/{completed_job}")
         data = response.json()
         assert data["results"] is not None
@@ -522,14 +585,14 @@ class TestStatusEndpoint:
 
 
 # ===========================================================================
-# 7. GET /api/results/{job_id} - 结果获取
+# 7. GET /api/results/{job_id}- Get the results.
 # ===========================================================================
 
 class TestResultsEndpoint:
-    """测试结果获取端点 GET /api/results/{job_id}"""
+    """Test result to get the endpoint/api/results/{job_id}"""
 
     def test_results_json(self, client, completed_job):
-        """以 JSON 格式获取结果"""
+        """Fetch results in JSON format"""
         response = client.get(f"/api/results/{completed_job}?format=json")
         assert response.status_code == 200
         data = response.json()
@@ -541,7 +604,7 @@ class TestResultsEndpoint:
         assert "Term_ID" in data["GO"][0]
 
     def test_results_tsv(self, client, completed_job):
-        """以 TSV 格式获取结果"""
+        """Fetch results in TSV format"""
         response = client.get(f"/api/results/{completed_job}?format=tsv")
         assert response.status_code == 200
         assert "text/tab-separated-values" in response.headers.get("content-type", "")
@@ -550,31 +613,31 @@ class TestResultsEndpoint:
         assert "Term_ID" in content
 
     def test_results_default_format_is_json(self, client, completed_job):
-        """默认格式应为 JSON"""
+        """Default format should be JSON"""
         response = client.get(f"/api/results/{completed_job}")
         assert response.status_code == 200
-        # JSON 响应由 JSONResponse 返回，content-type 应为 application/json
+        # JSON response returned by JSONResponse, cont-type should read application/json
         assert "application/json" in response.headers.get("content-type", "")
 
     def test_results_not_found_job(self, client):
-        """查询不存在的任务应返回 404"""
+        """Query for non-existent tasks should return 404"""
         response = client.get("/api/results/nonexistent-job-id")
         assert response.status_code == 404
 
     def test_results_incomplete_job(self, client, running_job):
-        """未完成任务应返回 400"""
+        """Failure to complete should return 400"""
         response = client.get(f"/api/results/{running_job}")
         assert response.status_code == 400
         assert "running" in response.json()["detail"]
 
     def test_results_invalid_format(self, client, completed_job):
-        """无效格式参数应返回 400"""
+        """Invalid format parameters should return 400"""
         response = client.get(f"/api/results/{completed_job}?format=xml")
         assert response.status_code == 400
         assert "invalid format" in response.json()["detail"].lower()
 
     def test_results_tsv_file_not_found(self, client):
-        """TSV 文件不存在时应返回 404"""
+        """returns 404 when the TSV file does not exist"""
         from allenricher.api.server import jobs
         import tempfile
 
@@ -588,7 +651,7 @@ class TestResultsEndpoint:
             "request": {"genes": ["TP53"], "species": "hsa", "databases": ["GO"]},
             "results": {"GO": []},
             "output_dir": output_dir,
-            # 注意：没有 "results_file" 键
+            # Note: No "results_file" key
         }
 
         try:
@@ -601,14 +664,14 @@ class TestResultsEndpoint:
 
 
 # ===========================================================================
-# 8. GET /api/results/{job_id}/plot - 图表获取
+# GET /api/results/{job_id}/plot - Chart capture
 # ===========================================================================
 
 class TestPlotEndpoint:
-    """测试图表获取端点 GET /api/results/{job_id}/plot"""
+    """Test Chart Get/api/results/{job_id}/plot"""
 
     def test_plot_success(self, client, completed_job):
-        """获取已存在图表应返回 PDF 文件"""
+        """Retrieve existing chart to return PDF file"""
         response = client.get(
             f"/api/results/{completed_job}/plot?database=GO&plot_type=barplot"
         )
@@ -617,50 +680,50 @@ class TestPlotEndpoint:
         assert len(response.content) > 0
 
     def test_plot_not_found_job(self, client):
-        """不存在的任务应返回 404"""
+        """The task that does not exist should be returned 404"""
         response = client.get(
             "/api/results/nonexistent-job/plot?database=GO&plot_type=barplot"
         )
         assert response.status_code == 404
 
     def test_plot_incomplete_job(self, client, running_job):
-        """未完成任务应返回 400"""
+        """Failure to complete should return 400"""
         response = client.get(
             f"/api/results/{running_job}/plot?database=GO&plot_type=barplot"
         )
         assert response.status_code == 400
 
     def test_plot_not_found_file(self, client, completed_job):
-        """图表文件不存在时应返回 404"""
+        """returns 404 when the chart file does not exist"""
         response = client.get(
-            f"/api/results/{completed_job}/plot?database=KEGG&plot_type=bubble"
+            f"/api/results/{completed_job}/plot?database=KEGG&plot_type=lollipop"
         )
         assert response.status_code == 404
         assert "not found" in response.json()["detail"].lower()
 
     def test_plot_missing_required_params(self, client, completed_job):
-        """缺少必需参数应返回 422"""
+        """The missing parameters should return 422"""
         response = client.get(f"/api/results/{completed_job}/plot")
         assert response.status_code == 422
 
-    def test_plot_dotplot(self, client, completed_job):
-        """测试 dotplot 类型"""
+    def test_retired_dotplot_not_found(self, client, completed_job):
+        """Deleted dotplot should not have output files."""
         response = client.get(
             f"/api/results/{completed_job}/plot?database=GO&plot_type=dotplot"
         )
-        # 文件不存在所以 404，但参数解析应正常
+        # File does not exist so 404, but parameters are normal
         assert response.status_code == 404
 
 
 # ===========================================================================
-# 9. GET /api/results/{job_id}/report - 报告获取
+# 9. GET /api/results/{job_id}/report- Report access.
 # ===========================================================================
 
 class TestReportEndpoint:
-    """测试报告获取端点 GET /api/results/{job_id}/report"""
+    """Test Report Gets the peer/api/results/{job_id}/report"""
 
     def test_report_success(self, client, completed_job):
-        """获取已存在报告应返回 HTML 文件"""
+        """Retrieving report should return HTML file"""
         response = client.get(f"/api/results/{completed_job}/report")
         assert response.status_code == 200
         assert "text/html" in response.headers.get("content-type", "")
@@ -668,17 +731,17 @@ class TestReportEndpoint:
         assert "AllEnricher" in content
 
     def test_report_not_found_job(self, client):
-        """不存在的任务应返回 404"""
+        """The task that does not exist should be returned 404"""
         response = client.get("/api/results/nonexistent-job/report")
         assert response.status_code == 404
 
     def test_report_incomplete_job(self, client, running_job):
-        """未完成任务应返回 400"""
+        """Failure to complete should return 400"""
         response = client.get(f"/api/results/{running_job}/report")
         assert response.status_code == 400
 
     def test_report_file_not_found(self, client):
-        """报告文件不存在时应返回 404"""
+        """When the report file does not exist, return 404"""
         from allenricher.api.server import jobs
         import tempfile
 
@@ -703,15 +766,35 @@ class TestReportEndpoint:
             shutil.rmtree(output_dir, ignore_errors=True)
 
 
+class TestMethodsReferenceEndpoint:
+    """Validate Methods text generated exclusively from recorded run metadata."""
+
+    def test_methods_reference_success(self, client, completed_job):
+        response = client.get(f"/api/results/{completed_job}/methods-reference")
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["title"] == "Materials and Methods Writing Reference"
+        assert "AllEnricher version 2.0-test" in payload["paragraphs"][0]
+        assert [item["source"] for item in payload["references"][:3]] == [
+            "AllEnricher",
+            "GO",
+            "GO",
+        ]
+
+    def test_methods_reference_requires_completed_job(self, client, running_job):
+        response = client.get(f"/api/results/{running_job}/methods-reference")
+        assert response.status_code == 400
+
+
 # ===========================================================================
-# 10. DELETE /api/jobs/{job_id} - 删除任务
+# 10. DELETE /api/jobs/{job_id}- Delete Task
 # ===========================================================================
 
 class TestDeleteEndpoint:
-    """测试任务删除端点 DELETE /api/jobs/{job_id}"""
+    """Test Task Remove End DELETE/api/jobs/{job_id}"""
 
     def test_delete_success(self, client, completed_job):
-        """删除已存在的任务应返回成功"""
+        """Remove existing tasks should return successfully"""
         from allenricher.api.server import jobs
 
         assert completed_job in jobs
@@ -721,16 +804,16 @@ class TestDeleteEndpoint:
         assert data["message"] == "Job deleted"
         assert data["job_id"] == completed_job
 
-        # 验证已从 jobs 中移除
+        # Validation removed from Jobs
         assert completed_job not in jobs
 
     def test_delete_not_found(self, client):
-        """删除不存在的任务应返回 404"""
+        """Remove non-existent task returns 404"""
         response = client.delete("/api/jobs/nonexistent-job-id")
         assert response.status_code == 404
 
-    def test_delete_cleans_up_files(self, client, tmp_path):
-        """删除任务应清理输出目录"""
+    def test_delete_does_not_remove_unmanaged_files(self, client, tmp_path):
+        """Deleting jobs cannot always remove paths from the API root directory"""
         from allenricher.api.server import jobs
 
         job_id = "test-cleanup-job"
@@ -750,10 +833,10 @@ class TestDeleteEndpoint:
 
         response = client.delete(f"/api/jobs/{job_id}")
         assert response.status_code == 200
-        assert not output_dir.exists()
+        assert output_dir.exists()
 
     def test_delete_job_without_output_dir(self, client):
-        """删除没有 output_dir 的任务不应报错"""
+        """Remove task without output_dir should not be misreported"""
         from allenricher.api.server import jobs
 
         job_id = "test-no-output-dir"
@@ -764,7 +847,7 @@ class TestDeleteEndpoint:
             "progress": 0.0,
             "request": {"genes": ["TP53"], "species": "hsa", "databases": ["GO"]},
             "results": None,
-            # 没有 output_dir 键
+            # No output_dir key
         }
 
         response = client.delete(f"/api/jobs/{job_id}")
@@ -772,23 +855,23 @@ class TestDeleteEndpoint:
 
 
 # ===========================================================================
-# 11. 路径遍历防护测试
+# 11. Paths through protective tests
 # ===========================================================================
 
 class TestPathTraversalProtection:
-    """测试路径遍历攻击防护"""
+    """Test path through attack protection."""
 
     def test_plot_path_traversal_database(self, client, completed_job):
-        """图表端点应拒绝包含路径遍历字符的 database 参数"""
+        """Figure endpoint should reject database parameters that contain path through characters"""
         response = client.get(
             f"/api/results/{completed_job}/plot"
             f"?database=../../etc/passwd&plot_type=barplot"
         )
-        # 路径清理后文件不存在，应返回 404（而非泄露系统文件）
+        # The path clean file does not exist and should be returned 404 (not leaking system files)
         assert response.status_code in (400, 404)
 
     def test_plot_path_traversal_plot_type(self, client, completed_job):
-        """图表端点应拒绝包含路径遍历字符的 plot_type 参数"""
+        """Figure endpoint should reject the plot_type parameter that contains path through calendar characters"""
         response = client.get(
             f"/api/results/{completed_job}/plot"
             f"?database=GO&plot_type=../../../etc/passwd"
@@ -796,7 +879,7 @@ class TestPathTraversalProtection:
         assert response.status_code in (400, 404)
 
     def test_plot_path_traversal_both(self, client, completed_job):
-        """同时包含路径遍历字符的 database 和 plot_type"""
+        """Adds database and plot_type with path through the past"""
         response = client.get(
             f"/api/results/{completed_job}/plot"
             f"?database=./../../evil&plot_type=barplot"
@@ -804,101 +887,100 @@ class TestPathTraversalProtection:
         assert response.status_code in (400, 404)
 
     def test_plot_special_characters_sanitized(self, client, completed_job):
-        """特殊字符应被清理"""
-        # 包含空格和特殊字符的 database 参数
+        """Special characters should be cleared"""
+        # Database parameters with spaces and special characters
         response = client.get(
             f"/api/results/{completed_job}/plot"
             f"?database=GO;rm+-rf+/&plot_type=barplot"
         )
-        # 清理后文件不存在 -> 404，或因安全原因 -> 400
+        # Clean-up file does not exist - > 404, or for security reasons - > 400
         assert response.status_code in (400, 404)
 
 
 # ===========================================================================
-# 12. 无效请求体 422 测试
+# 12. Invalid Request 422 Test
 # ===========================================================================
 
 class TestInvalidRequestValidation:
-    """测试无效请求体验证（FastAPI 自动返回 422）"""
+    """Test invalid request validation (FastAPI returns 422)"""
 
     def test_analyze_missing_genes(self, client):
-        """缺少必填字段 genes 应返回 422"""
+        """Missing required field entries"""
         payload = {"species": "hsa", "databases": ["GO"]}
         response = client.post("/api/analyze", json=payload)
         assert response.status_code == 422
 
     def test_analyze_empty_body(self, client):
-        """空请求体应返回 422"""
+        """The empty request should be returned to 422"""
         response = client.post("/api/analyze", json={})
         assert response.status_code == 422
 
     def test_analyze_invalid_genes_type(self, client):
-        """genes 字段类型错误应返回 422"""
+        """The genes field type error should return 422"""
         payload = {"genes": "TP53", "species": "hsa"}
         response = client.post("/api/analyze", json=payload)
         assert response.status_code == 422
 
     def test_analyze_invalid_pvalue_cutoff(self, client):
-        """pvalue_cutoff 超出范围应返回 422 或被后端处理"""
+        """pvalue_cutoff beyond range should return 422 or be handled by a backend"""
         payload = {"genes": ["TP53"], "pvalue_cutoff": -1.0}
         response = client.post("/api/analyze", json=payload)
-        # API 现在返回 200 并将任务标记为 failed（后端验证）
-        # 而非在入口处返回 422
+        # API returns 200 now and tags the task as filed (backend authenticated)
+        # Not at the entrance. 422.
         assert response.status_code in [200, 422]
 
     def test_analyze_invalid_species_type(self, client):
-        """species 字段类型错误应返回 422"""
+        """Errors for species field types should return 422"""
         payload = {"genes": ["TP53"], "species": 12345}
         response = client.post("/api/analyze", json=payload)
         assert response.status_code == 422
 
     def test_analyze_invalid_method_type(self, client):
-        """method 字段类型错误应返回 422"""
+        """Method field type error returns 422"""
         payload = {"genes": ["TP53"], "method": 999}
         response = client.post("/api/analyze", json=payload)
         assert response.status_code == 422
 
     def test_analyze_extra_unexpected_field(self, client):
-        """Pydantic 默认不拒绝额外字段，但可以验证基本行为"""
-        # 默认配置下额外字段会被忽略，不会报 422
+        """Unknown field must be rejected, avoid the argument spelling error being ignored in silence"""
         payload = {"genes": ["TP53"], "unexpected_field": "value"}
         response = client.post("/api/analyze", json=payload)
-        assert response.status_code == 200
+        assert response.status_code == 422
 
     def test_upload_no_file(self, client):
-        """上传端点缺少文件应返回 422"""
+        """The upload endpoint missing file should return 422"""
         response = client.post("/api/upload")
         assert response.status_code == 422
 
     def test_plot_missing_database_param(self, client, completed_job):
-        """图表端点缺少 database 参数应返回 422"""
+        """The missing datbase parameter for figure endpoint should be returned 422"""
         response = client.get(
             f"/api/results/{completed_job}/plot?plot_type=barplot"
         )
         assert response.status_code == 422
 
     def test_analyze_empty_genes_list(self, client):
-        """空的 genes 列表应返回 422（Field(..., min_length 未设置则通过）"""
-        # EnrichmentRequest 中 genes 使用 Field(...)，未设置 min_length
-        # 空 list 在类型上合法，但语义上可能有问题
-        # 此测试验证 Pydantic 的行为
+        """The empty list of gens should return 422 (Field(..., Min_lenghth without setting)"""
+        # EnterRequest using Field (...), no Min_length set
+        # Empty list is legal in type, but there may be a problem with semanticity
+        # This test confirms Pydantic behaviour
         payload = {"genes": []}
         response = client.post("/api/analyze", json=payload)
-        # 空 list 在当前模型定义下是合法的（Field 没有设置 min_length=1）
-        # 所以预期 200，如果模型更新加了 min_length 则会变成 422
+        # Empty list is legal under the current model definition (Field does not set a min_lenghth=1)
+        # So, expected 200, if the model is updated with a mem_length, it will become 422
         assert response.status_code in (200, 422)
 
 
 # ===========================================================================
-# 额外集成测试
+# Extra Integrated Test
 # ===========================================================================
 
 class TestIntegrationFlows:
-    """端到端集成流程测试"""
+    """End-to-end integration process testing"""
 
     @patch("allenricher.api.server.run_analysis")
     def test_analyze_then_status(self, mock_run, client):
-        """提交分析后查询状态"""
+        """Query Status After Submission of Analysis"""
         mock_run.return_value = None
 
         payload = {"genes": ["TP53", "BRCA1"]}
@@ -913,7 +995,7 @@ class TestIntegrationFlows:
 
     @patch("allenricher.api.server.run_analysis")
     def test_upload_then_delete(self, mock_run, client):
-        """上传后删除任务"""
+        """Upload and delete task"""
         mock_run.return_value = None
 
         gene_file = b"TP53\nBRCA1\n"
@@ -925,22 +1007,22 @@ class TestIntegrationFlows:
         delete_resp = client.delete(f"/api/jobs/{job_id}")
         assert delete_resp.status_code == 200
 
-        # 再次查询应返回 404
+        # Re-Query should return 404
         status_resp = client.get(f"/api/status/{job_id}")
         assert status_resp.status_code == 404
 
     @patch("allenricher.api.server.run_analysis")
     def test_full_workflow_mock_completed(self, mock_run, client, tmp_path):
-        """模拟完整工作流：提交 -> 模拟完成 -> 获取结果 -> 获取报告 -> 删除"""
+        """Simulate full workflow: Commit -> Simulation complete. -> Get results -> Access to reports -> Delete"""
         mock_run.return_value = None
 
-        # 1. 提交分析
+        # 1. Submission of analysis
         payload = {"genes": ["TP53", "BRCA1", "EGFR"], "species": "hsa", "databases": ["GO"]}
         analyze_resp = client.post("/api/analyze", json=payload)
         assert analyze_resp.status_code == 200
         job_id = analyze_resp.json()["job_id"]
 
-        # 2. 模拟任务完成（直接修改 jobs 字典）
+        # Simulation job complete (direct revision of the jobs dictionary)
         from allenricher.api.server import jobs
         output_dir = tmp_path / "workflow_test"
         output_dir.mkdir()
@@ -958,20 +1040,20 @@ class TestIntegrationFlows:
             "output_dir": str(output_dir),
         })
 
-        # 3. 获取结果
+        # 3. Access to results
         results_resp = client.get(f"/api/results/{job_id}")
         assert results_resp.status_code == 200
         assert "GO" in results_resp.json()
 
-        # 4. 获取报告
+        # 4. Access to reports
         report_resp = client.get(f"/api/results/{job_id}/report")
         assert report_resp.status_code == 200
 
-        # 5. 删除任务
+        # 5. Delete tasks
         delete_resp = client.delete(f"/api/jobs/{job_id}")
         assert delete_resp.status_code == 200
 
-        # 6. 验证已删除
+        # 6. Certification deleted
         assert job_id not in jobs
 
 

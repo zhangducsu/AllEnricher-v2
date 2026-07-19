@@ -1,82 +1,43 @@
-"""
-Reactome 数据库解析器
-
-解析 Reactome NCBI2Reactome_All_Levels.txt.gz 文件，
-生成 AllEnricher 标准的 Reactome2gene.tab.gz 和 Reactome2disc.gz 文件。
-
-对应 v1 脚本：
-- gene2ReactomePathway_extract.pl: 解析 NCBI2Reactome，生成 gene2pathway.txt 和 Reactome2gene.tab.gz
-- makeDB.reactome.v1.0.sh: 生成 Reactome2disc（pathway_name 空格替换为下划线）
-"""
+"""Build Reactome pathway gene sets with official names and hierarchy paths."""
 
 import gzip
+from functools import lru_cache
 from pathlib import Path
 from typing import Dict, Optional, Set
 
 
 class ReactomeParser:
-    """Reactome 数据库解析器
-
-    解析 NCBI2Reactome_All_Levels.txt.gz 文件，
-    生成 AllEnricher 标准格式的 Reactome 数据库文件。
-
-    输入文件格式 (NCBI2Reactome_All_Levels.txt.gz):
-        geneid\\tpathway_id\\tpathway_name\\turl\\t...
-
-    输出文件格式：
-    - {species}.gene2pathway.txt: gene_symbol\\tgene_id\\tpathway_id\\tpathway_name
-    - {species}.Reactome2gene.tab.gz: Gene\\tpathway_id1\\tpathway_id2\\t... (0/1 矩阵)
-    - {species}.Reactome2disc.gz: pathway_id\\tpathway_name (空格替换为下划线)
-    """
+    """Build Reactome pathway files and hierarchy metadata."""
 
     @staticmethod
     def _open_gz_or_text(filepath: str):
-        """根据文件扩展名自动选择打开方式（gzip 或文本）
-
-        Args:
-            filepath: 文件路径
-
-        Returns:
-            文件对象
-        """
+        """Open plain text or gzip-compressed input transparently."""
         if filepath.endswith('.gz'):
             return gzip.open(filepath, 'rt', encoding='utf-8')
         else:
             return open(filepath, 'r', encoding='utf-8')
 
     @staticmethod
-    def parse_ncbi2reactome(ncbi2reactome_path: str, gene_info_path: str,
-                            taxid: int, species: str, outdir: str) -> None:
-        """解析 NCBI2Reactome_All_Levels.txt.gz，生成 Reactome 数据库文件
-
-        读取 NCBI2Reactome_All_Levels.txt.gz（tab分隔，列: geneid, pathway_id, pathway_name, url, ...）
-        pathway_id 格式: "R-HSA-12345"，提取物种代码（大写）与 species 比较
-        读取 gene_info.gz 获取 geneid -> symbol 映射
-        输出 {species}.Reactome2gene.tab.gz 和 {species}.Reactome2disc.gz
-
-        对应 v1 的 gene2ReactomePathway_extract.pl 和 makeDB.reactome.v1.0.sh。
-
-        Args:
-            ncbi2reactome_path: NCBI2Reactome_All_Levels.txt.gz 文件路径
-            gene_info_path: gene_info.gz 文件路径
-            taxid: 物种分类学 ID（如 9606）
-            species: 物种缩写（如 hsa）
-            outdir: 输出目录
-
-        Raises:
-            FileNotFoundError: 输入文件不存在时抛出
-            ValueError: 没有找到指定物种的 Reactome 注释时抛出
-        """
+    def parse_ncbi2reactome(
+        ncbi2reactome_path: str,
+        gene_info_path: str,
+        taxid: int,
+        species: str,
+        outdir: str,
+        pathways_path: Optional[str] = None,
+        relations_path: Optional[str] = None,
+    ) -> None:
+        """Build Reactome gene sets from the NCBI-to-Reactome mapping."""
         outdir_path = Path(outdir)
         outdir_path.mkdir(parents=True, exist_ok=True)
 
-        print(f"|--- ReactomeParser: 开始解析 NCBI2Reactome "
+        print(f"|---ReactomeParser: Start deciphering NCBI2Reactome"
               f"(taxid={taxid}, species={species})")
 
-        # 第一步：读取 gene_info.gz，建立 geneid -> symbol 映射
-        # v1 逻辑：读取 gene_info，过滤指定 taxid，提取 (geneid, symbol)
+        # Step 1: Read gene_info.gz, create geneid-> symbol map
+        # Preserve the v1 mapping rule: filter gene_info by TaxID and extract GeneID-symbol pairs.
         gene_id_to_symbol: Dict[str, str] = {}
-        print(f"|--- 读取文件: {gene_info_path}")
+        print(f"|---Read file: {gene_info_path}")
 
         with ReactomeParser._open_gz_or_text(gene_info_path) as f:
             for line in f:
@@ -90,12 +51,12 @@ class ReactomeParser:
                 if int(file_taxid) == taxid:
                     gene_id_to_symbol[gene_id] = symbol
 
-        print(f"|--- 找到 {len(gene_id_to_symbol)} 个基因 (taxid={taxid})")
+        print(f"|---Found it.{len(gene_id_to_symbol)}Genome (taxid={taxid})")
 
-        # 第二步：读取 NCBI2Reactome 文件，过滤指定物种
-        # v1 逻辑：
-        #   列 [0]=geneid, [1]=pathway_id, [3]=pathway_name
-        #   pathway_id 格式 "R-HSA-12345"，取 bb[1]（大写）与 uc(species) 比较
+        # Step 2: Read NCBI2Reactome files, filter the species specified
+        # v1 Logical:
+        #   Column [0] =geneid, [1] =pathway_id, [3] =pathway_name
+        #   Pathway_id format "R-HSA-12345", with bb [1] (upsize) compared to uc (species)
         species_upper = species.upper()
         gene2pathway_file = outdir_path / f"{species}.gene2pathway.txt"
         tab_file = outdir_path / f"{species}.Reactome2gene.tab.gz"
@@ -105,7 +66,7 @@ class ReactomeParser:
         tab: Dict[str, Dict[str, int]] = {}  # {symbol: {pathway_id: 1}}
         pathway_names: Dict[str, str] = {}   # {pathway_id: pathway_name}
 
-        print(f"|--- 读取文件: {ncbi2reactome_path}")
+        print(f"|---Read file: {ncbi2reactome_path}")
         n = 0
 
         with ReactomeParser._open_gz_or_text(ncbi2reactome_path) as f_in, \
@@ -119,7 +80,7 @@ class ReactomeParser:
                 pathway_id = parts[1]
                 pathway_name = parts[3]
 
-                # v1 逻辑：pathway_id 格式 "R-HSA-12345"，取 bb[1] 与 uc(name) 比较
+                # v1 Logical: Pathway_id format "R-HSA-12345", compared with bb[1] and uc(name)
                 pathway_parts = pathway_id.split('-')
                 if len(pathway_parts) < 2:
                     continue
@@ -127,17 +88,17 @@ class ReactomeParser:
                 if pathway_species_code != species_upper:
                     continue
 
-                # 获取 gene symbol，如果没有则使用 gene_id
+                # Get agene symbol or use agene_id if not
                 symbol = gene_id_to_symbol.get(gene_id, gene_id)
 
                 all_symbols.add(symbol)
                 all_pathways.add(pathway_id)
                 pathway_names[pathway_id] = pathway_name
 
-                # 写入 gene2pathway.txt
+                # Write Gene2pathway.txt
                 f_txt.write(f"{symbol}\t{gene_id}\t{pathway_id}\t{pathway_name}\n")
 
-                # 构建 tab 矩阵数据
+                # Build tab matrix data
                 if symbol not in tab:
                     tab[symbol] = {}
                 tab[symbol][pathway_id] = 1
@@ -145,15 +106,15 @@ class ReactomeParser:
 
         if n == 0:
             raise ValueError(
-                f"[错误] 在 NCBI2Reactome 文件中没有找到 species={species} 的通路注释！"
+                f"[Error] No species= found in NCBI2Reactome file{species}The pass notes!"
             )
 
-        print(f"|--- 共找到 {n} 条基因-通路关联")
+        print(f"|--- Parsed {n} Reactome pathway-gene associations.")
 
-        # 第三步：写入 Reactome2gene.tab.gz
-        # v1 逻辑：表头 Gene\\tpathway_id1\\tpathway_id2\\t...
+        # Step 3: Write to Reactome2gene.tab.gz
+        # v1 Logic: Header Gene\\tpathway_id1\\tpathway_id2\\t...
         sorted_pathways = sorted(all_pathways)
-        print(f"|--- 写入文件: {tab_file}")
+        print(f"|---Writing file: {tab_file}")
 
         with gzip.open(tab_file, 'wt', encoding='utf-8') as f:
             header = ["Gene"] + sorted_pathways
@@ -166,17 +127,66 @@ class ReactomeParser:
                     row.append(str(val))
                 f.write('\t'.join(row) + '\n')
 
-        # 第四步：写入 Reactome2disc.gz
-        # v1 逻辑：从 gene2pathway.txt 提取 pathway_id 和 pathway_name
-        # pathway_name 空格替换为下划线，sort | uniq
+        hierarchy_paths: Dict[str, str] = {}
+        if pathways_path and relations_path:
+            pathway_names, hierarchy_paths = ReactomeParser._load_hierarchies(
+                pathways_path,
+                relations_path,
+                all_pathways,
+                pathway_names,
+            )
+
+        # Step 4: Write Reactome2disc.gz
         disc_file = outdir_path / f"{species}.Reactome2disc.gz"
-        print(f"|--- 写入文件: {disc_file}")
+        print(f"|---Writing file: {disc_file}")
 
         with gzip.open(disc_file, 'wt', encoding='utf-8') as f:
             for pid in sorted_pathways:
                 pname = pathway_names.get(pid, pid)
-                # v1 逻辑：空格替换为下划线
-                pname_underscore = pname.replace(' ', '_')
-                f.write(f"{pid}\t{pname_underscore}\n")
+                hierarchy = hierarchy_paths.get(pid, "")
+                f.write(f"{pid}\t{pname}\t{hierarchy}\n")
 
-        print(f"|--- ReactomeParser: Reactome 数据库构建完成")
+        print(f"|---ReactomeParser: Reactome database built")
+
+    @staticmethod
+    def _load_hierarchies(
+        pathways_path: str,
+        relations_path: str,
+        selected_pathways: Set[str],
+        fallback_names: Dict[str, str],
+    ) -> tuple[Dict[str, str], Dict[str, str]]:
+        """Return official pathway names and deterministic root-to-term paths."""
+        names = dict(fallback_names)
+        with ReactomeParser._open_gz_or_text(pathways_path) as handle:
+            for line in handle:
+                parts = line.rstrip("\r\n").split("\t")
+                if len(parts) >= 2:
+                    names[parts[0]] = parts[1]
+
+        parents: Dict[str, Set[str]] = {}
+        with ReactomeParser._open_gz_or_text(relations_path) as handle:
+            for line in handle:
+                parts = line.rstrip("\r\n").split("\t")
+                if len(parts) >= 2:
+                    parents.setdefault(parts[1], set()).add(parts[0])
+
+        @lru_cache(maxsize=None)
+        def best_path(term_id: str) -> tuple[str, ...]:
+            candidates = []
+            for parent_id in sorted(parents.get(term_id, set())):
+                if parent_id == term_id:
+                    continue
+                parent_path = best_path(parent_id)
+                if term_id not in parent_path:
+                    candidates.append((*parent_path, term_id))
+            if not candidates:
+                return (term_id,)
+            return sorted(candidates, key=lambda path: (-len(path), path))[0]
+
+        hierarchies = {}
+        for term_id in selected_pathways:
+            path = best_path(term_id)
+            labels = [names.get(path_id, path_id) for path_id in path]
+            if len(labels) > 1:
+                hierarchies[term_id] = "|".join(labels)
+        return names, hierarchies
