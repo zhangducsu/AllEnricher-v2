@@ -176,7 +176,7 @@ class TestE2EFourColumnHierarchy:
         gene_weights = {g: 1.0 - i * 0.1 for i, g in enumerate(ranked_genes)}
 
         for term_id, (term_name, genes) in gmt_data.items():
-            es, nes, pvalue, leading_edge, _ = gsea.calculate_normalized_es(
+            es, nes, pvalue, leading_edge = gsea.calculate_normalized_es(
                 ranked_genes, set(genes), gene_weights
             )
             assert -1.0 <= es <= 1.0, f"ES={es}Beyond range"
@@ -328,7 +328,7 @@ class TestE2EGseaWithCustomDb:
         gsea = GSEA(permutations=50, min_size=1, max_size=500)
         results = []
         for term_id, genes in gene_sets.items():
-            es, nes, pvalue, leading_edge, _ = gsea.calculate_normalized_es(
+            es, nes, pvalue, leading_edge = gsea.calculate_normalized_es(
                 ranked_genes, genes, gene_weights
             )
             results.append({
@@ -513,7 +513,7 @@ class TestIntegrationReport:
         gsea = GSEA(permutations=50, min_size=1, max_size=500)
         gsea_results = []
         for term_id, genes in gene_sets.items():
-            es, nes, pvalue, leading_edge, _ = gsea.calculate_normalized_es(
+            es, nes, pvalue, leading_edge = gsea.calculate_normalized_es(
                 ranked_genes, genes, gene_weights
             )
             gsea_results.append({
@@ -580,9 +580,7 @@ class TestIntegrationReport:
         }
 
         # Write Test Report
-        test_data_dir = Path(__file__).parent.parent / "test_data"
-        test_data_dir.mkdir(exist_ok=True)
-        report_path = test_data_dir / "custom_db_test_report.json"
+        report_path = tmp_path / "custom_db_test_report.json"
 
         with open(report_path, 'w', encoding='utf-8') as f:
             json.dump(report, f, indent=2, ensure_ascii=False)
