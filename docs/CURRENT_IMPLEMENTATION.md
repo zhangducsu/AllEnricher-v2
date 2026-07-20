@@ -30,7 +30,7 @@ Size filters are applied after intersecting gene sets with the method-specific g
 | Reactome | Reactome-supported species | pathway gene sets |
 | WikiPathways | WikiPathways-supported species | pathway gene sets |
 | DO | human | disease ontology associations |
-| DisGeNET (`v20190612`) | human | frozen AllEnricher v1 free snapshot |
+| DisGeNET (`v20190612`) | human | retained free snapshot |
 | TRRUST v2 | human and mouse | TF-target interactions |
 | ChEA3 | human | TF-target gene-set libraries |
 | AnimalTFDB | AnimalTFDB species | TF annotations with prepared target sets |

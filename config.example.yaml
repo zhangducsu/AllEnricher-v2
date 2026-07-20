@@ -38,7 +38,7 @@ activity_heatmap_top_n: 40
 plot_width: null               # adaptive when null
 plot_height: null              # adaptive when null
 plot_style: "nature"          # nature, science, or presentation
-plot_palette: null             # legacy semantic-role override
+plot_palette: null             # optional semantic-role palette fallback
 categorical_palette: null      # for categories and groups
 sequential_palette: null       # for ordered non-negative values
 diverging_palette: null        # for values centered on zero

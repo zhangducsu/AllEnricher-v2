@@ -1,10 +1,9 @@
 # AllEnricher v2
 
 AllEnricher is a multi-species gene set enrichment toolkit for command-line,
-Python, REST API, and local Web workflows. Version 2.1.0 keeps compatibility
-with the AllEnricher v1 database layout while adding deterministic GSEA,
-ssGSEA, GSVA, publication-oriented figures, auditable HTML reports, species
-registry queries, and method-aware AI interpretation.
+Python, REST API, and local Web workflows. Version 2.1.0 focuses on deterministic
+GSEA, ssGSEA, GSVA, publication-oriented figures, auditable HTML reports,
+species-registry queries, and method-aware AI interpretation.
 
 [![Python](https://img.shields.io/badge/Python-3.8%2B-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -47,7 +46,7 @@ directory. Use `allenricher list-species`, `allenricher query-species`,
 | Reactome | Reactome pathways | Reactome-supported species |
 | WikiPathways | Community-curated pathways | WikiPathways-supported species |
 | DO | Disease Ontology associations | Human |
-| DisGeNET (`v20190612`) | Disease-gene associations from the frozen AllEnricher v1 free snapshot | Human |
+| DisGeNET (`v20190612`) | Disease-gene associations from the retained free snapshot | Human |
 | TRRUST v2 | Curated TF-target regulatory interactions | Human and mouse |
 | ChEA3 | TF-target gene-set libraries | Human |
 | AnimalTFDB | Animal TF annotations with ortholog-mapped target sets | AnimalTFDB species with prepared local files |
@@ -55,8 +54,7 @@ directory. Use `allenricher list-species`, `allenricher query-species`,
 | CUSTOM | User-built gene sets | User-defined |
 
 DisGeNET is not downloaded from current DisGeNET releases because later data are
-not freely downloadable through the same public route. AllEnricher v2 can reuse
-the frozen v1 free snapshot and labels it as `v20190612` in user-facing output.
+not freely downloadable through the same public route. AllEnricher v2 labels the retained free snapshot as `v20190612` in user-facing output.
 
 ## Analysis Methods
 
@@ -192,7 +190,7 @@ allenricher download -d ChEA3 --database-dir ./database
 allenricher download -d AnimalTFDB --species Bos_taurus,Sus_scrofa --database-dir ./database
 ```
 
-The compatibility flags remain available:
+Alternative TF download selectors:
 
 ```bash
 allenricher download -d TF --trrust --database-dir ./database
@@ -372,7 +370,7 @@ allenricher analyze \
   --output results/tf_gsea
 ```
 
-The compatibility entry point `tf-enrich` is retained for TF ORA and TF GSEA:
+The TF-specific `tf-enrich` entry point is available for TF ORA and TF GSEA:
 
 ```bash
 allenricher tf-enrich \
