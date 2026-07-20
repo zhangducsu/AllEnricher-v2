@@ -1222,14 +1222,19 @@ Examples:
     # Canonical analysis workflow shared by the CLI, API, and Web application.
     # Configure statistics, plots, reports, and optional AI interpretation.
     analyze_parser = subparsers.add_parser('analyze', help='Run enrichment analysis')
-    analyze_parser.add_argument('-i', '--input', required=True, help='Input gene list file')           # Enter the path of the gene list file (required)
+    analyze_parser.add_argument(
+        '-i', '--input',
+        required=False,
+        default=None,
+        help='ORA query gene list file; GSEA uses --ranked-genes, ssGSEA/GSVA use --expression-matrix',
+    )
     analyze_parser.add_argument('-s', '--species', default='hsa', help='Species code (default: hsa)')  # species code, default human (hsa)
     analyze_parser.add_argument('-d', '--databases', default='GO,KEGG', help='Comma-separated databases')  # Comma-separated list of database names
     analyze_parser.add_argument('-o', '--output', default='./results', help='Output directory')        # Output directory, default to./results
-    analyze_parser.add_argument('-b', '--background', help='Background gene list file')
+    analyze_parser.add_argument('-b', '--background', help='ORA background gene list file')
     analyze_parser.add_argument('--background-mode', dest='background_mode',
                                 choices=['annotated', 'genome', 'custom'], default='annotated',
-                                help='Background gene set mode: annotated (default), genome, custom')
+                                help='ORA background gene set mode: annotated (default), genome, custom')
     analyze_parser.add_argument('-m', '--method', default='hypergeometric', choices=['hypergeometric', 'gsea', 'ssgsea', 'gsva'], help='Enrichment method')
     analyze_parser.add_argument('-c', '--correction', default='BH', choices=['BH', 'BY', 'bonferroni', 'holm', 'none'], help='Multiple testing correction')  # Multiple Test Correction Method
     analyze_parser.add_argument('-p', '--pvalue', type=float, default=0.05, help='P-value cutoff')    # P value threshold, default 0.05
@@ -1306,7 +1311,10 @@ Examples:
                                 help='Optional rank consensus; source-level results are always retained')
     analyze_parser.add_argument('--tf-only', action='store_true',
                                 help='Only perform TF enrichment, skip standard databases (GO/KEGG/Reactome etc.)')
-    analyze_parser.add_argument('--use-r-plots', action='store_true', help='Use R scripts for GSEA plotting (requires R environment)')
+    analyze_parser.add_argument('--use-r-plots', dest='use_r_plots', action='store_true', default=True,
+                                help='Use R scripts for publication figures (default; falls back to Python when R is unavailable)')
+    analyze_parser.add_argument('--python-plots', dest='use_r_plots', action='store_false',
+                                help='Use the minimal Python plotting fallback instead of R publication figures')
     analyze_parser.add_argument('--emapplot-qvalue', type=_probability, default=0.05,
                                 help='R emapplot p.adjust/FDR cutoff (default: 0.05)')
     analyze_parser.add_argument('--emapplot-min-count', type=_positive_int, default=3,
@@ -1597,15 +1605,19 @@ def cmd_analyze(args) -> int:
         output_dir = Path(config.output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Step 4: load the query gene list.
-        # Prefer the configured input file, then fall back to the CLI value.
-        input_path = config.input_file or args.input
-        if not input_path:
-            logger.error("No query gene file was provided. Use -i/--input or set input_file in the configuration.")
-            return 1
-        logger.info(f"Loading gene list from {input_path}")
         analyzer = EnrichmentAnalyzer(config)
-        gene_set = analyzer.load_gene_list(input_path)
+        gene_set = set()
+
+        # Step 4: load the method-specific primary input.
+        # ORA consumes a query gene list. GSEA and activity methods use their
+        # dedicated inputs and do not require a redundant --input file.
+        input_path = config.input_file or args.input
+        if config.method == 'hypergeometric':
+            if not input_path:
+                logger.error("ORA requires -i/--input with a query gene list.")
+                return 1
+            logger.info(f"Loading gene list from {input_path}")
+            gene_set = analyzer.load_gene_list(input_path)
 
         # Step 4.5: load the ranked list or expression matrix required by the method.
         expression_matrix = None
@@ -1668,7 +1680,7 @@ def cmd_analyze(args) -> int:
             if config.plot_width is not None and config.plot_height is not None
             else None
         )
-        if args.use_r_plots:
+        if args.use_r_plots and config.method in _METHOD_PLOT_TYPES:
             if plot_figsize is not None:
                 logger.warning(
                     "plot_width and plot_height apply to Python figures only; R figures use their publication layouts"
@@ -1708,7 +1720,12 @@ def cmd_analyze(args) -> int:
         # Resolve the ORA background from explicit input or the selected mode.
         background_mode = getattr(args, 'background_mode', 'annotated')
 
-        if config.background_file:
+        ora_like_analysis = config.method == 'hypergeometric' or tf_only_mode
+        if not ora_like_analysis:
+            background_set = set()
+            if config.background_file or background_mode != 'annotated':
+                logger.warning("Background options are ignored for %s analysis.", config.method)
+        elif config.background_file:
             # An explicit background file takes precedence over background-mode.
             logger.info(f"Loading background genes from {config.background_file}")
             background_set = analyzer.load_gene_list(config.background_file)

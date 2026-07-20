@@ -101,6 +101,13 @@ def test_method_specific_input_validation(monkeypatch, tmp_path):
         assert client.post("/api/analyze", json={"genes": ["TP53"], "method": "gsva"}).status_code == 422
 
 
+def test_api_requests_r_plots_by_default(tmp_path):
+    request = server.EnrichmentRequest(genes=["A"], ranked_genes=[server.RankedGene(gene="A", weight=1.0)], databases=["GO"], method="gsea")
+    files = {"input": str(tmp_path / "genes.txt"), "ranked": str(tmp_path / "ranked.tsv")}
+    command = server.build_cli_command(request, files, tmp_path / "output")
+    assert "--use-r-plots" in command
+
+
 def test_cli_command_contains_method_inputs_and_plot_options(tmp_path):
     request = server.EnrichmentRequest(
         genes=["A"],
@@ -436,9 +443,10 @@ def test_web_plot_settings_are_context_aware_and_hide_runtime_internals():
     assert '<option value="presentation">Presentation</option>' in html
     assert '<option value="cell">' not in html
     assert '<option value="omicshare">' not in html
-    for control in ("databaseDir", "useVersion", "jobs", "verbose"):
+    for control in ("databaseDir", "useVersion", "jobs", "verbose", "useRPlots"):
         assert f'id="{control}"' not in html
     assert "Operating Environment" not in html
+    assert 'form.append("use_r_plots", true)' not in html
     assert 'const PLOT_PALETTE_ROLES = {' in html
     assert 'class="palette-preview"' not in html
     for role in ("categorical", "sequential", "diverging"):

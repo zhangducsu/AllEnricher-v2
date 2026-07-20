@@ -124,7 +124,7 @@ class EnrichmentRequest(BaseModel):
     categorical_palette: Optional[str] = None
     sequential_palette: Optional[str] = None
     diverging_palette: Optional[str] = None
-    use_r_plots: bool = False
+    use_r_plots: bool = True
     ai_backend: Optional[Literal["openai", "claude", "deepseek", "glm", "minimax", "ollama", "mock"]] = None
     ai_mode: Literal["summary", "reviewer", "caption"] = "summary"
     ai_top_n: Optional[int] = Field(default=None, ge=1)
@@ -517,7 +517,7 @@ def build_cli_command(request: EnrichmentRequest, files: Dict[str, str], output_
         (request.no_report, "--no-report"),
         (request.only_significant, "--only-significant"),
         (request.tf_only, "--tf-only"),
-        (request.use_r_plots, "--use-r-plots"),
+        (request.use_r_plots and request.method in {"gsea", "ssgsea", "gsva"}, "--use-r-plots"),
         (request.verbose, "--verbose"),
     ):
         if enabled:
@@ -828,7 +828,7 @@ async def upload_analysis(
     no_plot: bool = Form(False),
     no_report: bool = Form(False),
     methods_language: Literal["zh", "en"] = Form("en"),
-    use_r_plots: bool = Form(False),
+    use_r_plots: bool = Form(True),
     ai_backend: Optional[Literal["openai", "claude", "deepseek", "glm", "minimax", "ollama", "mock"]] = Form(None),
     ai_mode: Literal["summary", "reviewer", "caption"] = Form("summary"),
     ai_top_n: Optional[int] = Form(None),

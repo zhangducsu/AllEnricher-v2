@@ -30,7 +30,7 @@ class TestCLIMethodChoices:
         """Validation CLI--methodOptions for gsva"""
         parser = create_parser()
         # gsva should be accepted as a valid method value
-        args = parser.parse_args(['analyze', '-i', 'genes.txt', '-m', 'gsva'])
+        args = parser.parse_args(['analyze', '-m', 'gsva'])
         assert args.method == 'gsva'
 
     def test_cli_method_choices_all_methods(self):
@@ -38,8 +38,28 @@ class TestCLIMethodChoices:
         parser = create_parser()
         valid_methods = ['hypergeometric', 'gsea', 'ssgsea', 'gsva']
         for method in valid_methods:
-            args = parser.parse_args(['analyze', '-i', 'genes.txt', '-m', method])
+            cmd = ['analyze', '-m', method]
+            if method == 'hypergeometric':
+                cmd.extend(['-i', 'genes.txt'])
+            args = parser.parse_args(cmd)
             assert args.method == method, f"Method '{method}\"should be supported"
+
+    def test_method_specific_inputs_do_not_require_query_gene_list(self):
+        """GSEA and activity methods should parse without redundant --input."""
+        parser = create_parser()
+
+        gsea_args = parser.parse_args([
+            'analyze', '-m', 'gsea', '--ranked-genes', 'ranked_genes.tsv'
+        ])
+        assert gsea_args.input is None
+        assert gsea_args.ranked_genes == 'ranked_genes.tsv'
+
+        for method in ('ssgsea', 'gsva'):
+            args = parser.parse_args([
+                'analyze', '-m', method, '--expression-matrix', 'expression.tsv'
+            ])
+            assert args.input is None
+            assert args.expression_matrix == 'expression.tsv'
 
     def test_cli_method_invalid_rejected(self):
         """Validation CLI--methodOption rejects invalid name"""

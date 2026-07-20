@@ -3,6 +3,10 @@
 This file defines repository-specific expectations for contributors and coding
 agents. Read the relevant implementation and tests before changing behavior.
 
+## Documentation Authority
+
+Use `README.md`, `docs/CURRENT_IMPLEMENTATION.md`, and `docs/release/FINAL_RELEASE_CHECKLIST.md` as the current implementation contract. Files under `docs/plans`, `docs/reports`, `docs/specs`, and `docs/superpowers` are historical archive records unless they explicitly say otherwise.
+
 ## Project Scope
 
 AllEnricher v2 is a Python implementation of multi-species gene set enrichment

@@ -1,6 +1,6 @@
-﻿# AllEnricher-v2 Final Release Checklist
+# AllEnricher-v2 Final Release Checklist
 
-This checklist is the release gate for the current v2 closing phase. From this point, avoid new features unless a check below exposes a blocking defect.
+This checklist is the release gate for AllEnricher v2.1.0 maintenance and patch releases. Use it with `docs/CURRENT_IMPLEMENTATION.md`, which is the current implementation matrix.
 
 ## Release Rule
 
@@ -32,6 +32,8 @@ This checklist is the release gate for the current v2 closing phase. From this p
 - AI interpretation cites valid evidence IDs and avoids result discussion beyond the provided enrichment evidence.
 - AI failure does not fail the analysis job; it is reported as an AI-specific warning with the error artifact linked.
 - Figures are readable, compact, and use the current palette/style controls consistently.
+- Current default figures match `docs/CURRENT_IMPLEMENTATION.md`: ORA `barplot,lollipop`; GSEA `enrichment,enrichment2,barplot,lollipop,ridgeplot` plus R-only `emapplot`; ssGSEA/GSVA `heatmap,group_comparison,correlation`.
+- Removed or non-current figure names are not advertised as active defaults: `bubble`, `dotplot`, `network`, `upset`, `volcano`, `method_comparison`, `cnetplot`, and `circos`.
 
 ## One-command Validation
 

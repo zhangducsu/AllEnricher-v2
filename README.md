@@ -1,12 +1,17 @@
 # AllEnricher v2
 
 AllEnricher is a multi-species gene set enrichment toolkit for command-line,
-Python, REST API, and local Web workflows. Version 2 preserves compatibility
+Python, REST API, and local Web workflows. Version 2.1.0 preserves compatibility
 with the AllEnricher v1 database layout while providing deterministic analysis,
-publication-oriented figures, and auditable HTML reports.
+publication-oriented figures, auditable HTML reports, and method-aware AI
+interpretation.
 
 [![Python](https://img.shields.io/badge/Python-3.8%2B-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
+## Current Documentation
+
+The maintained implementation matrix is in [`docs/CURRENT_IMPLEMENTATION.md`](docs/CURRENT_IMPLEMENTATION.md). Older planning and audit files under `docs/` are retained for traceability and are marked as historical archive records.
 
 ## Features
 
@@ -17,7 +22,7 @@ publication-oriented figures, and auditable HTML reports.
   transcription factor gene-set databases.
 - Custom database construction from user annotations.
 - Multi-species registry and TaxID-based species resolution.
-- Python and R publication-oriented figures in PNG, PDF, or SVG format.
+- R-backed publication figures in PNG, PDF, or SVG format, with Python kept as a minimal fallback when R is unavailable.
 - Interactive HTML reports containing results, figures, run metadata, and a
   Materials and Methods writing reference.
 - A local Web workbench and REST API backed by the same CLI analysis path.
@@ -83,8 +88,7 @@ if (!requireNamespace("BiocManager", quietly = TRUE)) {
 BiocManager::install(c("fgsea", "GSVA"), ask = FALSE, update = FALSE)
 ```
 
-R figures use `ggplot2`, `dplyr`, `tidyr`, and `scales`. The R pathway-network
-figure additionally requires `aPEAR` and its dependencies. Run the repository
+GSEA, ssGSEA, and GSVA publication figures are rendered by R by default. The Web workbench uses this default automatically and does not expose an R/Python plotting switch. Python plotting code is retained only for workflow helpers, visual-audit utilities, report fallback figures, and explicit CLI `--python-plots` runs when R is unavailable. ORA uses the maintained Python bar/lollipop renderer. R figures use `ggplot2`, `dplyr`, `tidyr`, and `scales`. The R pathway-network figure additionally requires `aPEAR` and its dependencies. Run the repository
 dependency audit to check the packages required by the current R scripts:
 
 ```bash
@@ -175,13 +179,11 @@ allenricher analyze \
 
 ```bash
 allenricher analyze \
-  --input genes.txt \
   --ranked-genes ranked_genes.tsv \
   --species hsa \
   --databases GO,KEGG \
   --method gsea \
   --plot-types enrichment,enrichment2,barplot,lollipop,ridgeplot,emapplot \
-  --use-r-plots \
   --output results/gsea
 ```
 
@@ -189,7 +191,6 @@ allenricher analyze \
 
 ```bash
 allenricher analyze \
-  --input genes.txt \
   --expression-matrix expression.tsv \
   --groups "Control:Control_1,Control_2;Treatment:Treatment_1,Treatment_2" \
   --species hsa \
@@ -238,13 +239,13 @@ A typical analysis directory contains:
 
 ```text
 results/
-├── GO_enrichment.tsv
-├── KEGG_enrichment.tsv
-├── analysis_metadata.json
-├── report.html
-└── plots/
-    ├── GO_barplot.png
-    └── GO_lollipop.png
+|-- GO_enrichment.tsv
+|-- KEGG_enrichment.tsv
+|-- analysis_metadata.json
+|-- report.html
+`-- plots/
+    |-- GO_barplot.png
+    `-- GO_lollipop.png
 ```
 
 Result tables include stable term identifiers and readable term names. Where a

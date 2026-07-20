@@ -251,6 +251,18 @@ class TestConfigValidation:
 
         assert any("Background file not found" in e for e in errors)
 
+    def test_non_ora_methods_ignore_ora_only_input_paths(self):
+        """GSEA and activity methods should not validate unused ORA file paths."""
+        for method in ('gsea', 'ssgsea', 'gsva'):
+            config = Config(
+                method=method,
+                input_file='/nonexistent/query_genes.txt',
+                background_file='/nonexistent/background_genes.txt',
+            )
+            errors = config.validate()
+            assert not any('Input file not found' in error for error in errors)
+            assert not any('Background file not found' in error for error in errors)
+
     def test_validate_null_input_file(self):
         """Test input_file is None and file should not be reported as incorrect"""
         config = Config(input_file=None)

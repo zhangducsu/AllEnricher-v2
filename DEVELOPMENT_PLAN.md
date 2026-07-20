@@ -1,12 +1,17 @@
 # AllEnricher v2 Development Status
 
+> Current implementation source of truth: use `docs/CURRENT_IMPLEMENTATION.md`, `README.md`, `AGENTS.md`, and `docs/release/FINAL_RELEASE_CHECKLIST.md` for v2.1.0 behavior. This file is a planning aid, not the release contract.
+
+
 This document summarizes the implemented product surface and the remaining
 release work. Detailed historical plans and evidence remain under `docs/` and
 `test_e2e_2026/`.
 
 ## Implemented Product Surface
 
+
 ### Analysis
+
 
 - ORA with a one-sided hypergeometric test and configurable background.
 - GSEA through Bioconductor `fgseaMultilevel`.
@@ -16,6 +21,7 @@ release work. Detailed historical plans and evidence remain under `docs/` and
 
 ### Databases
 
+
 - GO, KEGG, Reactome, WikiPathways, Disease Ontology, and the frozen DisGeNET
   `v20190612` snapshot.
 - TRRUST, ChEA3, AnimalTFDB, and hTFtarget TF-target gene sets.
@@ -24,6 +30,7 @@ release work. Detailed historical plans and evidence remain under `docs/` and
 - Version metadata and local database discovery.
 
 ### Visualization and Reports
+
 
 - ORA bar and lollipop plots.
 - GSEA single-pathway, multi-pathway, bar, lollipop, ridge, and pathway-network
@@ -38,6 +45,7 @@ release work. Detailed historical plans and evidence remain under `docs/` and
 
 ### Interfaces
 
+
 - CLI subcommands for analysis, database preparation and inspection, species
   queries, service startup, configuration generation, and TF enrichment.
 - FastAPI REST endpoints and a local Web workbench using the same CLI workflow.
@@ -45,12 +53,14 @@ release work. Detailed historical plans and evidence remain under `docs/` and
 
 ### Validation Infrastructure
 
+
 - Unit and integration tests under `tests/`.
 - Deterministic command/API/R-plot E2E infrastructure under `test_e2e_2026/`.
 - Real-world analysis matrix and visual-review contact sheets.
 - Repository-wide English-only source-text gate.
 
 ## Release Priorities
+
 
 1. Complete the English semantic rewrite of maintained source comments,
    documentation, templates, messages, and tests.
@@ -65,6 +75,7 @@ release work. Detailed historical plans and evidence remain under `docs/` and
    readiness.
 
 ## Release Acceptance Criteria
+
 
 - No unexpected test failures.
 - No Chinese text or translation placeholders in maintained Git content.

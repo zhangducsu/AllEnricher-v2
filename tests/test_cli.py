@@ -23,6 +23,7 @@ from allenricher.cli import (
     _run_tf_analysis,
     create_parser,
     main,
+    cmd_analyze,
     cmd_list,
     cmd_config,
     cmd_download,
@@ -54,12 +55,12 @@ class TestCreateParser:
         args = parser.parse_args([])
         assert args.command is None
 
-    def test_analyze_required_args(self):
-        """Test the analyze required parameter"""
+    def test_analyze_default_args_without_parser_required_input(self):
+        """Parser accepts analyze without a universal --input file."""
         parser = create_parser()
-        args = parser.parse_args(['analyze', '-i', 'genes.txt'])
+        args = parser.parse_args(['analyze'])
         assert args.command == 'analyze'
-        assert args.input == 'genes.txt'
+        assert args.input is None
         assert args.species == 'hsa'
         assert args.databases == 'GO,KEGG'
         assert args.method == 'hypergeometric'
@@ -151,6 +152,50 @@ class TestCreateParser:
         with pytest.raises(SystemExit):
             parser.parse_args(['list', 'invalid'])
 
+
+class TestCmdAnalyzeMethodInputs:
+    """Runtime checks for method-specific analyze inputs."""
+
+    def test_gsea_uses_ranked_genes_without_query_input_or_background(self, tmp_path):
+        parser = create_parser()
+        args = parser.parse_args([
+            'analyze', '-m', 'gsea', '-r', 'ranked.tsv', '-d', 'GO',
+            '--background-mode', 'custom', '--no-plot', '--no-report',
+            '-o', str(tmp_path),
+        ])
+
+        result = pd.DataFrame({
+            'pathway': ['GO:0001'],
+            'pval': [0.001],
+            'padj': [0.01],
+            'ES': [0.6],
+            'NES': [1.8],
+            'size': [2],
+            'leadingEdge': ['G1;G2'],
+        })
+
+        with patch('allenricher.cli.EnrichmentAnalyzer') as analyzer_cls, \
+             patch('allenricher.cli.DatabaseManager') as manager_cls:
+            analyzer = analyzer_cls.return_value
+            analyzer.load_ranked_gene_list.return_value = [('G1', 2.0), ('G2', 1.0)]
+            analyzer.run_analysis.return_value = {'GO': result}
+
+            manager = manager_cls.return_value
+            manager.active_version = 'mock'
+            manager.database_versions = {}
+            manager.get_all_term_data.return_value = {
+                'GO': {'GO:0001': {'name': 'Mock pathway', 'genes': {'G1', 'G2'}}}
+            }
+            manager.get_build_metadata.return_value = {}
+
+            assert cmd_analyze(args) == 0
+
+        analyzer.load_gene_list.assert_not_called()
+        analyzer.load_ranked_gene_list.assert_called_once_with('ranked.tsv')
+        call_args = analyzer.run_analysis.call_args
+        assert call_args.args[0] == set()
+        assert call_args.args[1] == set()
+        assert call_args.kwargs['ranked_gene_list'] == [('G1', 2.0), ('G2', 1.0)]
 
 class TestCmdList:
     """Test list command"""

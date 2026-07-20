@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -946,7 +946,6 @@
                             <div class="field"><label for="plotDpi">DPI</label><input id="plotDpi" type="number" value="300" min="72" max="1200"></div>
                             <div class="field"><label for="style">Figure style</label><select id="style"><option value="nature">Nature</option><option value="science">Science</option><option value="presentation">Presentation</option></select></div>
                         </div>
-                        <input id="useRPlots" type="hidden" value="true">
                         <details id="paletteSettings">
                             <summary>Color palettes</summary>
                             <div id="categoricalPaletteField" class="palette-role">
@@ -1860,8 +1859,6 @@
             if (method === "hypergeometric") {
                 form.append("min_genes", byId("minGenes").value);
                 form.append("background_mode", byId("backgroundMode").value);
-            } else if (generatePlots) {
-                form.append("use_r_plots", true);
             }
             const plotTypes = Array.from(document.querySelectorAll('input[name="plotType"]:checked')).map((item) => item.value);
             if (generatePlots && !plotTypes.length) throw new Error("Select at least one figure type");

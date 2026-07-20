@@ -370,13 +370,13 @@ class Config:
         """Validate method, thresholds, paths, plotting, and service settings."""
         errors = []  # Initializing error list
 
-        # Validate input file
-        # Validate optional input paths.
-        if self.input_file and not Path(self.input_file).exists():
+        # ORA consumes query and background gene-list files. Other methods use
+        # ranked genes or expression matrices, so legacy config paths here are ignored.
+        is_ora = self.method == EnrichmentMethod.HYPERGEOMETRIC.value
+        if is_ora and self.input_file and not Path(self.input_file).exists():
             errors.append(f"Input file not found: {self.input_file}")
 
-        # Validate background file
-        if self.background_file and not Path(self.background_file).exists():
+        if is_ora and self.background_file and not Path(self.background_file).exists():
             errors.append(f"Background file not found: {self.background_file}")
 
         # Validate species

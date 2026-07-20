@@ -61,6 +61,12 @@ def test_retired_common_plots_generate_nothing(tmp_path):
     assert not (tmp_path / "common_plots").exists()
 
 
+def test_r_plots_are_the_default_and_python_plots_is_explicit():
+    parser = create_parser()
+    assert parser.parse_args(["analyze", "-m", "gsea"]).use_r_plots is True
+    assert parser.parse_args(["analyze", "-m", "gsea", "--python-plots"]).use_r_plots is False
+
+
 def test_use_r_plots_option():
     """Verify that the CLI accepts the R plotting option."""
     parser = create_parser()
