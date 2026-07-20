@@ -137,7 +137,7 @@ include = ["allenricher*"]       # Include All allenricher The first bag.
 # Specify that non.py files are also packed
 # --------------------------------------------------
 [tool.setuptools.package-data]
-allenricher = ["py.typed", "*.yaml", "*.json", "api/static/*", "core/r_scripts/*.R", "database/data/*.txt", "visualization/r_scripts/*.R"]
+allenricher = ["py.typed", "*.yaml", "*.json", "api/static/*", "api/static/assets/*.svg", "core/r_scripts/*.R", "database/data/*.txt", "visualization/r_scripts/*.R"]
 
 # --------------------------------------------------
 # Black Code Format Tool Configuration

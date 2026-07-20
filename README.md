@@ -1,37 +1,53 @@
 # AllEnricher v2
 
-AllEnricher is a multi-species gene set enrichment toolkit for command-line,
-Python, REST API, and local Web workflows. Version 2.1.0 focuses on deterministic
-GSEA, ssGSEA, GSVA, publication-oriented figures, auditable HTML reports,
-species-registry queries, and method-aware AI interpretation.
+AllEnricher is a multi-species enrichment analysis workbench for researchers who
+need one consistent path from gene lists, ranked genes, or expression matrices to
+auditable result tables, publication-oriented figures, HTML reports, REST API
+jobs, and evidence-linked AI interpretation.
 
 [![Python](https://img.shields.io/badge/Python-3.8%2B-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
+
+## What You Can Do
+
+| Input you have | Recommended analysis | Typical output |
+| --- | --- | --- |
+| A candidate or differential gene list | ORA | Enriched terms, hit genes, rich factors, bar and lollipop figures |
+| A signed ranked gene table | GSEA | fgsea-compatible tables, enrichment curves, NES summaries, leading-edge genes |
+| A gene-by-sample expression matrix | ssGSEA or GSVA | Activity matrices, grouped heatmaps, sample correlation, group-difference plots |
+| TF-focused biological questions | TRRUST, ChEA3, AnimalTFDB or hTFtarget | TF enrichment tables and TF gene-set figures |
+| A non-standard species or private annotation | Custom database build | Reusable local gene-set database with hierarchy-aware outputs |
+
+All user-facing outputs preserve term IDs and descriptive names. When hierarchy
+annotations are available, result tables and ORA figures keep the hierarchy
+string, for example `Metabolism|Amino acid metabolism|Arginine biosynthesis`.
+
+## Choose Your Entry Point
+
+| Use case | Start here |
+| --- | --- |
+| Interactive local analysis | `allenricher serve --host 127.0.0.1 --port 8000` |
+| Scripted analysis and batch runs | `allenricher analyze ...` |
+| Database preparation and species support | `allenricher download`, `allenricher build`, `allenricher list-species` |
+| Programmatic integration | REST API at `/api/analyze`, `/api/results/{job_id}`, and `/api/results/{job_id}/report` |
+
+## Why v2
+
+- One CLI/API/Web path for ORA, GSEA, ssGSEA, and GSVA.
+- TaxID-centered species registry for model and non-model species.
+- GO, KEGG, Reactome, WikiPathways, disease, TF, and custom gene-set databases.
+- Publication-oriented figures with method-aware color palettes.
+- Self-contained HTML reports with figures, searchable tables, provenance,
+  Materials and Methods text, and AI evidence links.
+- Optional AI interpretation that cites concrete result rows rather than free
+  text guesses.
 
 ## Documentation Status
 
 This README is the user-facing entry point for the current v2 implementation.
 The maintained implementation matrix is in
 [`docs/CURRENT_IMPLEMENTATION.md`](docs/CURRENT_IMPLEMENTATION.md). Historical planning notes and generated audit outputs are intentionally excluded from the main repository; release checks live under `docs/release`.
-
-## Main Features
-
-- ORA with a one-sided hypergeometric test.
-- GSEA through Bioconductor `fgsea`.
-- ssGSEA and GSVA through Bioconductor `GSVA`.
-- GO, KEGG, Reactome, WikiPathways, Disease Ontology, DisGeNET, TF, and custom
-  gene-set databases.
-- Database download, version inspection, cleanup, species-database build, and
-  species-registry query commands.
-- TaxID-centered species registry with KEGG code and Latin-name lookup.
-- R-backed publication figures for GSEA, ssGSEA, and GSVA, with a minimal
-  Python fallback for CLI runs. ORA uses the maintained Python bar/lollipop
-  renderer.
-- HTML reports with result tables, figures, metadata, AI interpretation state,
-  and a Materials and Methods writing reference.
-- Local Web workbench and REST API backed by the same CLI analysis path.
-- Optional AI interpretation with evidence IDs linking narrative claims back to
-  result-table rows.
 
 ## Supported Databases
 
@@ -287,6 +303,34 @@ The Web workbench uses the same registry data. Unsupported databases remain
 visible but disabled for the selected species, so users can see which functions
 exist and which require an additional species build.
 
+## Example Figure Gallery
+
+The small gallery in `examples/` is generated from fixed example tables, so the
+figures shown below can be reproduced without downloading public databases:
+
+```bash
+python examples/run_examples.py
+```
+
+The generated SVG files are saved under `examples/output/figures/` and are used
+in the analysis sections below to show what each workflow produces.
+
+```text
+examples/
+|-- data/
+|   |-- ora_results.tsv
+|   |-- gsea_results.tsv
+|   `-- activity_scores.tsv
+|-- run_examples.py
+`-- output/figures/
+    |-- ora_kegg_barplot.svg
+    |-- ora_kegg_lollipop.svg
+    |-- gsea_kegg_lollipop.svg
+    |-- gsea_cell_cycle_enrichment.svg
+    |-- activity_heatmap.svg
+    `-- sample_correlation.svg
+```
+
 ## Running Enrichment Analyses
 
 ### ORA
@@ -299,6 +343,12 @@ allenricher analyze \
   --method hypergeometric \
   --output results/ora
 ```
+
+Example ORA figures generated from `examples/data/ora_results.tsv`:
+
+![Example KEGG ORA barplot](examples/output/figures/ora_kegg_barplot.svg)
+
+![Example KEGG ORA lollipop](examples/output/figures/ora_kegg_lollipop.svg)
 
 Use a custom background only when it represents the genes that could have been
 selected in the upstream experiment:
@@ -326,6 +376,12 @@ allenricher analyze \
   --output results/gsea
 ```
 
+Example GSEA figures generated from `examples/data/gsea_results.tsv`:
+
+![Example KEGG GSEA lollipop](examples/output/figures/gsea_kegg_lollipop.svg)
+
+![Example single-pathway GSEA enrichment curve](examples/output/figures/gsea_cell_cycle_enrichment.svg)
+
 ### ssGSEA and GSVA
 
 ```bash
@@ -338,6 +394,12 @@ allenricher analyze \
   --plot-types heatmap,group_comparison,correlation \
   --output results/ssgsea
 ```
+
+Example pathway-activity figures generated from `examples/data/activity_scores.tsv`:
+
+![Example pathway activity heatmap](examples/output/figures/activity_heatmap.svg)
+
+![Example sample correlation heatmap](examples/output/figures/sample_correlation.svg)
 
 Replace `ssgsea` with `gsva` to run GSVA. The activity matrix keeps the
 Bioconductor-compatible matrix structure.
@@ -620,6 +682,42 @@ Result tables include stable term identifiers and readable term names. Where a
 database supplies hierarchy metadata, hierarchy is retained in a separate
 column. GSEA output follows the `fgsea` result contract; ssGSEA and GSVA output
 is an activity matrix with gene sets as rows and samples as columns.
+
+ORA result table columns:
+
+| Column | Meaning |
+| --- | --- |
+| `Term_ID` | Stable term, pathway, disease or TF identifier. |
+| `Term_Name` | Human-readable term, pathway, disease or TF description. |
+| `Hierarchy` | Optional database hierarchy path such as `A|B|C`. |
+| `Gene_Count` | Number of query genes matched to the term after ID intersection. |
+| `Background_Count` | Number of background genes annotated to the term. |
+| `Rich_Factor` / `EnrichFactor` | Enrichment strength derived from observed versus expected hits. |
+| `P_Value` | Raw one-sided hypergeometric P value. |
+| `Adjusted_P_Value` / `FDR` | Multiple-testing adjusted P value. |
+| `Genes` | Query genes contributing to the enrichment result. |
+
+GSEA result table columns follow the `fgsea` naming convention:
+
+| Column | Meaning |
+| --- | --- |
+| `Term_ID` / `pathway` | Stable gene-set identifier. |
+| `Term_Name` | Readable pathway or term description. |
+| `pval` | Raw fgsea P value. |
+| `padj` | Multiple-testing adjusted P value. |
+| `ES` | Enrichment score. |
+| `NES` | Normalized enrichment score; positive and negative values indicate direction. |
+| `size` | Gene-set size after intersecting with the ranked gene list. |
+| `leadingEdge` | Core genes driving the enrichment score. |
+
+ssGSEA and GSVA result tables are activity matrices:
+
+| Column | Meaning |
+| --- | --- |
+| `Term_ID` | Stable pathway or gene-set identifier. |
+| `Term_Name` | Readable pathway or gene-set description. |
+| `Hierarchy` | Optional hierarchy path when supplied by the database. |
+| sample columns | One activity score per sample; column names are sample IDs from the expression matrix. |
 
 The HTML report includes generated result tables and figures, recorded run
 metadata, optional AI interpretation, and an English Materials and Methods

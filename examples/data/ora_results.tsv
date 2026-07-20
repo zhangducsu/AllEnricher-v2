@@ -1,0 +1,9 @@
+term_id	term	hierarchy	qvalue	pvalue	gene_count	rich_factor	genes
+KEGG:04110	Cell cycle	Cellular Processes|Cell growth and death|Cell cycle	0.00012	0.00001	18	4.80	CDK1,CCNB1,CDC20,AURKB,PLK1
+KEGG:03030	DNA replication	Genetic Information Processing|Replication and repair|DNA replication	0.00031	0.00003	14	4.35	MCM2,MCM4,PCNA,RFC4,FEN1
+KEGG:03440	Homologous recombination	Genetic Information Processing|Replication and repair|Homologous recombination	0.00110	0.00014	11	3.80	RAD51,BRCA1,BRCA2,XRCC2
+KEGG:04610	Complement and coagulation cascades	Organismal Systems|Immune system|Complement and coagulation cascades	0.00420	0.00080	9	2.95	C3,C5,F2,FGA,SERPINE1
+KEGG:04060	Cytokine-cytokine receptor interaction	Environmental Information Processing|Signaling molecules and interaction|Cytokine-cytokine receptor interaction	0.00650	0.00140	13	2.55	IL6,CXCL8,CCL2,TNF,IL1B
+KEGG:04210	Apoptosis	Cellular Processes|Cell growth and death|Apoptosis	0.01100	0.00290	10	2.30	CASP3,BAX,BCL2,FAS,TP53
+KEGG:04115	p53 signaling pathway	Cellular Processes|Cell growth and death|p53 signaling pathway	0.01800	0.00520	8	2.15	TP53,CDKN1A,BAX,GADD45A
+KEGG:04510	Focal adhesion	Cellular Processes|Cellular community|Focal adhesion	0.02600	0.00970	12	1.85	ITGB1,VCL,ACTN1,PIK3CA
