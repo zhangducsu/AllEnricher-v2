@@ -380,8 +380,9 @@ figures shown below can be reproduced without downloading public databases:
 python examples/run_examples.py
 ```
 
-The generated SVG files are saved under `examples/output/figures/` and are used
-in the analysis sections below to show what each workflow produces.
+The generated SVG files and selected E2E PNG previews are saved under
+`examples/output/figures/` and are used in the analysis sections below to show
+what each workflow produces.
 
 ```text
 examples/
@@ -393,10 +394,18 @@ examples/
 `-- output/figures/
     |-- ora_kegg_barplot.svg
     |-- ora_kegg_lollipop.svg
+    |-- gsea_barplot.png
     |-- gsea_kegg_lollipop.svg
     |-- gsea_cell_cycle_enrichment.svg
+    |-- gsea_enrichment2_up.png
+    |-- gsea_enrichment2_down.png
+    |-- gsea_ridgeplot.png
+    |-- gsea_emapplot.png
     |-- activity_heatmap.svg
-    `-- sample_correlation.svg
+    |-- activity_group_comparison.png
+    |-- sample_correlation.svg
+    |-- tf_ora_barplot.png
+    `-- tf_ora_lollipop.png
 ```
 
 ## Running Enrichment Analyses
@@ -470,11 +479,21 @@ A one-column gene list is not sufficient for GSEA. Optional controls include
 intersecting each gene set with the ranked genes; TF GSEA uses the same minimum
 and a larger default maximum of 5000.
 
-Example GSEA figures generated from `examples/data/gsea_results.tsv`:
+Example GSEA figures generated from `examples/data/gsea_results.tsv` and selected E2E previews:
+
+![Example GSEA barplot](examples/output/figures/gsea_barplot.png)
 
 ![Example KEGG GSEA lollipop](examples/output/figures/gsea_kegg_lollipop.svg)
 
 ![Example single-pathway GSEA enrichment curve](examples/output/figures/gsea_cell_cycle_enrichment.svg)
+
+![Example multi-pathway GSEA plot for positive NES terms](examples/output/figures/gsea_enrichment2_up.png)
+
+![Example multi-pathway GSEA plot for negative NES terms](examples/output/figures/gsea_enrichment2_down.png)
+
+![Example GSEA ridgeplot](examples/output/figures/gsea_ridgeplot.png)
+
+![Example GSEA pathway network](examples/output/figures/gsea_emapplot.png)
 
 ### ssGSEA and GSVA
 
@@ -489,9 +508,11 @@ allenricher analyze \
   --output results/ssgsea
 ```
 
-Example pathway-activity figures generated from `examples/data/activity_scores.tsv`:
+Example pathway-activity figures generated from `examples/data/activity_scores.tsv` and selected E2E previews:
 
 ![Example pathway activity heatmap](examples/output/figures/activity_heatmap.svg)
+
+![Example pathway group-comparison plot](examples/output/figures/activity_group_comparison.png)
 
 ![Example sample correlation heatmap](examples/output/figures/sample_correlation.svg)
 
@@ -540,6 +561,12 @@ allenricher tf-enrich \
   --output results/tf_enrich
 ```
 
+Example TF ORA figures from the real-world E2E visual review:
+
+![Example TF ORA barplot](examples/output/figures/tf_ora_barplot.png)
+
+![Example TF ORA lollipop](examples/output/figures/tf_ora_lollipop.png)
+
 TF options include `--tf-library` for ChEA3, `--tf-tissue` for hTFtarget,
 `--tf-regulation` for TRRUST, `--tf-min-size`, `--tf-max-size`, and optional
 `--tf-combine` consensus ranking.
@@ -553,6 +580,7 @@ Default plot types:
 | ORA | `barplot`, `lollipop` |
 | GSEA | `enrichment`, `enrichment2`, `barplot`, `lollipop`, `ridgeplot`; `emapplot` when requested |
 | ssGSEA / GSVA | `heatmap`, `group_comparison`, `correlation` |
+| TF ORA / TF GSEA | TF databases use the same ORA and GSEA figure families, with TF names as terms. |
 
 GSEA, ssGSEA, and GSVA publication figures use R by default. Use
 `--python-plots` only when the minimal Python fallback is explicitly desired.
