@@ -72,3 +72,8 @@ test_genes.txt
 allenricher.yaml
 c002_custom_config.yaml
 test_wikipathways_support.py
+
+# Generated demo and comparison artifacts
+deepseek_test_output/
+plots/
+test_db/

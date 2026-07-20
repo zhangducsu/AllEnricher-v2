@@ -13,10 +13,7 @@ registry queries, and method-aware AI interpretation.
 
 This README is the user-facing entry point for the current v2 implementation.
 The maintained implementation matrix is in
-[`docs/CURRENT_IMPLEMENTATION.md`](docs/CURRENT_IMPLEMENTATION.md). Older files
-under `docs/plans`, `docs/reports`, `docs/specs`, and `docs/superpowers` are
-historical planning or audit records unless they explicitly point back to the
-current implementation document.
+[`docs/CURRENT_IMPLEMENTATION.md`](docs/CURRENT_IMPLEMENTATION.md). Historical planning notes and generated audit outputs are intentionally excluded from the main repository; release checks live under `docs/release`.
 
 ## Main Features
 

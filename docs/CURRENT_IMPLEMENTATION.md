@@ -1,6 +1,6 @@
 # Current Implementation Status
 
-This document is the maintained source of truth for AllEnricher v2.1.0. Older files under `docs/plans`, `docs/reports`, `docs/specs`, and `docs/superpowers` are historical planning or audit records unless they explicitly point back to this file.
+This document is the maintained source of truth for AllEnricher v2.1.0. Historical planning notes and generated audit outputs are intentionally excluded from the main repository.
 
 ## Product Surfaces
 
@@ -49,7 +49,7 @@ R is the canonical renderer for GSEA, ssGSEA, and GSVA publication figures. Pyth
 | GSEA | R `enrichment`, `enrichment2`, `barplot`, `lollipop`, `ridgeplot`, `emapplot` | Python `enrichment`, `enrichment2`, `barplot`, `lollipop`, `ridgeplot` when `--python-plots` is used or R is unavailable |
 | ssGSEA / GSVA | R `heatmap`, `group_comparison`, `correlation` | Python `heatmap`, `group_comparison`, `correlation` when `--python-plots` is used or R is unavailable |
 
-Removed or non-current general figure names include `bubble`, `dotplot`, `network`, `upset`, `volcano`, `method_comparison`, `cnetplot`, and `circos`. Historical documents may still mention them as previous plans or test evidence.
+Removed or non-current general figure names include `bubble`, `dotplot`, `network`, `upset`, `volcano`, `method_comparison`, `cnetplot`, and `circos`. They are not part of the maintained plotting surface.
 
 ## AI Interpretation
 

@@ -101,15 +101,11 @@ class TestPlotter:
         assert (tmp_path / "GO_lollipop.svg").stat().st_size > 0
         assert not (tmp_path / "GO_barplot.png").exists()
 
-    def test_plot_all_omits_failed_outputs(self, plotter, sample_data, monkeypatch):
-        """绘图失败或未生成文件时，不应登记为成功图表"""
-        monkeypatch.setattr("allenricher.visualization.barplot.plot_barplot", lambda *args, **kwargs: None)
-        monkeypatch.setattr("allenricher.visualization.bubble.plot_bubble", lambda *args, **kwargs: None)
-
-        assert plotter.plot_barplot(sample_data, "GO", "missing_barplot.png", top_n=5) == ""
-        assert plotter.plot_bubble(sample_data, "missing_bubble.png", top_n=5) == ""
-        assert plotter.plot_all(sample_data, "GO", top_n=5) == {}
-
+    def test_plot_all_does_not_use_retired_bubble_output(self, plotter, sample_data):
+        """plot_all only exposes the maintained Python ORA figures."""
+        plots = plotter.plot_all(sample_data, "GO", top_n=5)
+        assert set(plots) == {"barplot", "lollipop"}
+        assert "bubble" not in plots
     def test_top_n_filtering(self, plotter, sample_data):
         """Test top_n parameter filter"""
         # Use top_n=3
