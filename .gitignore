@@ -77,3 +77,6 @@ test_wikipathways_support.py
 deepseek_test_output/
 plots/
 test_db/
+
+# Local editor/agent workspace state
+.trae/
