@@ -471,10 +471,27 @@ allenricher analyze ... --sequential-palette blues
 allenricher analyze ... --diverging-palette blue_red
 ```
 
-Palette roles are separated: categorical palettes are used for groups and
-categories, sequential palettes for one-direction continuous values such as
-significance, and diverging palettes for centered values such as NES, activity,
-and correlation.
+Plot themes control typography, spacing, borders, and grid density:
+
+| Theme | Best use |
+| --- | --- |
+| `nature` | Default compact manuscript style. |
+| `science` | Slightly stronger borders and serif-oriented publication style. |
+| `presentation` | Larger fonts and heavier spacing for slides or talks. |
+| `cell`, `omicshare` | Legacy aliases mapped to maintained styles for compatibility. |
+
+Palette roles are separated so colors match the plotted data type instead of the
+selected database name:
+
+| Palette role | Used for | Available palettes |
+| --- | --- | --- |
+| Categorical | Groups, database hierarchy classes, discrete labels | `tol_bright`, `tol_high_contrast`, `tol_vibrant`, `tol_muted`, `tol_medium_contrast`, `tol_light`, `okabe_ito`, `nature`, `science`, `cell`, `lancet`, `nejm`, `jama`, `omicshare`, `echarts_v4` |
+| Sequential | One-direction continuous values such as `-log10(FDR)` or enrichment strength | `colorbrewer_blues`, `colorbrewer_purd`, `viridis`, `cividis` |
+| Diverging | Centered values with direction, such as NES, pathway activity, and correlation | `colorbrewer_rdbu`, `tol_sunset`, `colorbrewer_prgn`, `colorbrewer_brbg` |
+
+Defaults are `nature`, `tol_bright`, `colorbrewer_blues`, and
+`colorbrewer_rdbu`. The Web workbench only shows palette controls that are
+relevant to the selected figure types.
 
 ## AI Interpretation
 
@@ -581,6 +598,8 @@ allenricher serve --host 127.0.0.1 --port 8000
 Open [http://127.0.0.1:8000/](http://127.0.0.1:8000/) in a browser. OpenAPI
 documentation is available at
 [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs).
+
+![AllEnricher local Web workbench](examples/output/screenshots/web_workbench.png)
 
 The Web workbench provides:
 
@@ -723,6 +742,8 @@ The HTML report includes generated result tables and figures, recorded run
 metadata, optional AI interpretation, and an English Materials and Methods
 writing reference based only on values stored for that run. Missing versions or
 references are shown as `To be added` rather than inferred.
+
+![AllEnricher HTML report](examples/output/screenshots/html_report.png)
 
 ## Testing
 

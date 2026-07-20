@@ -542,14 +542,6 @@ class ReportGenerator:
             margin: 3rem auto;
             padding: 0 2rem;
         }}
-        .no-results-visual {{
-            background: var(--bg-primary);
-            border: 1px solid var(--border-color);
-            border-radius: 4px;
-            padding: 1rem;
-            margin-bottom: 1.5rem;
-        }}
-        .no-results-visual svg {{ display: block; width: 100%; height: auto; }}
         .no-results-box {{
             background: var(--bg-primary);
             border: 1px solid var(--border-color);
@@ -622,7 +614,6 @@ class ReportGenerator:
         <p class="meta">{_version_str} | {datetime.now().strftime("%Y-%m-%d")}</p>
     </header>
     <main class="main">
-        {self._report_visual_html().replace("report-visual", "no-results-visual")}
         <div class="no-results-box">
             <h2>No significant enrichment results found</h2>
             <p style="color: var(--text-secondary);">
@@ -1451,19 +1442,6 @@ class ReportGenerator:
         </div>'''
         return html
 
-    def _report_visual_html(self) -> str:
-        """Embed the static visual overview so reports stay self-contained."""
-        asset_path = Path(__file__).resolve().parents[1] / "api" / "static" / "assets" / "allenricher-figure-gallery.svg"
-        try:
-            svg_data = asset_path.read_text(encoding="utf-8")
-        except OSError:
-            return ""
-        return (
-            '<div class="report-visual" aria-label="AllEnricher output preview">'
-            + svg_data.replace('<svg ', '<svg class="report-visual-svg" ', 1)
-            + '</div>'
-        )
-
     def _build_html(self, summary: str, tables: str, plots: str, ai_section: str,
                     db_names: List[str] = None,
                     gsea_plots_html: str = "",
@@ -1628,19 +1606,6 @@ class ReportGenerator:
             border-bottom: 1px solid var(--border-color);
         }}
 
-        .report-visual {{
-            background: var(--bg-primary);
-            border: 1px solid var(--border-color);
-            border-radius: 4px;
-            padding: 1rem;
-            margin-bottom: 1.5rem;
-        }}
-
-        .report-visual-svg {{
-            display: block;
-            width: 100%;
-            height: auto;
-        }}
         .section h2 .result-count,
         .section h2 .ai-note {{
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
@@ -2126,7 +2091,6 @@ class ReportGenerator:
     </nav>
 
     <main class="main">
-        {self._report_visual_html()}
         {summary}
         {methods_reference_html}
         {plots}

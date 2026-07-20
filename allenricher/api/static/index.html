@@ -464,30 +464,6 @@
             text-align: center;
         }
         .empty-state[hidden] { display: none; }
-        .empty-preview {
-            display: grid;
-            width: min(720px, 100%);
-            gap: 14px;
-        }
-        .empty-preview img {
-            width: 100%;
-            height: auto;
-            border: 1px solid var(--line);
-            border-radius: 6px;
-            background: #fff;
-        }
-        .empty-preview h3 {
-            margin: 0;
-            color: var(--accent-dark);
-            font-family: Georgia, "Times New Roman", serif;
-            font-size: 18px;
-        }
-        .empty-preview p {
-            max-width: 620px;
-            margin: 0 auto;
-            color: var(--muted);
-            line-height: 1.55;
-        }
         .result-shell[hidden] { display: none; }
         .view-tabs {
             display: flex;
@@ -838,13 +814,7 @@
                 <div class="progress-track"><div id="progressFill" class="progress-fill"></div></div>
                 <div id="errorText" class="error-text"></div>
             </div>
-                        <div id="emptyState" class="empty-state">
-                <div class="empty-preview">
-                    <img src="/static/assets/allenricher-figure-gallery.svg" alt="Preview of AllEnricher result tables and figures">
-                    <h3>No analysis has been submitted</h3>
-                    <p>Run ORA, GSEA, ssGSEA or GSVA to produce searchable tables, publication figures, an HTML report, and optional evidence-linked AI interpretation.</p>
-                </div>
-            </div>
+            <div id="emptyState" class="empty-state">No analysis has been submitted</div>
             <div id="resultShell" class="result-shell" hidden>
                 <nav class="view-tabs" aria-label="Result views" role="tablist">
                     <button id="overviewViewTab" class="view-tab active" type="button" data-view="overview" role="tab" aria-controls="overviewView" aria-selected="true">Overview</button>
@@ -1206,21 +1176,6 @@
         const selectedMethod = () => document.querySelector('input[name="method"]:checked').value;
         const setText = (element, value) => { element.textContent = value == null ? "" : String(value); };
 
-        function renderEmptyState(message = "No analysis has been submitted") {
-            const empty = byId("emptyState");
-            empty.replaceChildren();
-            const wrapper = document.createElement("div");
-            wrapper.className = "empty-preview";
-            const image = document.createElement("img");
-            image.src = "/static/assets/allenricher-figure-gallery.svg";
-            image.alt = "Preview of AllEnricher result tables and figures";
-            const title = document.createElement("h3");
-            title.textContent = message;
-            const description = document.createElement("p");
-            description.textContent = "Run ORA, GSEA, ssGSEA or GSVA to produce searchable tables, publication figures, an HTML report, and optional evidence-linked AI interpretation.";
-            wrapper.append(image, title, description);
-            empty.append(wrapper);
-        }
 
         function updateFilePicker(input) {
             const name = byId(`${input.id}Name`);
@@ -2493,7 +2448,7 @@
             byId("resultShell").hidden = true;
             byId("statusBand").className = "status-band";
             byId("emptyState").hidden = false;
-            renderEmptyState();
+            setText(byId("emptyState"), "No analysis has been submitted");
             setText(byId("jobLabel"), "");
         }
 
@@ -2543,7 +2498,6 @@
         byId("nextPage").addEventListener("click", () => { state.page += 1; renderTable(); });
         byId("deleteButton").addEventListener("click", deleteCurrentJob);
 
-        renderEmptyState();
         initializeFilePickers();
         initializePalettePickers();
         updateOraMode();
