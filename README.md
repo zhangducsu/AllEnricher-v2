@@ -30,7 +30,25 @@ string, for example `Metabolism|Amino acid metabolism|Arginine biosynthesis`.
 | Interactive local analysis | `allenricher serve --host 127.0.0.1 --port 8000` |
 | Scripted analysis and batch runs | `allenricher analyze ...` |
 | Database preparation and species support | `allenricher download`, `allenricher build`, `allenricher list-species` |
+| Update checks and database housekeeping | `allenricher check-update`, `allenricher list-versions`, `allenricher cleanup` |
 | Programmatic integration | REST API at `/api/analyze`, `/api/results/{job_id}`, and `/api/results/{job_id}/report` |
+
+The CLI exposes 12 subcommands:
+
+| Command | Purpose |
+| --- | --- |
+| `analyze` | Run ORA, GSEA, ssGSEA, or GSVA with tables, figures, HTML reports, and optional AI interpretation. |
+| `download` | Download shared source files and TF resources into a local database directory. |
+| `build` | Build species-specific analysis databases from downloaded sources or user annotations. |
+| `serve` | Start the local REST API and Web workbench. |
+| `list` | Quickly list bundled species or public database names. |
+| `config` | Write a starter YAML configuration file. |
+| `check-update` | Check whether remote source data are newer than local snapshots. |
+| `cleanup` | Remove old database snapshots after a dry-run review. |
+| `list-versions` | Inspect installed database versions and build lineage. |
+| `list-species` | Query the unified TaxID-centered species registry. |
+| `query-species` | Look up one species by TaxID, Latin name, or KEGG organism code. |
+| `tf-enrich` | Dedicated TF ORA/GSEA entry point retained for TF-focused workflows. |
 
 ## Why v2
 
@@ -198,14 +216,22 @@ allenricher download \
   --database-dir ./database
 ```
 
+Before a managed shared-source download starts, AllEnricher checks local version
+metadata against remote source metadata where that check is implemented. If the
+local snapshot is already current, the command exits without replacing files.
+Use `--force` when you intentionally want to refresh an existing local snapshot.
+If remote update checking itself fails, the downloader warns and continues with
+the requested download instead of silently reporting success.
+
 Useful download options:
 
-```bash
-allenricher download -d GO,KEGG --database-dir ./database --workers 8
-allenricher download -d GO --database-dir ./database --force
-allenricher download -d GO --database-dir ./database --no-verify
-allenricher download -d GO --database-dir ./database --no-multi-thread
-```
+| Option | Behavior |
+| --- | --- |
+| `--workers N` | Use up to `N` parallel workers for multi-file downloads. |
+| `--no-multi-thread` | Run downloads sequentially, useful for unstable networks or debugging. |
+| `--no-verify` | Skip post-download integrity checks. Use only when you have independent file validation. |
+| `--force` | Re-download even when the local version check says the snapshot is current. |
+| `--database-dir DIR` | Keep all source files, versions, registries, and built databases under `DIR`. |
 
 Download TF source data:
 
@@ -238,6 +264,15 @@ allenricher list-versions --database-dir ./database --json
 allenricher list-versions --database-dir ./database --lineage
 allenricher cleanup --database-dir ./database --dry-run --keep 2
 ```
+
+Version-management details:
+
+| Command | What it checks or changes |
+| --- | --- |
+| `check-update` | Non-destructive remote/local comparison. `--json` appends machine-readable status for automation. |
+| `list-versions` | Installed snapshot summary. `--lineage` prints build provenance when it is recorded. |
+| `cleanup --dry-run --keep N` | Shows which older snapshots would be removed while retaining the newest `N`. |
+| `cleanup --keep N` | Actually removes stale snapshots from the selected `--database-dir`. Review dry-run output first. |
 
 `cleanup` can delete old database snapshots when `--dry-run` is omitted. Review
 its preview before running a real cleanup.
@@ -278,7 +313,31 @@ Custom GO or KEGG annotations can be supplied with `--go-annot` or
 available, result tables retain it and ORA barplots can use it for category
 coloring.
 
+Build options worth knowing:
+
+| Option | Use case |
+| --- | --- |
+| `--gene-info` | Supplies NCBI `gene_info.gz` for genome backgrounds, gene validation, and standard builds that need gene metadata. |
+| `--taxonomy` | TaxID is the stable species identity used by the registry and Web support checks. |
+| `--latin-name` | Adds a readable scientific name such as `Homo_sapiens` or `Bos_taurus`. |
+| `--go-annot` / `--kegg-annot` | Build GO or KEGG-like databases from user annotation exports. |
+| `--custom-annot` / `--custom-db-name` | Build a named user database from a two-, three-, or four-column annotation table. |
+| `--annot-format auto` | Auto-detect supported annotation layouts; explicit choices are available for strict pipelines. |
+| `--hierarchy-sep` | Defines how hierarchy levels are separated in annotation text. |
+
+Successful TF builds and TF downloads also update the unified species registry,
+so `list-species`, the REST API, and the Web workbench can report TF database
+support with the same mechanism used for GO, KEGG, Reactome, DO, DisGeNET, and
+WikiPathways.
+
 ## Species Registry and Database Queries
+
+For a quick built-in resource list, use:
+
+```bash
+allenricher list species
+allenricher list databases
+```
 
 List supported species from the unified registry:
 
@@ -342,6 +401,19 @@ examples/
 
 ## Running Enrichment Analyses
 
+Common analysis controls:
+
+| Control | Applies to | Notes |
+| --- | --- | --- |
+| `--database-dir` | all methods | Select a non-default database root. |
+| `--use-version` | all methods | Use a specific installed database snapshot instead of the latest. |
+| `--config` | all methods | Load YAML/JSON defaults; explicit CLI flags take precedence. |
+| `--jobs` | all methods | Parallel worker count for supported analysis steps. |
+| `--only-significant` | tables/reports | Write only rows passing the configured P/Q cutoffs. |
+| `--no-plot` / `--no-report` | outputs | Disable figure or HTML report generation. |
+| `--methods-language en` | reports | Controls the Materials and Methods writing-reference language. |
+| `--verbose` | diagnostics | Enables debug logging for troubleshooting. |
+
 ### ORA
 
 ```bash
@@ -358,6 +430,11 @@ Example ORA figures generated from `examples/data/ora_results.tsv`:
 ![Example KEGG ORA barplot](examples/output/figures/ora_kegg_barplot.svg)
 
 ![Example KEGG ORA lollipop](examples/output/figures/ora_kegg_lollipop.svg)
+
+ORA-specific controls include `--background-mode annotated|genome|custom`,
+`--background measured_genes.txt`, `--correction BH|BY|bonferroni|holm|none`,
+`--pvalue`, `--qvalue`, and `--min-genes`. The default ORA gene-set size policy
+uses a minimum size of 3 and no maximum size.
 
 Use a custom background only when it represents the genes that could have been
 selected in the upstream experiment:
@@ -385,6 +462,14 @@ allenricher analyze \
   --output results/gsea
 ```
 
+GSEA requires a ranked table with a gene column and a numeric weight column.
+A one-column gene list is not sufficient for GSEA. Optional controls include
+`--gmt` for an external GMT file, `--gsea-enrichment-top-up`,
+`--gsea-enrichment-top-down`, `--gsea-multi-top-up`, and
+`--gsea-multi-top-down`. The default GSEA gene-set size policy is 15-500 after
+intersecting each gene set with the ranked genes; TF GSEA uses the same minimum
+and a larger default maximum of 5000.
+
 Example GSEA figures generated from `examples/data/gsea_results.tsv`:
 
 ![Example KEGG GSEA lollipop](examples/output/figures/gsea_kegg_lollipop.svg)
@@ -411,7 +496,9 @@ Example pathway-activity figures generated from `examples/data/activity_scores.t
 ![Example sample correlation heatmap](examples/output/figures/sample_correlation.svg)
 
 Replace `ssgsea` with `gsva` to run GSVA. The activity matrix keeps the
-Bioconductor-compatible matrix structure.
+Bioconductor-compatible matrix structure. ssGSEA and GSVA use expression-matrix
+intersection size filters of 1 to unbounded by default. Group-comparison figures
+and statistics are generated only when usable group information is supplied.
 
 ## Transcription Factor Analysis
 
@@ -471,6 +558,12 @@ GSEA, ssGSEA, and GSVA publication figures use R by default. Use
 `--python-plots` only when the minimal Python fallback is explicitly desired.
 The Web workbench does not expose an R/Python switch and uses the backend
 default.
+
+GSEA network plots are controlled separately with `--emapplot-qvalue`,
+`--emapplot-min-count`, and `--emapplot-top-n`; the filtering order is FDR,
+minimum hit count, then top-N selection. Single-pathway GSEA plots default to
+top 5 positive NES and top 5 negative NES terms, while multi-pathway plots
+default to top 3 positive and top 3 negative terms.
 
 ```bash
 allenricher analyze ... --plot-format png --plot-dpi 300
@@ -575,7 +668,9 @@ ai_backends:
 
 Supported backends are `openai`, `claude`, `deepseek`, `glm`, `minimax`,
 `ollama`, and `mock`. `mock` is intended for validation and tests, not for
-scientific interpretation.
+scientific interpretation. If AI parsing or backend calls fail, the enrichment
+analysis remains successful; the error is written separately as an AI artifact
+and is surfaced in the HTML report and Web result view.
 
 ## Configuration Files
 
