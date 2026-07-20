@@ -35,7 +35,7 @@ string, for example `Metabolism|Amino acid metabolism|Arginine biosynthesis`.
 ## Why v2
 
 - One CLI/API/Web path for ORA, GSEA, ssGSEA, and GSVA.
-- TaxID-centered species registry for model and non-model species.
+- TaxID-centered species registry covering 42,124 species in the packaged registry.
 - GO, KEGG, Reactome, WikiPathways, disease, TF, and custom gene-set databases.
 - Publication-oriented figures with method-aware color palettes.
 - Self-contained HTML reports with figures, searchable tables, provenance,
@@ -49,25 +49,34 @@ This README is the user-facing entry point for the current v2 implementation.
 The maintained implementation matrix is in
 [`docs/CURRENT_IMPLEMENTATION.md`](docs/CURRENT_IMPLEMENTATION.md). Historical planning notes and generated audit outputs are intentionally excluded from the main repository; release checks live under `docs/release`.
 
-## Supported Databases
+## Supported Databases and Species Coverage
 
-Database availability depends on the files installed in the selected database
-directory. Use `allenricher list-species`, `allenricher query-species`,
+AllEnricher v2 is TaxID-centered. The packaged species registry currently lists
+**42,124 species** and lets the CLI, REST API, and Web workbench show which
+databases are available for each species. Recompute these counts at any time
+with:
+
+```bash
+allenricher list-species --summary
+```
+
+Database availability still depends on the files installed in the selected
+database directory. Use `allenricher list-species`, `allenricher query-species`,
 `allenricher list-versions`, or the Web workbench to inspect local support.
 
-| Database | Content | Species scope |
-| --- | --- | --- |
-| GO | Gene Ontology annotations | Registry-defined species |
-| KEGG | KEGG pathways | KEGG organisms |
-| Reactome | Reactome pathways | Reactome-supported species |
-| WikiPathways | Community-curated pathways | WikiPathways-supported species |
-| DO | Disease Ontology associations | Human |
-| DisGeNET (`v20190612`) | Disease-gene associations from the retained free snapshot | Human |
-| TRRUST v2 | Curated TF-target regulatory interactions | Human and mouse |
-| ChEA3 | TF-target gene-set libraries | Human |
-| AnimalTFDB | Animal TF annotations with ortholog-mapped target sets | AnimalTFDB species with prepared local files |
-| hTFtarget | Tissue-specific TF-target associations | Human |
-| CUSTOM | User-built gene sets | User-defined |
+| Database | Supported species in registry | Content | Notes |
+| --- | ---: | --- | --- |
+| GO | 32,443 | Gene Ontology annotations | Broadest functional-annotation coverage. |
+| KEGG | 10,871 | KEGG pathways | KEGG organism-code based pathway support. |
+| Reactome | 16 | Curated Reactome pathways | Model-organism pathway coverage. |
+| WikiPathways | 18 | Community-curated pathway gene sets | Versioned GMT/GPML source support. |
+| DO | 1 | Disease Ontology associations | Human disease enrichment. |
+| DisGeNET (`v20190612`) | 1 | Disease-gene associations from the retained free snapshot | Human; retained free release snapshot. |
+| TRRUST v2 | 2 | Curated TF-target regulatory interactions | Human and mouse. |
+| ChEA3 | 1 | TF-target gene-set libraries | Human. |
+| AnimalTFDB | 182 | Animal TF annotations with ortholog-mapped target sets | AnimalTFDB species with prepared local files. |
+| hTFtarget | 1 | Tissue-specific TF-target associations | Human. |
+| CUSTOM | user-defined | User-built gene sets | Any species with user-provided annotations. |
 
 DisGeNET is not downloaded from current DisGeNET releases because later data are
 not freely downloadable through the same public route. AllEnricher v2 labels the retained free snapshot as `v20190612` in user-facing output.
