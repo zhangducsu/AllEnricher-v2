@@ -108,6 +108,16 @@ class TestCreateParser:
         assert args.databases == 'GO,KEGG'
         assert args.species == 'hsa'
 
+    def test_download_animaltfdb_args(self):
+        parser = create_parser()
+        args = parser.parse_args([
+            'download', '-d', 'AnimalTFDB', '--animaltfdb', '-s', 'Bos_taurus'
+        ])
+        assert args.command == 'download'
+        assert args.databases == 'AnimalTFDB'
+        assert args.animaltfdb is True
+        assert args.species == 'Bos_taurus'
+
     def test_build_args(self):
         """Test Build Parameters"""
         parser = create_parser()
@@ -309,6 +319,20 @@ def test_download_forwards_runtime_options():
         root_dir='test-db', overwrite=True, max_workers=8,
         use_multi_thread=False, verify_integrity=False,
     )
+
+
+def test_download_routes_animaltfdb_database_name_to_tf_downloader():
+    args = Namespace(
+        databases='AnimalTFDB', species='Bos_taurus', database_dir='test-db',
+        workers=4, no_multi_thread=False, no_verify=False, force=True,
+        trrust=False, chea3=False, animaltfdb=False,
+    )
+    with patch('allenricher.cli._cmd_download_animaltfdb', return_value=0) as animal_download, patch(
+        'allenricher.database.downloader.DataDownloader'
+    ) as downloader:
+        assert cmd_download(args) == 0
+    animal_download.assert_called_once_with(args)
+    downloader.return_value.download_all.assert_not_called()
 
 
 def test_trrust_download_updates_the_unified_species_registry():

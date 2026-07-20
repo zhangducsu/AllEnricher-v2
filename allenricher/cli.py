@@ -1341,6 +1341,7 @@ Examples:
     download_parser.add_argument('--force', action='store_true', help='Force re-download even if local is the latest version')
     download_parser.add_argument('--trrust', action='store_true', help='Download the TRRUST TF-target database')
     download_parser.add_argument('--chea3', action='store_true', help='Download ChEA3 TF-target database')  # Download ChEA3 transcription factor-target gene database
+    download_parser.add_argument('--animaltfdb', action='store_true', help='Download AnimalTFDB species files and the hTFtarget human TF-target library')
 
     # Build analysis-ready database artifacts for one species.
     build_parser = subparsers.add_parser('build', help='Build species database')
@@ -2202,19 +2203,20 @@ def cmd_download(args) -> int:
         ``0`` on success and ``1`` on failure."""
     from allenricher.database.downloader import DataDownloader
 
-    # TF resources have dedicated download and registry workflows.
-    if getattr(args, 'trrust', False):
-        return _cmd_download_trrust(args)
-    if getattr(args, 'chea3', False):
-        return _cmd_download_chea3(args)
-    if getattr(args, 'animaltfdb', False):
-        return _cmd_download_animaltfdb(args)
-
     databases = [d.strip().lower() for d in args.databases.split(',')]
+    tf_requests = {
+        'trrust': getattr(args, 'trrust', False) or 'trrust' in databases,
+        'chea3': getattr(args, 'chea3', False) or 'chea3' in databases,
+        'animaltfdb': getattr(args, 'animaltfdb', False) or 'animaltfdb' in databases or 'htftarget' in databases,
+    }
+    databases = [
+        db for db in databases
+        if db not in {'trrust', 'chea3', 'animaltfdb', 'htftarget'}
+    ]
     download_dir = args.database_dir or "./database"
 
     # Avoid replacing current snapshots unless an update or --force requires it.
-    if not getattr(args, 'force', False):
+    if databases and not getattr(args, 'force', False):
         try:
             from allenricher.database.version import RemoteVersionChecker, DatabaseVersionManager
             checker = RemoteVersionChecker()
@@ -2228,7 +2230,8 @@ def cmd_download(args) -> int:
             if sources_checked and not sources_with_update:
                 logger.info("All checked data sources are up to date")
                 logger.info("Use --force to replace an existing local database snapshot")
-                return 0
+                if not any(tf_requests.values()):
+                    return 0
             elif sources_with_update:
                 logger.info("Updates are available for: %s", ", ".join(sources_with_update))
                 logger.info("Starting download")
@@ -2236,7 +2239,11 @@ def cmd_download(args) -> int:
             logger.warning("Could not check remote database versions: %s", e)
 
     logger.info("Downloading shared source data to %s", download_dir)
-    logger.info("Databases: %s", ", ".join(databases))
+    if databases:
+        logger.info("Databases: %s", ", ".join(databases))
+    tf_names = [name for name, requested in tf_requests.items() if requested]
+    if tf_names:
+        logger.info("TF resources: %s", ", ".join(tf_names))
 
     downloader = DataDownloader(
         root_dir=download_dir,
@@ -2247,17 +2254,28 @@ def cmd_download(args) -> int:
     )
 
     try:
-        downloaded = downloader.download_all(databases)
-        for db_type, path in downloaded.items():
-            logger.info("Downloaded %s: %s", db_type, path)
-        logger.info("Download completed")
-        logger.info("")
-        logger.info("Next: build a database of designated species")
-        logger.info("  allenricher build -s hsa -t 9606 -d GO,Reactome")
-        return 0
+        downloaded = {}
+        if databases:
+            downloaded = downloader.download_all(databases)
+            for db_type, path in downloaded.items():
+                logger.info("Downloaded %s: %s", db_type, path)
+        if databases:
+            logger.info("Download completed")
     except Exception as e:
         logger.error("Database download failed: %s", e)
         return 1
+
+    if tf_requests['trrust'] and _cmd_download_trrust(args) != 0:
+        return 1
+    if tf_requests['chea3'] and _cmd_download_chea3(args) != 0:
+        return 1
+    if tf_requests['animaltfdb'] and _cmd_download_animaltfdb(args) != 0:
+        return 1
+
+    logger.info("")
+    logger.info("Next: build a database of designated species")
+    logger.info("  allenricher build -s hsa -t 9606 -d GO,Reactome")
+    return 0
 
 
 def _cmd_download_trrust(args) -> int:
@@ -2346,7 +2364,8 @@ def _cmd_download_animaltfdb(args) -> int:
     )
     registry_downloader.refresh_supported_species_registry()
 
-    species_list = args.species.split(',') if args.species else []
+    species_arg = (args.species or '').strip()
+    species_list = [] if species_arg in {'', 'hsa'} else species_arg.split(',')
 
     if not species_list:
         print("No AnimalTFDB species were requested; only hTFtarget was downloaded.")
