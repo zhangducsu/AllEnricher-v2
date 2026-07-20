@@ -163,6 +163,7 @@ class Config:
     input_file: Optional[str] = None
     output_dir: str = "./results"
     background_file: Optional[str] = None
+    background_mode: str = "annotated"
 
     # Species
     species: str = "hsa"
@@ -379,7 +380,12 @@ class Config:
         if is_ora and self.background_file and not Path(self.background_file).exists():
             errors.append(f"Background file not found: {self.background_file}")
 
-        # Validate species
+        valid_background_modes = {"annotated", "genome", "custom"}
+        if self.background_mode not in valid_background_modes:
+            errors.append(
+                f"Invalid background_mode: {self.background_mode}. Valid: {sorted(valid_background_modes)}"
+            )
+
         # Validate species code.
         species_valid = False
 
@@ -521,6 +527,7 @@ DEFAULT_CONFIG_YAML = """# AllEnricher v2 configuration
 input_file: null
 output_dir: "./results"
 background_file: null
+background_mode: "annotated"  # annotated, genome, or custom
 
 # Analysis scope
 species: "hsa"

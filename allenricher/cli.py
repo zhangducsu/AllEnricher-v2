@@ -1541,6 +1541,10 @@ def cmd_analyze(args) -> int:
                 config.output_dir = args.output
             if args.background:
                 config.background_file = args.background
+            if _cli_option_was_provided(
+                args, '--background-mode', fallback=args.background_mode != 'annotated'
+            ):
+                config.background_mode = args.background_mode
             # CLI mark overoutput_all (False when default True, --only-significant)
             if args.only_significant:
                 config.output_all = False
@@ -1572,6 +1576,7 @@ def cmd_analyze(args) -> int:
                 min_genes=args.min_genes,
                 n_jobs=args.jobs,
                 background_file=args.background,
+                background_mode=args.background_mode,
                 output_all=not args.only_significant,  # Default output of all entries (same as v1)
                 plot_formats=[args.plot_format] if getattr(args, 'plot_format', None) else ["pdf", "png"],
                 plot_dpi=getattr(args, 'plot_dpi', None) or 300,
@@ -1719,7 +1724,7 @@ def cmd_analyze(args) -> int:
             db_manager.load_databases(config.databases, version=use_ver)
 
         # Resolve the ORA background from explicit input or the selected mode.
-        background_mode = getattr(args, 'background_mode', 'annotated')
+        background_mode = config.background_mode
 
         ora_like_analysis = config.method == 'hypergeometric' or tf_only_mode
         if not ora_like_analysis:

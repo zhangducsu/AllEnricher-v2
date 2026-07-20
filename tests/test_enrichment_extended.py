@@ -288,6 +288,8 @@ class TestConfigValidation:
         assert "max_genes: .inf" in DEFAULT_CONFIG_YAML
         assert "plot_width: null" in DEFAULT_CONFIG_YAML
         assert "plot_height: null" in DEFAULT_CONFIG_YAML
+        assert "background_mode: \"annotated\"" in DEFAULT_CONFIG_YAML
+        assert config.background_mode == "annotated"
         assert config.plot_width is None
         assert config.plot_height is None
 
