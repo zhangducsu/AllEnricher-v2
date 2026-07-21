@@ -1,0 +1,77 @@
+version: 1
+title: AllEnricher v2 preregistered competitor benchmark
+annotation_snapshot: v20260715
+input_root: ../00_input_data/real_world_sci
+database_root: ../00_input_data/real_world_sci/database_snapshot
+databases: [GO, KEGG]
+datasets:
+  human_airway_dex:
+    accession: E-GEOD-52778
+    species: hsa
+    taxid: 9606
+    latin_name: Homo sapiens
+    manuscript_scope: main
+  cattle_metabolic_risk_week1:
+    accession: E-MTAB-5838
+    species: bta
+    taxid: 9913
+    latin_name: Bos taurus
+    manuscript_scope: main
+  drosophila_fas_p218:
+    accession: E-MTAB-5069
+    species: dme
+    taxid: 7227
+    latin_name: Drosophila melanogaster
+    manuscript_scope: supplementary
+  yeast_tsa1_deletion_stress:
+    accession: E-MTAB-9355
+    species: sce
+    taxid: 4932
+    annotation_taxid: 559292
+    latin_name: Saccharomyces cerevisiae
+    manuscript_scope: supplementary
+methods:
+  ORA:
+    tools: [AllEnricher, clusterProfiler, WebGestaltR]
+    go_remote_tool: g:Profiler
+    min_gene_set_size: 3
+    p_adjust_method: BH
+    alternative: greater
+    significance_threshold: 0.05
+  GSEA:
+    tools: [AllEnricher, clusterProfiler, WebGestaltR]
+    min_gene_set_size: 15
+    max_gene_set_size: 500
+    exponent: 1
+    seed: 42
+    threads: 1
+    fgsea_eps: 0
+    webgestalt_permutations: 10000
+    significance_threshold: 0.05
+tools:
+  AllEnricher:
+    version: repository
+  clusterProfiler:
+    version: 4.20.0
+  WebGestaltR:
+    version: 1.0.0
+  g:Profiler:
+    version: service-recorded
+    base_url: https://biit.cs.ut.ee/gprofiler
+    custom_gmt_only: GO
+  getENRICH:
+    repository: https://github.com/BioinformaticsOnLine/getENRICH.git
+    commit: 5235d2d9eb3234b41b9c6f507e399f8d0e6b80bc
+    r_version: 4.4.1
+workflow_audits:
+  getENRICH:
+    datasets: [human_airway_dex, cattle_metabolic_risk_week1]
+    databases: [GO, KEGG]
+expected_result_sets: 52
+expected_getenrich_workflows: 4
+acceptance:
+  ora_max_abs_p_diff: 1.0e-10
+  ora_max_abs_q_diff: 1.0e-10
+  clusterprofiler_gsea_max_abs_nes_diff: 1.0e-8
+  clusterprofiler_gsea_max_abs_q_diff: 1.0e-8
+  gsva_max_abs_error: 1.0e-8

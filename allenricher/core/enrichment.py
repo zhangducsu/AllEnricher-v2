@@ -1164,6 +1164,11 @@ class EnrichmentAnalyzer:
             genes_in_term = query_genes & term_genes
             num_in_O = len(genes_in_term)
 
+            # Preserve v1/clusterProfiler semantics: BH correction is applied
+            # only to terms with at least one query-gene overlap.
+            if num_in_O < 1:
+                continue
+
             term_stats[term_id] = {
                 "num_in_O": num_in_O,
                 "num_in_C": num_in_C,
@@ -1171,7 +1176,7 @@ class EnrichmentAnalyzer:
                 "term_name": term_info.get("name", term_id),
             }
 
-        # Test every eligible term so multiple-testing correction uses the full family.
+        # Test the positive-overlap family retained above.
         for term_id, ts in tqdm(
             term_stats.items(),
             desc=f"Analyzing {database}",

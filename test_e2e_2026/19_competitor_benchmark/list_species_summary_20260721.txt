@@ -1,0 +1,21 @@
+==================================================
+Species Registry Summary
+==================================================
+Total species: 42,124
+
+By Database:
+  - GO: 32,443 species
+  - KEGG: 10,871 species
+  - REACTOME: 16 species
+  - DO: 1 species
+  - DISGENET: 1 species
+  - WIKIPATHWAYS: 18 species
+  - TRRUST: 2 species
+  - CHEA3: 1 species
+  - ANIMALTFDB: 182 species
+  - HTFTARGET: 1 species
+==================================================
+
+Command: python -m allenricher.cli list-species --summary
+Recorded: 2026-07-21 (Asia/Shanghai)
+Purpose: internal factual audit; not a submission-package file.

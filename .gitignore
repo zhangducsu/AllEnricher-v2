@@ -49,6 +49,9 @@ test_e2e_2026/*
 !test_e2e_2026/18_real_world_sci/
 !test_e2e_2026/18_real_world_sci/**
 test_e2e_2026/18_real_world_sci/__pycache__/
+!test_e2e_2026/19_competitor_benchmark/
+!test_e2e_2026/19_competitor_benchmark/**
+test_e2e_2026/19_competitor_benchmark/__pycache__/
 gsea_test_output/
 test_wikipathways_output/
 database_test/
@@ -77,6 +80,7 @@ test_wikipathways_support.py
 deepseek_test_output/
 plots/
 test_db/
+Project_*/
 
 # Local editor/agent workspace state
 .trae/

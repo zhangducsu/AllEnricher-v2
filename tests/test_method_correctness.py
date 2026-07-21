@@ -33,7 +33,7 @@ def test_ora_uses_one_background_universe():
     assert row["P_Value"] == pytest.approx(hypergeom.sf(0, 4, 1, 1))
 
 
-def test_ora_corrects_all_eligible_hypotheses_before_hiding_zero_hits():
+def test_ora_corrects_positive_overlap_hypotheses_like_v1():
     database = {
         "double": {"name": "double", "genes": ["A", "B"]},
         "single": {"name": "single", "genes": ["A", "C"]},
@@ -43,8 +43,8 @@ def test_ora_corrects_all_eligible_hypotheses_before_hiding_zero_hits():
         {"A", "B"}, set("ABCDEFGHIJ"), {"TEST": database}, parallel=False
     )["TEST"]
 
-    raw = [hypergeom.sf(1, 10, 2, 2), hypergeom.sf(0, 10, 2, 2), 1.0]
-    expected = dict(zip(["double", "single", "zero"], multipletests(raw, method="fdr_bh")[1]))
+    raw = [hypergeom.sf(1, 10, 2, 2), hypergeom.sf(0, 10, 2, 2)]
+    expected = dict(zip(["double", "single"], multipletests(raw, method="fdr_bh")[1]))
 
     assert set(results["Term_ID"]) == {"double", "single"}
     for _, row in results.iterrows():

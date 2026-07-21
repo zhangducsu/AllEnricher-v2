@@ -53,7 +53,7 @@ The CLI exposes 12 subcommands:
 ## Why v2
 
 - One CLI/API/Web path for ORA, GSEA, ssGSEA, and GSVA.
-- TaxID-centered species registry covering 42,124 species in the packaged registry.
+- TaxID-centered registry that records database-specific coverage for 42,124 unique TaxIDs in the current frozen snapshot.
 - GO, KEGG, Reactome, WikiPathways, disease, TF, and custom gene-set databases.
 - Publication-oriented figures with method-aware color palettes.
 - Self-contained HTML reports with figures, searchable tables, provenance,
@@ -69,10 +69,12 @@ The maintained implementation matrix is in
 
 ## Supported Databases and Species Coverage
 
-AllEnricher v2 is TaxID-centered. The packaged species registry currently lists
-**42,124 species** and lets the CLI, REST API, and Web workbench show which
-databases are available for each species. Recompute these counts at any time
-with:
+AllEnricher v2 is TaxID-centered. The current frozen registry snapshot records
+database-specific coverage for **42,124 unique TaxIDs**, each associated with at
+least one database. This total is the union across resources, not a claim that
+every database supports every TaxID. The CLI, REST API, and Web workbench show
+the recorded database coverage for each TaxID. Recompute these counts at any
+time with:
 
 ```bash
 allenricher list-species --summary
@@ -82,7 +84,7 @@ Database availability still depends on the files installed in the selected
 database directory. Use `allenricher list-species`, `allenricher query-species`,
 `allenricher list-versions`, or the Web workbench to inspect local support.
 
-| Database | Supported species in registry | Content | Notes |
+| Database | TaxIDs with recorded coverage | Content | Notes |
 | --- | ---: | --- | --- |
 | GO | 32,443 | Gene Ontology annotations | Broadest functional-annotation coverage. |
 | KEGG | 10,871 | KEGG pathways | KEGG organism-code based pathway support. |

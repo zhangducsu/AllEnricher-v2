@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+message: "If you use AllEnricher v2, please cite the software archive and the associated article."
+title: "AllEnricher v2"
+type: software
+version: "2.1.0"
+authors:
+  - family-names: Xiao
+    given-names: Jieling
+  - family-names: Zhou
+    given-names: Qianwen
+  - family-names: Wang
+    given-names: Chunyu
+  - family-names: Zhang
+    given-names: Du
+    email: zhangducsu@csu.edu.cn
+repository-code: "https://github.com/zhangducsu/AllEnricher-v2"
+license: MIT
+keywords:
+  - gene set enrichment analysis
+  - over-representation analysis
+  - pathway analysis
+  - reproducibility

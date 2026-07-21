@@ -125,7 +125,7 @@ def test_python_appendix_requests_only_retained_python_gsea_plots(tmp_path):
     assert "--use-r-plots" not in command
 
 
-def test_ora_oracle_corrects_all_eligible_hypotheses_before_hiding_zero_hits(tmp_path):
+def test_ora_oracle_corrects_positive_overlap_hypotheses_like_v1(tmp_path):
     query = tmp_path / "query.txt"
     background = tmp_path / "background.txt"
     query.write_text("G1\nG2\n", encoding="utf-8")
@@ -139,7 +139,7 @@ def test_ora_oracle_corrects_all_eligible_hypotheses_before_hiding_zero_hits(tmp
             "Term_ID": ["HIT"],
             "Term_Name": ["Hit term"],
             "P_Value": [1 / 5],
-            "Adjusted_P_Value": [2 / 5],
+            "Adjusted_P_Value": [1 / 5],
             "Gene_Count": [2],
             "Genes": ["G1;G2"],
         }
@@ -150,7 +150,7 @@ def test_ora_oracle_corrects_all_eligible_hypotheses_before_hiding_zero_hits(tmp
     assert RUNNER.oracle_ora(actual, terms, query, background, oracle, "GO") == []
     saved = pd.read_csv(oracle / "independent_hypergeometric.tsv", sep="\t")
     assert saved["Term_ID"].tolist() == ["HIT"]
-    assert np.isclose(saved.loc[0, "Adjusted_P_Value"], 2 / 5)
+    assert np.isclose(saved.loc[0, "Adjusted_P_Value"], 1 / 5)
 
 
 def test_single_and_multi_enrichment_plot_tokens_are_not_conflated():

@@ -5,7 +5,6 @@ import gzip
 import pandas as pd
 import pytest
 from scipy.stats import hypergeom
-from statsmodels.stats.multitest import multipletests
 
 from allenricher.analysis.tf_enrichment import TFEnrichmentAnalyzer
 from allenricher.analysis.tf_meta_analyzer import TFMetaAnalyzer
@@ -117,7 +116,7 @@ def test_trrust_preserves_edges_and_regulation_filter_changes_gene_set(tmp_path)
     assert all_result.loc[0, "Background_Size"] == 3
 
 
-def test_tf_ora_bh_uses_all_tested_terms_and_corrects_within_library():
+def test_tf_ora_bh_uses_positive_overlap_terms_within_library():
     genes = [f"G{i}" for i in range(1, 9)]
     matrix = pd.DataFrame({
         "Gene": genes,
@@ -137,8 +136,7 @@ def test_tf_ora_bh_uses_all_tested_terms_and_corrects_within_library():
 
     # A Library background is G1-G4; B Library background is G1/G5, cannot share the full matrix of 8 lines.
     p_a1 = hypergeom.sf(2 - 1, 4, 2, 2)
-    p_a2 = hypergeom.sf(0 - 1, 4, 2, 2)
-    expected_a1_fdr = multipletests([p_a1, p_a2], method="fdr_bh")[1][0]
+    expected_a1_fdr = p_a1
     p_b = hypergeom.sf(1 - 1, 2, 2, 1)
 
     assert indexed.loc["A|TF1", "FDR"] == pytest.approx(expected_a1_fdr)

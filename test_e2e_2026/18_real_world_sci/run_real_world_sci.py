@@ -127,7 +127,7 @@ def command_environment(offline: bool = False) -> dict[str, str]:
 
 
 def collect_environment(run_dir: Path, matrix_path: Path) -> None:
-    rscript = shutil.which("Rscript") or r"D:\AppGallery\App\R-4.6.1\bin\x64\Rscript.exe"
+    rscript = shutil.which("Rscript")
     environment = {
         "timestamp": datetime.now().astimezone().isoformat(),
         "platform": platform.platform(),
@@ -136,7 +136,7 @@ def collect_environment(run_dir: Path, matrix_path: Path) -> None:
         "numpy": np.__version__,
         "git_commit": capture(["git", "rev-parse", "HEAD"]),
         "git_status": capture(["git", "status", "--short"]),
-        "R": capture([rscript, "--version"]),
+        "R": capture([rscript, "--version"]) if rscript else "unavailable",
         "pytest": capture([sys.executable, "-m", "pytest", "--version"]),
         "matrix": file_record(matrix_path, matrix_path.parent),
         "database_manifest": (
@@ -251,6 +251,8 @@ def oracle_ora(
         if len(genes) < min_size or (max_size is not None and len(genes) > max_size):
             continue
         overlap = query & genes
+        if not overlap:
+            continue
         rows.append(
             {
                 "Term_ID": str(term_id),
@@ -262,7 +264,6 @@ def oracle_ora(
     if expected.empty:
         return ["ORA oracle produced no eligible hypotheses"]
     expected["Adjusted_P_Value"] = multipletests(expected["P_Value"], method="fdr_bh")[1]
-    expected = expected[expected["Gene_Count"] > 0].copy()
     expected.to_csv(oracle_dir / "independent_hypergeometric.tsv", sep="\t", index=False)
     errors = compare_numeric(
         actual,

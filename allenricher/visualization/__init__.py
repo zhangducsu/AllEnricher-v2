@@ -3,6 +3,8 @@
 from allenricher.visualization.barplot import plot_barplot
 from allenricher.visualization.gsea_plots import (
     plot_gsea_barplot,
+    plot_gsea_dotplot,
+    plot_gsea_nes_barplot,
     plot_gsea_enrichment,
     plot_gsea_lollipop,
     plot_gsea_multi_enrichment,
@@ -15,6 +17,8 @@ __all__ = [
     "Plotter",
     "PlotTheme",
     "plot_gsea_barplot",
+    "plot_gsea_dotplot",
+    "plot_gsea_nes_barplot",
     "plot_gsea_enrichment",
     "plot_gsea_lollipop",
     "plot_gsea_multi_enrichment",

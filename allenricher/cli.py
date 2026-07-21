@@ -1504,7 +1504,7 @@ def cmd_analyze(args) -> int:
             if args.input:
                 config.input_file = args.input
             if _cli_option_was_provided(
-                args, '-s', '--species', fallback=args.species != 'hsa'
+                args, '-s', '--species', fallback=True
             ):
                 config.species = args.species
             if _cli_option_was_provided(
@@ -1541,6 +1541,10 @@ def cmd_analyze(args) -> int:
                 config.output_dir = args.output
             if args.background:
                 config.background_file = args.background
+            if _cli_option_was_provided(
+                args, '--database-dir', fallback=bool(args.database_dir)
+            ):
+                config.database_dir = args.database_dir
             if _cli_option_was_provided(
                 args, '--background-mode', fallback=args.background_mode != 'annotated'
             ):

@@ -254,8 +254,8 @@ class TFEnrichmentAnalyzer:
         """Run one-sided hypergeometric ORA for TF target sets.
 
         Size filters and the background are applied independently within each source
-        library. Benjamini-Hochberg correction therefore uses the complete tested term
-        family for that library."""
+        library. Benjamini-Hochberg correction uses positive-overlap terms within each
+        library, matching the core ORA workflow."""
         regulation = (regulation or 'all').lower()
         input_gene_set = {
             str(gene).strip() for gene in gene_set
@@ -331,6 +331,9 @@ class TFEnrichmentAnalyzer:
             overlap = gene_set_set & targets
             n_overlap = len(overlap)
 
+            if n_overlap < 1:
+                continue
+
             n_targets = len(targets)
 
             # One-sided hypergeometric probability P(X >= observed overlap).
@@ -391,9 +394,7 @@ class TFEnrichmentAnalyzer:
             if len(values) > 1 else values.to_numpy()
         )
 
-        # min_overlap controls reported rows, not the multiple-testing universe.
-        # Every source term that passed the source/context/size filters must
-        # contribute to its library's BH denominator, including zero-overlap terms.
+        # min_overlap controls reported rows after correction of positive-overlap terms.
         result_df = result_df[result_df['Overlap'] >= min_overlap].copy()
         if result_df.empty:
             logger.warning(

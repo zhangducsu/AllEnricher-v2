@@ -389,7 +389,9 @@ def save_figure_dual(
     facecolor: Optional[str] = None,
     **kwargs
 ) -> Tuple[str, str]:
-    """Save the same figure as both PNG and PDF."""
+    """Save PNG and PDF copies, plus a separately requested third format."""
+    requested_path = Path(output_path)
+    requested_extension = requested_path.suffix.lower()
     # Remove the extension before creating both output filenames.
     base_path = output_path
     for ext in ['.png', '.pdf', '.jpg', '.jpeg', '.svg', '.eps']:
@@ -422,6 +424,16 @@ def save_figure_dual(
         facecolor=facecolor,
         **kwargs
     )
+
+    if requested_extension and requested_extension not in {".png", ".pdf"}:
+        requested_path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(
+            str(requested_path),
+            format=requested_extension.lstrip("."),
+            bbox_inches=bbox_inches,
+            facecolor=facecolor,
+            **kwargs,
+        )
 
     return png_path, pdf_path
 

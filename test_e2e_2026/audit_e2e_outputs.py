@@ -58,47 +58,67 @@ def audit_vector(path: Path) -> list[dict]:
     return []
 
 
+def audit_run(root: Path) -> dict:
+    """Audit one E2E run directory without mutating its result files."""
+    root = Path(root).resolve()
+    images = [p for p in root.rglob("*") if p.is_file() and p.suffix.lower() in {".png", ".pdf", ".svg"}]
+    logs = [p for p in root.rglob("*") if p.is_file() and p.suffix.lower() == ".log"]
+    issues = []
+    png_metrics = []
+    for path in images:
+        if path.stat().st_size == 0:
+            issues.append({"type": "empty_image", "path": str(path)})
+        if re.search(r"[<>:\"/\\|?*]|U\\+F0", path.name):
+            issues.append({"type": "unsafe_filename", "path": str(path)})
+        if path.suffix.lower() == ".png" and path.stat().st_size:
+            metrics, png_issues = audit_png(path)
+            png_metrics.append(metrics)
+            issues.extend(png_issues)
+        elif path.suffix.lower() in {".pdf", ".svg"} and path.stat().st_size:
+            issues.extend(audit_vector(path))
+    for path in logs:
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for pattern in ("Traceback", "findfont", "empty distance matrix", "\uFFFD"):
+            if pattern in text:
+                issues.append({"type": "log_pattern", "pattern": pattern, "path": str(path), "message": f"{pattern} in {path.name}"})
+    return {
+        "root": str(root),
+        "images": len(images),
+        "nonempty_images": sum(path.stat().st_size > 0 for path in images),
+        "logs": len(logs),
+        "png_metrics": png_metrics,
+        "issues": issues,
+        "issue_count": len(issues),
+    }
+
+
+def _write_report(root: Path, report: dict) -> None:
+    (root / "E2E_VISUAL_AUDIT.json").write_text(
+        json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    lines = [
+        "# E2E Visual Audit", "",
+        f"- images: {report['images']}",
+        f"- nonempty: {report['nonempty_images']}",
+        f"- issues: {report['issue_count']}", "",
+        "| Type | Path | Detail |", "|---|---|---|",
+    ]
+    lines += [
+        f"| {issue['type']} | {issue['path']} | {issue.get('pattern', issue.get('detail', ''))} |"
+        for issue in report["issues"]
+    ]
+    (root / "E2E_VISUAL_AUDIT.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("root", nargs="?", default=str(Path(__file__).resolve().parent))
     args = parser.parse_args()
     root = Path(args.root).resolve()
-    images = [p for p in root.rglob("*") if p.is_file() and p.suffix.lower() in {".png", ".pdf", ".svg"}]
-    logs = [p for p in root.rglob("*") if p.is_file() and p.suffix.lower() == ".log"]
-    issues = []
-    png_metrics = []
-    for p in images:
-        if p.stat().st_size == 0:
-            issues.append({"type": "empty_image", "path": str(p)})
-        if re.search(r"[<>:\"/\\|?*]|U\\+F0", p.name):
-            issues.append({"type": "unsafe_filename", "path": str(p)})
-        if p.suffix.lower() == ".png" and p.stat().st_size:
-            metrics, png_issues = audit_png(p)
-            png_metrics.append(metrics)
-            issues.extend(png_issues)
-        elif p.suffix.lower() in {".pdf", ".svg"} and p.stat().st_size:
-            issues.extend(audit_vector(p))
-    for p in logs:
-        text = p.read_text(encoding="utf-8", errors="replace")
-    for pattern in ("Traceback", "findfont", "empty distance matrix", "\uFFFD"):
-            if pattern in text:
-                issues.append({"type": "log_pattern", "pattern": pattern, "path": str(p)})
-    report = {
-        "root": str(root),
-        "images": len(images),
-        "nonempty_images": sum(p.stat().st_size > 0 for p in images),
-        "logs": len(logs),
-        "png_metrics": png_metrics,
-        "issues": issues,
-    }
-    (root / "E2E_VISUAL_AUDIT.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
-    md = ["# E2E Visual Audit", "", f"- images: {report['images']}", f"- nonempty: {report['nonempty_images']}", f"- issues: {len(issues)}", ""]
-    md += ["| Type | Path | Detail |", "|---|---|---|"]
-    md += [f"| {x['type']} | {x['path']} | {x.get('pattern', x.get('detail', ''))} |" for x in issues]
-    (root / "E2E_VISUAL_AUDIT.md").write_text("\n".join(md) + "\n", encoding="utf-8")
+    report = audit_run(root)
+    _write_report(root, report)
     print(json.dumps(report, ensure_ascii=True, indent=2))
-    return 1 if issues else 0
-
+    return 1 if report["issues"] else 0
 
 if __name__ == "__main__":
     raise SystemExit(main())

@@ -85,7 +85,7 @@ class TestSpeciesRegistry:
         assert loaded.registry_path == current.registry_path
         assert set(loaded.entries) == {2}
 
-    def test_default_registry_adds_authoritative_tf_database_coverage(self, tmp_path):
+    def test_default_registry_applies_runtime_tf_database_coverage(self, tmp_path):
         from allenricher.database.animaltfdb_fetcher import AnimalTFDBFetcher
         from allenricher.database.downloader import DataDownloader
 
@@ -107,9 +107,11 @@ class TestSpeciesRegistry:
         assert summary["disgenet"]["count"] == 1
         assert summary["trrust"]["count"] == 2
         assert summary["chea3"]["count"] == 1
-        assert summary["animaltfdb"]["count"] == 183
+        # AnimalTFDB lists 183 source species, but AllEnricher routes human
+        # TF-target analysis to hTFtarget, leaving 182 actionable AnimalTFDB workflows.
+        assert summary["animaltfdb"]["count"] == 182
         assert summary["htftarget"]["count"] == 1
-        assert len(loaded.filter_by_databases(animaltfdb=True)) == 183
+        assert len(loaded.filter_by_databases(animaltfdb=True)) == 182
         assert [item.taxid for item in loaded.filter_by_databases(chea3=True)] == [9606]
         assert [item.taxid for item in loaded.filter_by_databases(htftarget=True)] == [9606]
 

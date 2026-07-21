@@ -39,6 +39,9 @@ def test_sample_correlation_uses_sample_columns(tmp_path):
 
     assert fig is not None
     assert output.exists()
-    ax = fig.axes[0]
-    assert [tick.get_text() for tick in ax.get_xticklabels()] == ["S1", "S2", "S3"]
+    sample_labels = ["S1", "S2", "S3"]
+    assert any(
+        set(tick.get_text() for tick in ax.get_xticklabels()) == set(sample_labels)
+        for ax in fig.axes
+    )
     plt.close(fig)

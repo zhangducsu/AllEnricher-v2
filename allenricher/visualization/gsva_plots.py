@@ -617,12 +617,16 @@ def plot_sample_correlation(
     dpi: int = 300,
     style: str = "nature",
     palette: str = None,
-) -> matplotlib.figure.Figure:
+) -> Optional[matplotlib.figure.Figure]:
     """Plot clustered sample correlations with ellipses below and values above the diagonal."""
     if method not in ("pearson", "spearman"):
         raise ValueError(f"Unsupported correlation method: '{method}'. Expected 'pearson' or 'spearman'.")
 
-    corr = scores_df.apply(pd.to_numeric, errors="coerce").corr(method=method)
+    numeric_scores = scores_df.apply(pd.to_numeric, errors="coerce")
+    if numeric_scores.shape[0] < 2:
+        logger.warning("Sample-correlation plot skipped: fewer than two pathways")
+        return None
+    corr = numeric_scores.corr(method=method)
     values = corr.to_numpy(dtype=float, copy=True)
     values[~np.isfinite(values)] = 0
     np.fill_diagonal(values, 1)

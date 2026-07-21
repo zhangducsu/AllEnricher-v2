@@ -26,10 +26,13 @@ description = "A comprehensive gene set function enrichment tool for multiple sp
 readme = "README.md"                                              # README Documentation
 license = {text = "MIT"}                                          # Open source licence
 authors = [
-    {name = "AllEnricher Team", email = "allenricher@example.com"}
+    {name = "Jieling Xiao"},
+    {name = "Qianwen Zhou"},
+    {name = "Chunyu Wang"},
+    {name = "Du Zhang", email = "zhangducsu@csu.edu.cn"}
 ]
 maintainers = [
-    {name = "AllEnricher Team", email = "allenricher@example.com"}
+    {name = "Du Zhang", email = "zhangducsu@csu.edu.cn"}
 ]
 keywords = [                                                       # PyPI Search keywords
     "bioinformatics",                                              # Bioinformatics

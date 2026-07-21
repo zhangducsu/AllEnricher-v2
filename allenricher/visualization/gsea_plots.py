@@ -399,6 +399,102 @@ def plot_gsea_barplot(
     return fig
 
 
+def plot_gsea_nes_barplot(
+    results_df: pd.DataFrame,
+    top_n: int = 20,
+    title: str = "GSEA NES Barplot",
+    output_file: Optional[str] = None,
+    figsize: Optional[tuple] = None,
+    style: Optional[str] = None,
+    palette: Optional[str] = None,
+    dpi: int = 300,
+) -> matplotlib.figure.Figure:
+    """Backward-compatible compact NES barplot."""
+    df, metric_label = _prepare_lollipop_df(results_df, top_n)
+    if metric_label != "NES":
+        raise ValueError("GSEA NES barplot requires an NES column")
+    df = df.sort_values("metric", ascending=True).reset_index(drop=True)
+    if figsize is None:
+        figsize = (6.6, max(2.2, 1.35 + 0.34 * len(df)))
+    colors = PlotTheme.get_plot_colors(
+        style, palette, default=["#D55E00", "#0072B2"], divergent=True
+    )
+    bar_colors = [colors[-1] if value >= 0 else colors[0] for value in df["metric"]]
+    y = np.arange(len(df))
+    with PlotTheme.context(style or "nature", palette):
+        fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
+        ax.barh(y, df["metric"], color=bar_colors, edgecolor="#4A4A4A", linewidth=0.4)
+        ax.axvline(0, color="#555555", linewidth=0.7)
+        ax.set_yticks(y)
+        ax.set_yticklabels(df["term_wrap"])
+        ax.set_xlabel("Normalized enrichment score (NES)")
+        ax.set_title(title)
+        span = max(float(df["metric"].abs().max()), 1.0)
+        for index, value in enumerate(df["metric"]):
+            ax.text(
+                value + (0.03 * span if value >= 0 else -0.03 * span),
+                index,
+                f"NES={value:.2f}",
+                ha="left" if value >= 0 else "right",
+                va="center",
+                fontsize=8,
+            )
+        apply_figure_style(fig, style, axes=[ax], grid_axis="x", border=None)
+        fig.tight_layout()
+        _save_figure(fig, output_file, dpi=dpi, pad_inches=0.06)
+    return fig
+
+
+def plot_gsea_dotplot(
+    results_df: pd.DataFrame,
+    top_n: int = 20,
+    title: str = "GSEA Dotplot",
+    output_file: Optional[str] = None,
+    figsize: Optional[tuple] = None,
+    style: Optional[str] = None,
+    palette: Optional[str] = None,
+    dpi: int = 300,
+) -> matplotlib.figure.Figure:
+    """Backward-compatible compact GSEA dotplot."""
+    df, metric_label = _prepare_lollipop_df(results_df, top_n)
+    if metric_label != "NES":
+        raise ValueError("GSEA dotplot requires an NES column")
+    df = df.sort_values("metric", ascending=True).reset_index(drop=True)
+    if figsize is None:
+        figsize = (6.6, max(2.2, 1.35 + 0.34 * len(df)))
+    y = np.arange(len(df))
+    score = -np.log10(np.maximum(df["fdr"].astype(float), np.finfo(float).tiny))
+    point_sizes = _size_area(df["gene_count"])
+    colors = PlotTheme.get_plot_colors(style, palette, sequential=True, n=6)
+    cmap = mcolors.LinearSegmentedColormap.from_list("gsea_dotplot_fdr", colors)
+    with PlotTheme.context(style or "nature", palette):
+        fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
+        scatter = ax.scatter(
+            df["metric"], y, s=point_sizes, c=score, cmap=cmap,
+            edgecolors="#4A4A4A", linewidths=0.5,
+        )
+        ax.axvline(0, color="#777777", linewidth=0.7, linestyle="--")
+        ax.set_yticks(y)
+        ax.set_yticklabels(df["term_wrap"])
+        ax.set_xlabel("Normalized enrichment score (NES)")
+        ax.set_title(title)
+        span = max(float(df["metric"].abs().max()), 1.0)
+        for index, row in df.iterrows():
+            ax.text(
+                row["metric"] + 0.04 * span,
+                index,
+                f"Genes={int(round(row['gene_count']))}",
+                ha="left",
+                va="center",
+                fontsize=8,
+            )
+        cbar = fig.colorbar(scatter, ax=ax, pad=0.02)
+        cbar.set_label(r"$-log_{10}$(FDR)")
+        apply_figure_style(fig, style, axes=[ax], grid_axis="x", border=None)
+        fig.tight_layout()
+        _save_figure(fig, output_file, dpi=dpi, pad_inches=0.06)
+    return fig
+
 def plot_gsea_enrichment(
     ranked_genes: List[str],
     gene_weights: Dict[str, float],
