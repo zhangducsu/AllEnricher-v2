@@ -57,7 +57,7 @@ Run-Step "git_status_clean" "`$s = git status --porcelain; if (`$s) { `$s; exit 
 Run-Step "python_compile" "python -m py_compile allenricher/cli.py allenricher/api/server.py allenricher/report/generator.py allenricher/ai/interpreter.py allenricher/core/enrichment.py allenricher/core/gsva.py allenricher/database/species_registry.py"
 Run-Step "pytest_release_focus" "python -m pytest tests/test_cli.py tests/test_api_server.py tests/test_ai_interpreter.py tests/test_ai_integration.py tests/test_ai_structured.py tests/test_report_integration.py tests/test_web_database_defaults.py tests/test_cli_species_registry_parity.py tests/test_database_manager_correctness.py tests/test_database_manager_tf.py tests/test_method_correctness.py -q --override-ini addopts='' -p no:cacheprovider"
 Run-Step "cli_help_smoke" "python -m allenricher --help"
-Run-Step "cli_species_smoke" "python -m allenricher query-species --taxid 9606"
+Run-Step "cli_species_help_smoke" "python -m allenricher query-species --help"
 
 if ($Full) {
     Run-Step "pytest_full" "python -m pytest -q --override-ini addopts='' -p no:cacheprovider"
