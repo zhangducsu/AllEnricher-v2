@@ -21,7 +21,7 @@ build-backend = "setuptools.build_meta"
 # --------------------------------------------------
 [project]
 name = "allenricher"                                              # Package Name (pip install allenricher)
-version = "2.1.0"                                                 # Version No.
+version = "2.1.1"                                                 # Version No.
 description = "A comprehensive gene set function enrichment tool for multiple species"  # Project description
 readme = "README.md"                                              # README Documentation
 license = {text = "MIT"}                                          # Open source licence
@@ -73,6 +73,8 @@ dependencies = [
     "requests>=2.25.0",    # HTTP Request (AIInterface call, Database Download)
     "tqdm>=4.60.0",        # Progress bar display
     "openpyxl>=3.0.0",     # Excel Document reading and writing (Support .xlsx Loading of the gene list in format)
+    "Jinja2>=3.0.0",       # HTML template rendering used by the CLI
+    "plotly>=5.0.0",       # Interactive TF report figures imported by the package
 ]
 
 # --------------------------------------------------

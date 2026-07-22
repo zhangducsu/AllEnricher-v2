@@ -5,7 +5,7 @@ standard pathway, disease, transcription-factor, and custom gene-set libraries;
 HTML reports; a REST API; and optional AI-assisted result interpretation.
 """
 
-__version__ = "2.1.0"
+__version__ = "2.1.1"
 __author__ = "AllEnricher Team"
 __license__ = "MIT"
 

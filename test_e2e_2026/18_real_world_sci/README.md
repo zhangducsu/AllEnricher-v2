@@ -54,10 +54,12 @@ python test_e2e_2026/18_real_world_sci/run_real_world_sci.py `
 - `MATRIX_COVERAGE.tsv` contains exactly 108 data rows and every case is `PASS`.
 - ORA P values are independently reproduced with the SciPy hypergeometric distribution and
   statsmodels Benjamini-Hochberg adjustment.
-- GSEA is independently reproduced with Bioconductor fgsea using identical ranks, gene sets, and
-  random seed.
-- ssGSEA and GSVA are independently reproduced with Bioconductor GSVA to a maximum absolute error
-  of `1e-8`.
+- GSEA output is checked against a direct call to the same pinned Bioconductor fgsea backend using
+  identical ranks, gene sets, and random seed; this is a wrapper-fidelity check, not an independent
+  algorithm reimplementation.
+- ssGSEA and GSVA outputs are checked against direct calls to the same pinned Bioconductor GSVA
+  backend to a maximum absolute error of `1e-8`; these checks cover CLI parameter routing, labels,
+  and serialization rather than independent algorithm validation.
 - Official result tables contain analysis values only; runtime provenance is stored in
   `analysis_metadata.json`.
 - Every case archives its command, logs, exit code, manifests, result tables, HTML report,

@@ -2,7 +2,7 @@ cff-version: 1.2.0
 message: "If you use AllEnricher v2, please cite the software archive and the associated article."
 title: "AllEnricher v2"
 type: software
-version: "2.1.0"
+version: "2.1.1"
 authors:
   - family-names: Xiao
     given-names: Jieling

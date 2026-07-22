@@ -1,6 +1,6 @@
 # Current Implementation Status
 
-This document is the maintained source of truth for AllEnricher v2.1.0. Historical planning notes and generated audit outputs are intentionally excluded from the main repository.
+This document is the maintained source of truth for AllEnricher v2.1.1. Historical planning notes and generated audit outputs are intentionally excluded from the main repository.
 
 ## Product Surfaces
 
@@ -37,7 +37,7 @@ Size filters are applied after intersecting gene sets with the method-specific g
 | hTFtarget | human | tissue-specific TF-target associations |
 | CUSTOM | user-defined | built from user annotations or GMT-style gene sets |
 
-`MSigDB` is not a supported public database in v2.1.0.
+`MSigDB` is not a supported public database in v2.1.1.
 
 ## Current Figure Types
 
@@ -69,6 +69,14 @@ Removed or non-current general figure names include `bubble`, `dotplot`, `networ
 - Reports include generated figures, result tables, run metadata, AI interpretation state, and a Materials and Methods writing reference when metadata is available.
 - Missing versions or references must be displayed as `To be added`, not guessed.
 
+## Reproducible Container
+
+- The root `Dockerfile` pins the Bioconductor 3.23 base image by immutable digest and verifies R 4.6.1, `fgsea` 1.38.0, and `GSVA` 2.6.2 at build time.
+- Direct Python runtime requirements are constrained, and the complete resolved Python package list is recorded inside the built image.
+- Inputs and database snapshots are mounted at `/work`; they are not embedded in the image.
+- The image runs as the non-root `rstudio` user and exposes the same CLI, Web, and REST code paths as a local installation.
+- The optional R-only `emapplot` renderer is excluded from the core image because `aPEAR` and one of its dependencies are archived upstream.
+
 ## Release Gate
 
 Use the maintained release gate:
@@ -77,4 +85,4 @@ Use the maintained release gate:
 powershell -ExecutionPolicy Bypass -File docs/release/run_final_release_checks.ps1
 ```
 
-The most recent local gate before `v2.1.0` tagging returned `GO` and saved evidence under `test_e2e_2026/99_runs/final_release_20260719_171637/`.
+Run the maintained release gate from a clean checkout immediately before tagging; its timestamped evidence directory is intentionally not committed.

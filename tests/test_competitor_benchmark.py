@@ -129,6 +129,23 @@ def test_metric_points_dodge_species_and_databases() -> None:
         publication.plt.close(figure)
 
 
+def test_publication_rejects_stale_ora_fdr_metrics() -> None:
+    config = {
+        "datasets": {"D": {}}, "databases": ["GO"],
+        "acceptance": {"ora_max_abs_p_diff": 1e-10, "ora_max_abs_q_diff": 1e-10},
+    }
+    metrics = pd.DataFrame([{
+        "comparator": "clusterProfiler", "dataset": "D", "database": "GO", "method": "ORA",
+        "reference_terms": 2, "comparator_terms": 2, "term_jaccard": 1,
+        "max_abs_p_diff": 0, "max_abs_q_diff": 0.5, "status": "PASS",
+    }])
+    try:
+        publication.validate_publication_metrics(metrics, config)
+    except ValueError as exc:
+        assert "D/GO" in str(exc)
+    else:
+        raise AssertionError("stale ORA FDR metrics were accepted for publication")
+
 def test_publication_exports_are_portable_and_leave_figure1_to_author() -> None:
     gmt = publication.source_gmt_path(
         r"D:\archive\database_snapshot\organism\v20260715\hsa\hsa.GO.gmt.gz"
@@ -163,7 +180,9 @@ def test_publication_exports_are_portable_and_leave_figure1_to_author() -> None:
         "commit_sha", "command_template", "evidence_archive_path", "source_url",
     ]
     assert not hasattr(publication, "figure1")
+    assert not hasattr(publication, "supplement_s3")
     assert "Figure_1_workflow_validation" not in publication.generate.__code__.co_consts
+    assert "Figure_S3_activity_method_error" not in publication.generate.__code__.co_consts
 
 def test_generated_publication_tables_preserve_records_without_path_leaks() -> None:
     paper = ROOT.parent / "Paper"
@@ -207,8 +226,10 @@ def test_generated_publication_tables_preserve_records_without_path_leaks() -> N
     assert table_s2["definition"].str.len().gt(0).all()
     assert table_s2["evidence"].str.len().gt(0).all()
     assert "Machine-readable output" not in set(table_s2["feature"])
-    assert (table_s4["status"] == "NOT_RUN").sum() == 4
-    assert table_s4.loc[table_s4["status"] == "NOT_RUN", "reason"].str.len().gt(0).all()
+    workflow = table_s4[table_s4["record_type"] == "workflow_audit"]
+    assert len(workflow) == 4
+    assert set(workflow["status"]) == {"N/A", "INCOMPARABLE"}
+    assert workflow["reason"].str.len().gt(0).all()
 
     publication_files = [
         supplementary / "Table_S1_datasets_inputs_databases.tsv",

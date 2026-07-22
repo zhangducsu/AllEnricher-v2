@@ -18,12 +18,7 @@ from PIL import Image
 
 
 SCRIPT_ROOT = Path(__file__).resolve().parent
-PROJECT_ROOT = SCRIPT_ROOT.parents[1]
 MATRIX_PATH = SCRIPT_ROOT / "benchmark_matrix.yaml"
-VERIFIED_ACTIVITY_RUN = (
-    PROJECT_ROOT / "test_e2e_2026" / "99_runs"
-    / "20260717_010408_798643_REAL_WORLD_SCI_PRIMARY_VERIFIED"
-)
 COLORS = {
     "AllEnricher": "#0072B2",
     "clusterProfiler": "#D55E00",
@@ -396,49 +391,7 @@ def supplement_s2(results: pd.DataFrame, metrics: pd.DataFrame, source_dir: Path
         heat_axis.text(0.5, 0.5, "No comparable GSEA metrics", transform=heat_axis.transAxes, ha="center")
     pd.DataFrame(source_rows).to_csv(source_dir / "Figure_S2_scatter_source_data.tsv", sep="\t", index=False)
     heat_metrics.to_csv(source_dir / "Figure_S2_metric_source_data.tsv", sep="\t", index=False)
-    fig.subplots_adjust(left=0.18, right=0.94, top=0.97, bottom=0.05)
-    return fig
-
-
-def activity_errors() -> pd.DataFrame:
-    rows = []
-    if not VERIFIED_ACTIVITY_RUN.is_dir():
-        return pd.DataFrame(columns=["case", "method", "max_abs_error", "status"])
-    for case_dir in sorted((VERIFIED_ACTIVITY_RUN / "cases").iterdir()):
-        method = "ssGSEA" if "__ssgsea__" in case_dir.name else "GSVA" if "__gsva__" in case_dir.name else None
-        if method is None:
-            continue
-        oracle = case_dir / "oracle" / f"official_{method.lower()}.tsv"
-        outputs = list((case_dir / "output").glob("*_enrichment.tsv"))
-        try:
-            expected = pd.read_csv(oracle, sep="\t", index_col=0)
-            actual = pd.read_csv(outputs[0], sep="\t").set_index("Term_ID")
-            common_rows = expected.index.intersection(actual.index)
-            common_columns = expected.columns.intersection(actual.columns)
-            delta = np.abs(expected.loc[common_rows, common_columns].to_numpy(dtype=float) - actual.loc[common_rows, common_columns].to_numpy(dtype=float))
-            error = float(np.nanmax(delta)) if delta.size else np.nan
-            status = "PASS" if pd.notna(error) else "UNAVAILABLE"
-        except Exception:
-            error, status = np.nan, "UNAVAILABLE"
-        rows.append({"case": case_dir.name, "method": method, "max_abs_error": error, "status": status})
-    return pd.DataFrame(rows)
-
-
-def supplement_s3(errors: pd.DataFrame, source_dir: Path) -> plt.Figure:
-    fig, axis = plt.subplots(figsize=(86 / 25.4, 72 / 25.4))
-    for index, method in enumerate(("ssGSEA", "GSVA")):
-        values = errors.loc[(errors["method"] == method) & errors["max_abs_error"].notna(), "max_abs_error"]
-        jitter = np.linspace(-0.08, 0.08, len(values)) if len(values) else []
-        axis.scatter(index + np.asarray(jitter), np.maximum(values.astype(float), 1e-16), s=17, color=COLORS["AllEnricher"], edgecolor="black", linewidth=0.35, alpha=0.8)
-    axis.axhline(1e-8, color="#D55E00", linestyle="--", linewidth=0.8, label="Acceptance threshold")
-    axis.set_yscale("log")
-    axis.set_ylim(3e-17, 3e-7)
-    axis.set_xticks([0, 1], ["ssGSEA", "GSVA"])
-    axis.set_ylabel("Maximum absolute error")
-    axis.spines[["top", "right"]].set_visible(False)
-    axis.legend(frameon=False)
-    errors.to_csv(source_dir / "Figure_S3_source_data.tsv", sep="\t", index=False)
-    fig.subplots_adjust(left=0.21, right=0.97, top=0.95, bottom=0.16)
+    fig.subplots_adjust(left=0.29, right=0.94, top=0.97, bottom=0.05)
     return fig
 
 
@@ -596,9 +549,9 @@ def write_legends(paper_dir: Path) -> None:
 
 ## Figure 1
 
-**Legend.** Evolution from the original AllEnricher release to the v2 integrated workbench and its validation evidence. The original release supported gene-list ORA, locally updatable resources, model and non-model species, custom backgrounds, and a Unix command-line interface. Version 2 adds ranked-gene and expression-matrix methods, transcription-factor resources, a TaxID registry, versioned resource lineage, CLI/Web/REST access, publication graphics, reports, and traceable outputs. Validation comprises four public datasets, 108 correctness cases, 52 competitor result sets, and offline replay.
+**Legend.** Evolution from the original AllEnricher release to the v2 integrated workbench and its validation evidence. The original release supported gene-list ORA, locally updatable resources, model and non-model species, custom backgrounds, and a Unix command-line interface. Version 2 adds ranked-gene and expression-matrix methods, transcription-factor resources, a TaxID registry, versioned resource lineage, CLI/Web/REST access, publication graphics, reports, and traceable outputs. Validation comprises four public datasets, 108 workflow-validation cases, 52 competitor result sets, and offline replay.
 
-**Alt text.** A left-to-right diagram contrasts the grey original AllEnricher feature set with the blue, orange, and green v2 workbench, then connects it to purple validation evidence from four datasets, 108 correctness cases, 52 competitor result sets, and offline replay. Optional AI interpretation is shown as a dashed secondary box.
+**Alt text.** A left-to-right diagram contrasts the grey original AllEnricher feature set with the blue, orange, and green v2 workbench, then connects it to purple validation evidence from four datasets, 108 workflow-validation cases, 52 competitor result sets, and offline replay. Optional AI interpretation is shown as a dashed secondary box.
 
 ## Figure 2
 
@@ -612,7 +565,6 @@ def write_legends(paper_dir: Path) -> None:
 
 **Figure S2.** Term-level GSEA NES comparisons across four species and a heat map of preregistered case-level metrics.
 
-**Figure S3.** Maximum absolute errors between AllEnricher ssGSEA/GSVA outputs and direct Bioconductor GSVA calls in the frozen 108-case validation run. The dashed line marks 1e-8.
 """
     (paper_dir / "figure_legends_and_alt_text.md").write_text(text, encoding="utf-8")
 
@@ -623,22 +575,48 @@ def generate(run_dir: Path, paper_dir: Path) -> None:
     results = pd.read_csv(run_dir / "normalized_results.tsv", sep="\t", low_memory=False)
     metrics = pd.read_csv(run_dir / "benchmark_metrics.tsv", sep="\t")
     details = pd.read_csv(run_dir / "benchmark_metrics_detail.tsv", sep="\t")
+    validate_publication_metrics(metrics, config)
     figures = paper_dir / "figures"
     supplementary = paper_dir / "supplementary"
     source_dir = supplementary / "source_data"
     for path in (figures, supplementary, source_dir):
         path.mkdir(parents=True, exist_ok=True)
+    for obsolete in (
+        supplementary / "Figure_S3_activity_method_error.pdf",
+        supplementary / "Figure_S3_activity_method_error.svg",
+        supplementary / "Figure_S3_activity_method_error.tiff",
+        supplementary / "Figure_S3_activity_method_error.png",
+        source_dir / "Figure_S3_source_data.tsv",
+    ):
+        obsolete.unlink(missing_ok=True)
     long_capabilities, wide_capabilities = capability_table(run_dir)
     audit = []
     audit.extend(save_figure(figure2(metrics, config, wide_capabilities), figures / "Figure_2_competitor_agreement", 600))
     audit.extend(save_figure(supplement_s1(results, source_dir), supplementary / "Figure_S1_ORA_term_agreement", 600))
     audit.extend(save_figure(supplement_s2(results, metrics, source_dir), supplementary / "Figure_S2_GSEA_term_agreement", 600))
-    errors = activity_errors()
-    audit.extend(save_figure(supplement_s3(errors, source_dir), supplementary / "Figure_S3_activity_method_error", 600))
     write_tables(run_dir, supplementary, long_capabilities, metrics, details)
     write_legends(paper_dir)
     (paper_dir / "figure_render_audit.json").write_text(json.dumps(audit, indent=2) + "\n", encoding="utf-8")
 
+
+def validate_publication_metrics(metrics: pd.DataFrame, config: dict[str, Any]) -> None:
+    """Reject stale ORA metrics before they reach publication exports."""
+    ora = metrics[(metrics["comparator"] == "clusterProfiler") & (metrics["method"] == "ORA")].copy()
+    expected = len(config["datasets"]) * len(config["databases"])
+    numeric = ["reference_terms", "comparator_terms", "term_jaccard", "max_abs_p_diff", "max_abs_q_diff"]
+    for column in numeric:
+        ora[column] = pd.to_numeric(ora[column], errors="coerce")
+    bad = ora[
+        (ora["status"] != "PASS")
+        | (ora["reference_terms"] != ora["comparator_terms"])
+        | (ora["term_jaccard"] != 1)
+        | (ora["max_abs_p_diff"] > config["acceptance"]["ora_max_abs_p_diff"])
+        | (ora["max_abs_q_diff"] > config["acceptance"]["ora_max_abs_q_diff"])
+        | ora[numeric].isna().any(axis=1)
+    ]
+    if len(ora) != expected or not bad.empty:
+        cases = ", ".join(f"{row.dataset}/{row.database}" for row in bad.itertuples()) or "missing cases"
+        raise ValueError(f"publication export rejected stale or invalid AllEnricher-clusterProfiler ORA metrics: {cases}")
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)

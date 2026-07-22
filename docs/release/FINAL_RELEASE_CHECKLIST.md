@@ -1,6 +1,6 @@
 # AllEnricher-v2 Final Release Checklist
 
-This checklist is the release gate for AllEnricher v2.1.0 maintenance and patch releases. Use it with `docs/CURRENT_IMPLEMENTATION.md`, which is the current implementation matrix.
+This checklist is the release gate for AllEnricher v2.1.1 maintenance and patch releases. Use it with `docs/CURRENT_IMPLEMENTATION.md`, which is the current implementation matrix.
 
 ## Release Rule
 
@@ -18,6 +18,7 @@ This checklist is the release gate for AllEnricher v2.1.0 maintenance and patch 
 - API/Web smoke can start the local service and expose the expected endpoints.
 - HTML report smoke includes summary, result table, plots, AI interpretation state, and methods-writing reference when available.
 - No user-facing Chinese remains in package code, web UI, generated reports, or CLI output. Tests and internal documentation are exempt.
+- The release container builds from the pinned base digest and passes the CLI and R-version smoke checks.
 
 ## Manual Review
 
@@ -54,6 +55,17 @@ Outputs are saved under:
 ```text
 test_e2e_2026/99_runs/final_release_<timestamp>/
 ```
+
+Build and verify the release container before tagging:
+
+```powershell
+docker build --pull=false -t allenricher:2.1.1 .
+docker run --rm allenricher:2.1.1 --version
+docker run --rm --entrypoint Rscript allenricher:2.1.1 -e "stopifnot(as.character(packageVersion('fgsea')) == '1.38.0', as.character(packageVersion('GSVA')) == '2.6.2')"
+```
+
+Record the published image digest with the release and use the digest, not a
+mutable tag, in archived workflow commands.
 
 ## Release Decision
 

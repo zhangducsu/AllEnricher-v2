@@ -150,6 +150,42 @@ the current R script requirements with:
 python test_e2e_2026/18_real_world_sci/verify_r_dependencies.py
 ```
 
+## Reproducible Docker Environment
+
+The root `Dockerfile` uses an immutable Bioconductor 3.23 base-image digest and
+checks R 4.6.1, `fgsea` 1.38.0, and `GSVA` 2.6.2 during the build. Direct Python
+runtime dependencies are constrained in `docker/python-constraints.txt`; the
+fully resolved Python environment is recorded inside the image at
+`/opt/allenricher-python-freeze.txt`.
+
+```bash
+docker build --pull=false -t allenricher:2.1.1 .
+docker run --rm allenricher:2.1.1 --version
+```
+
+The published release image is `ghcr.io/zhangducsu/allenricher-v2:2.1.1`; use the immutable digest recorded in the GitHub Release for archived workflows.
+
+Mount a working directory containing inputs, configuration, and an installed
+database snapshot for command-line or pipeline execution:
+
+```bash
+docker run --rm -v "${PWD}:/work" allenricher:2.1.1 analyze --help
+```
+
+The same image runs the local Web workbench and REST API:
+
+```bash
+docker run --rm -p 8000:8000 -v "${PWD}:/work" \
+  allenricher:2.1.1 serve --host 0.0.0.0 --port 8000
+```
+
+Database snapshots and study inputs are mounted rather than embedded, so a
+workflow can combine an image digest with explicit data and database hashes.
+This OCI image can be referenced by digest from workflow engines or converted
+for Apptainer-based compute nodes. The optional R-only `emapplot` renderer is
+not installed in the core image because its `aPEAR` dependency is archived;
+the remaining maintained analysis and figure paths are included.
+
 ## Input Formats
 
 ### ORA Gene List

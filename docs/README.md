@@ -1,6 +1,6 @@
 # Documentation Map
 
-Use these files for the current AllEnricher v2.1.0 behavior:
+Use these files for the current AllEnricher v2.1.1 behavior:
 
 - `../README.md`: user-facing installation, inputs, commands, outputs, and citation.
 - `CURRENT_IMPLEMENTATION.md`: maintained implementation matrix for methods, databases, figures, AI, Web, and reports.

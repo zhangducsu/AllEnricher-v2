@@ -205,19 +205,17 @@ def build(paper_dir: Path, output: Path) -> None:
     doc = SimpleDocTemplate(
         str(output), pagesize=PAGE, rightMargin=14 * mm, leftMargin=14 * mm,
         topMargin=16 * mm, bottomMargin=14 * mm, title="AllEnricher v2 Supplementary Data",
-        author="Jieling Xiao; Qianwen Zhou; Chunyu Wang; Du Zhang", subject="Figures S1-S3 and Tables S1-S4",
+        author="Jieling Xiao; Qianwen Zhou; Chunyu Wang; Du Zhang", subject="Figures S1-S2 and Tables S1-S4",
     )
     story: list[object] = [Spacer(1, 12 * mm), Paragraph("AllEnricher v2", styles["Title"]), Paragraph("Supplementary Data", styles["Title"])]
     story += [
-        Paragraph("This document contains Figures S1-S3 and Tables S1-S4. Machine-readable TSV files and the complete 56-case command ledger must accompany the stable Figshare evidence archive before submission (FIGSHARE_DOI_PENDING). Paths in publication tables are relative to that archive root.", styles["Body"]),
-        Paragraph("AI-use disclosure. OpenAI Codex was used for language editing, code review, deterministic table and figure-layout assistance, and consistency checks. An AI-generated concept sketch was used only as an internal design reference for Figure 1 and is excluded from the submission package. Numerical analyses and data-driven figures were produced by the stated deterministic software; the authors are responsible for verifying and approving all final content.", styles["Body"]),
-        Paragraph("Internal quality-control files, local run directories, database logos and the AI-generated Figure 1 reference image are not part of the public evidence archive.", styles["Body"]),
+        Paragraph("This document contains Figures S1-S2 and Tables S1-S4. Machine-readable TSV files and the complete 56-case command ledger must accompany the stable Figshare evidence archive before submission (FIGSHARE_DOI_PENDING). Paths in publication tables are relative to that archive root.", styles["Body"]),
+        Paragraph("Internal quality-control files, local run directories, database logos and internal design references are not part of the public evidence archive.", styles["Body"]),
         PageBreak(),
     ]
     figures = [
         ("Figure S1. Term-level ORA agreement across four species", "Figure_S1_ORA_term_agreement.png", "Dashed lines indicate equality. AllEnricher and clusterProfiler use the same positive-overlap BH family; WebGestaltR and g:Profiler retain their documented custom-annotation universe semantics.", "Multiple small scatter plots compare adjusted ORA values for human, cattle, fly and yeast GO and KEGG cases."),
         ("Figure S2. Term-level GSEA agreement and case metrics", "Figure_S2_GSEA_term_agreement.png", "Scatter plots compare NES values; the heat map summarizes predefined case-level metrics. Nominal P-value and BH-adjusted-P comparisons, including valid-pair denominators, are reported in Table S4.", "Scatter plots across four species are followed by a heat map of NES rank, direction and significant-set agreement."),
-        ("Figure S3. Direct ssGSEA and GSVA correctness checks", "Figure_S3_activity_method_error.png", "Maximum absolute differences compare AllEnricher with direct Bioconductor GSVA calls; the dashed line marks 1e-8.", "Points for ssGSEA and GSVA lie below the predefined maximum-error threshold."),
     ]
     for index, (title, filename, caption, alt) in enumerate(figures):
         story += [Paragraph(title, styles["Heading2"]), figure(supplementary / filename, 260 * mm, 155 * mm), Paragraph(caption, styles["Caption"]), Paragraph(f"Alt text: {alt}", styles["Note"])]
