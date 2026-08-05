@@ -100,13 +100,14 @@ def test_role_specific_palette_options_are_parsed():
     assert args.diverging_palette == "colorbrewer_prgn"
 
 
-def test_style_choices_keep_aliases_but_remove_colorblind():
+def test_style_choices_expose_only_maintained_styles():
     parser = create_parser()
-    for style in ("nature", "science", "presentation", "cell", "omicshare"):
+    for style in ("nature", "science", "presentation"):
         args = parser.parse_args(["analyze", "-i", "genes.txt", "--style", style])
         assert args.style == style
-    with pytest.raises(SystemExit):
-        parser.parse_args(["analyze", "-i", "genes.txt", "--style", "colorblind"])
+    for removed_style in ("cell", "omicshare", "colorblind"):
+        with pytest.raises(SystemExit):
+            parser.parse_args(["analyze", "-i", "genes.txt", "--style", removed_style])
 
 
 def test_emapplot_filter_defaults_are_exposed():

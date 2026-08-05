@@ -114,11 +114,6 @@ SCIENCE_COLORS = [
     "#8C564B", "#E377C2", "#7F7F7F", "#BCBD22", "#17BECF"
 ]
 
-CELL_COLORS = [
-    "#0072B2", "#D55E00", "#CC79A7", "#F0E442", "#009E73",
-    "#56B4E9", "#E69F00", "#000000"
-]
-
 LANCET_COLORS = [
     "#00468B", "#ED0000", "#42B540", "#0099B4", "#925E9F",
     "#FDAF91", "#AD002A", "#ADB6B6"
@@ -152,11 +147,6 @@ IGV_COLORS = [
 TBTOOLS_COLORS = [
     "#FF6B6B", "#4ECDC4", "#45B7D1", "#96CEB4", "#FFEAA7",
     "#DDA0DD", "#98D8C8", "#F7DC6F"
-]
-
-OMICSHARE_COLORS = [
-    "#FF6B9D", "#C44569", "#F8B500", "#4ECDC4", "#556270",
-    "#36D1DC", "#5AB9EA", "#8860D0"
 ]
 
 
@@ -193,11 +183,9 @@ CATEGORICAL_PALETTES: Dict[str, List[str]] = {
     "okabe_ito": OKABE_ITO,
     "nature": NATURE_COLORS,
     "science": SCIENCE_COLORS,
-    "cell": CELL_COLORS,
     "lancet": LANCET_COLORS,
     "nejm": NEJM_COLORS,
     "jama": JAMA_COLORS,
-    "omicshare": OMICSHARE_COLORS,
     "echarts_v4": ECHARTS_V4_COLORS,
 }
 

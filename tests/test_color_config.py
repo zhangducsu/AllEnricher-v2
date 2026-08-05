@@ -33,10 +33,12 @@ class TestColorConfiguration:
         # At least 10 preset colours must be provided
         palettes = config.get_available_palettes()
         assert len(palettes) >= 10, f"Less than 10 preset colour schemes, only{len(palettes)}H-H-H-H-H-H-H-H-H-H-H-H"
+        assert "cell" not in palettes
+        assert "omicshare" not in palettes
         
         # Must contain common colour schemes
         required_palettes = [
-            'tol_bright', 'nature', 'science', 'cell', 'lancet', 'nejm', 'jama',
+            'tol_bright', 'nature', 'science', 'lancet', 'nejm', 'jama',
             'colorbrewer_purd', 'echarts_v4',
         ]
         for palette in required_palettes:
@@ -237,11 +239,11 @@ class TestColorSelectionBehavior:
         from allenricher.visualization.plot_theme import PALETTES as theme_palettes
 
         assert theme_palettes is color_palettes
-        assert len(CATEGORICAL_PALETTES) == 15
+        assert len(CATEGORICAL_PALETTES) == 13
         assert len(SEQUENTIAL_PALETTES) == 4
         assert len(DIVERGING_PALETTES) == 4
-        assert len(color_palettes) == 24
-        assert len(PUBLIC_PALETTES) == 23
+        assert len(color_palettes) == 22
+        assert len(PUBLIC_PALETTES) == 21
         assert set(PALETTE_ROLES) == set(PUBLIC_PALETTES)
         assert set(CATEGORICAL_PALETTES).isdisjoint(SEQUENTIAL_PALETTES)
         assert set(CATEGORICAL_PALETTES).isdisjoint(DIVERGING_PALETTES)
@@ -353,14 +355,14 @@ class TestColorSelectionBehavior:
             "sans-serif", "serif",
         }
 
-    def test_public_styles_are_distinct_and_legacy_aliases_resolve(self):
+    def test_public_styles_are_distinct(self):
         from allenricher.visualization.plot_theme import PlotTheme, resolve_style
 
         assert PlotTheme.available_styles() == ["nature", "science", "presentation"]
-        assert resolve_style("cell") == "nature"
-        assert resolve_style("omicshare") == "science"
-        with pytest.raises(ValueError, match="Unknown style"):
-            resolve_style("colorblind")
+        for removed_style in ("cell", "omicshare", "colorblind"):
+            with pytest.raises(ValueError, match="Unknown style"):
+                resolve_style(removed_style)
+
 
     def test_figure_style_applies_typography_border_grid_and_linewidth(self):
         from allenricher.visualization.plot_theme import PlotTheme, apply_figure_style
@@ -486,5 +488,5 @@ class TestColorSelectionBehavior:
             PlotTheme.get_plot_colors("science", role="sequential")
         )
         assert PlotTheme.get_plot_colors("nature", role="diverging") == (
-            PlotTheme.get_plot_colors("cell", role="diverging")
+            PlotTheme.get_plot_colors("presentation", role="diverging")
         )

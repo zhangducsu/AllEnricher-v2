@@ -1269,7 +1269,7 @@ Examples:
     analyze_parser.add_argument('--groups', default=None, help='Sample group definition, format: Group1:sample1,sample2;Group2:sample3,sample4')  # Sample group definition for intergroup comparison
     analyze_parser.add_argument('--plot-format', default=None, choices=['png', 'pdf', 'svg'], help='Plot output format (default: config or png/pdf)')  # Chart Output Format
     analyze_parser.add_argument('--plot-dpi', type=_positive_int, default=None, help='Plot resolution/DPI (default: config or 300)')  # Chart Resolution (DPI)
-    analyze_parser.add_argument('--style', default=None, choices=['nature', 'science', 'presentation', 'cell', 'omicshare'], help='Plot theme: nature, science, or presentation; cell/omicshare are legacy aliases')  # Chart-style themes
+    analyze_parser.add_argument('--style', default=None, choices=['nature', 'science', 'presentation'], help='Plot theme: nature, science, or presentation')  # Chart-style themes
     analyze_parser.add_argument(
         '--palette', default=None, choices=sorted(PUBLIC_PALETTES),
         help='Legacy color override; automatically applied only to its compatible color role',

@@ -249,12 +249,11 @@ PRESETS: Dict[str, StylePreset] = {
 
 }
 
-STYLE_ALIASES = {"cell": "nature", "omicshare": "science"}
 
 
 def resolve_style(style: Optional[str]) -> str:
-    """Resolve a style name while honoring documented compatibility aliases."""
-    name = STYLE_ALIASES.get((style or "nature").lower(), (style or "nature").lower())
+    """Resolve a registered style name."""
+    name = (style or "nature").lower()
     if name not in PRESETS:
         available = ", ".join(PRESETS)
         raise ValueError(f"Unknown style '{style}'. Available: {available}")

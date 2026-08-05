@@ -190,12 +190,13 @@ def test_lollipop_targets_new_r_script(tmp_path):
     assert cmd[cmd.index("--diverging_palette") + 1] == "tol_sunset"
 
 
-def test_r_bridge_canonicalizes_legacy_styles(tmp_path):
+def test_r_bridge_rejects_removed_styles(tmp_path):
     output = tmp_path / "plot.png"
-    with patch("allenricher.visualization.r_plotter.subprocess.run", side_effect=_successful_r_run) as run:
-        assert r_plotter.plot_gsea_lollipop_r("result.tsv", str(output), style="cell")
-    cmd = run.call_args.args[0]
-    assert cmd[cmd.index("--style") + 1] == "nature"
+    for removed_style in ("cell", "omicshare"):
+        with pytest.raises(ValueError, match="Unknown style"):
+            r_plotter.plot_gsea_lollipop_r(
+                "result.tsv", str(output), style=removed_style
+            )
 
 
 def test_r_bridge_passes_all_explicit_palette_roles(tmp_path):

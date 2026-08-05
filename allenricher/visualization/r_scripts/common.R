@@ -19,11 +19,9 @@ AE_CATEGORICAL_PALETTES <- list(
   okabe_ito = c("#000000", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7"),
   nature = c("#0C5DA5", "#FF9500", "#00B945", "#FF2C00", "#845B97", "#474747", "#9E9E9E"),
   science = c("#1F77B4", "#FF7F0E", "#2CA02C", "#D62728", "#9467BD", "#8C564B", "#E377C2", "#7F7F7F", "#BCBD22", "#17BECF"),
-  cell = c("#0072B2", "#D55E00", "#CC79A7", "#F0E442", "#009E73", "#56B4E9", "#E69F00", "#000000"),
   lancet = c("#00468B", "#ED0000", "#42B540", "#0099B4", "#925E9F", "#FDAF91", "#AD002A", "#ADB6B6"),
   nejm = c("#BC3C29", "#0072B5", "#E18727", "#20854E", "#7876B1", "#6F99AD", "#FFDC91", "#EE4C97"),
   jama = c("#374E55", "#DF8F44", "#00A1D5", "#B24745", "#79AF97", "#6A6599", "#80796B"),
-  omicshare = c("#FF6B9D", "#C44569", "#F8B500", "#4ECDC4", "#556270", "#36D1DC", "#5AB9EA", "#8860D0"),
   echarts_v4 = c("#C23531", "#2F4554", "#61A0A8", "#D48265", "#91C7AE", "#749F83", "#CA8622", "#BDA29A", "#6E7074", "#546570")
 )
 
@@ -67,7 +65,6 @@ AE_STYLE_PRESETS <- list(
   science = list(family = "serif", scale = 1.05, line = 1.15, spacing = 1.00, grid = FALSE, border = TRUE),
   presentation = list(family = "sans", scale = 1.30, line = 1.40, spacing = 1.08, grid = TRUE, border = TRUE)
 )
-AE_STYLE_ALIASES <- c(cell = "nature", omicshare = "science")
 
 palette_role <- function(name) {
   if (name %in% names(AE_CATEGORICAL_PALETTES)) return("categorical")
@@ -78,7 +75,6 @@ palette_role <- function(name) {
 
 configure_plot_style <- function(args = list()) {
   style <- tolower(args$style %||% "nature")
-  if (style %in% names(AE_STYLE_ALIASES)) style <- unname(AE_STYLE_ALIASES[[style]])
   if (!style %in% names(AE_STYLE_PRESETS)) {
     stop(paste("Unknown plot style:", style))
   }
