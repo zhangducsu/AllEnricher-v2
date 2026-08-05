@@ -61,6 +61,14 @@ The CLI exposes 12 subcommands:
 - Optional AI interpretation that cites concrete result rows rather than free
   text guesses.
 
+### Feature and Command Map
+
+The radial map below summarizes the v2 analysis methods, input contracts,
+knowledge resources, species and version controls, deployment interfaces, and
+reproducible outputs. Command fragments use the `allenricher` prefix.
+
+![AllEnricher v2 feature and command map](examples/output/figures/allenricher_v2_feature_command_map.png)
+
 ## Documentation Status
 
 This README is the user-facing entry point for the current v2 implementation.
