@@ -654,14 +654,13 @@ Plot themes control typography, spacing, borders, and grid density:
 | `nature` | Default compact manuscript style. |
 | `science` | Slightly stronger borders and serif-oriented publication style. |
 | `presentation` | Larger fonts and heavier spacing for slides or talks. |
-| `cell`, `omicshare` | Legacy aliases mapped to maintained styles for compatibility. |
 
 Palette roles are separated so colors match the plotted data type instead of the
 selected database name:
 
 | Palette role | Used for | Available palettes |
 | --- | --- | --- |
-| Categorical | Groups, database hierarchy classes, discrete labels | `tol_bright`, `tol_high_contrast`, `tol_vibrant`, `tol_muted`, `tol_medium_contrast`, `tol_light`, `okabe_ito`, `nature`, `science`, `cell`, `lancet`, `nejm`, `jama`, `omicshare`, `echarts_v4` |
+| Categorical | Groups, database hierarchy classes, discrete labels | `tol_bright`, `tol_high_contrast`, `tol_vibrant`, `tol_muted`, `tol_medium_contrast`, `tol_light`, `okabe_ito`, `nature`, `science`, `lancet`, `nejm`, `jama`, `echarts_v4` |
 | Sequential | One-direction continuous values such as `-log10(FDR)` or enrichment strength | `colorbrewer_blues`, `colorbrewer_purd`, `viridis`, `cividis` |
 | Diverging | Centered values with direction, such as NES, pathway activity, and correlation | `colorbrewer_rdbu`, `tol_sunset`, `colorbrewer_prgn`, `colorbrewer_brbg` |
 

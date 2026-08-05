@@ -481,7 +481,7 @@ class Config:
         if self.plot_height is not None and self.plot_height <= 0:
             errors.append(f"plot_height must be positive, got: {self.plot_height}")
 
-        valid_plot_styles = {"nature", "science", "presentation", "cell", "omicshare"}
+        valid_plot_styles = {"nature", "science", "presentation"}
         if not isinstance(self.plot_style, str) or self.plot_style not in valid_plot_styles:
             errors.append(
                 f"Invalid plot_style: {self.plot_style}. Valid: {sorted(valid_plot_styles)}"

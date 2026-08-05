@@ -119,7 +119,7 @@ class EnrichmentRequest(BaseModel):
     plot_types: Optional[str] = None
     plot_format: Literal["png", "pdf", "svg"] = "png"
     plot_dpi: int = Field(default=300, ge=72, le=1200)
-    style: Literal["nature", "science", "presentation", "cell", "omicshare"] = "nature"
+    style: Literal["nature", "science", "presentation"] = "nature"
     palette: Optional[str] = None
     categorical_palette: Optional[str] = None
     sequential_palette: Optional[str] = None
@@ -820,7 +820,7 @@ async def upload_analysis(
     plot_types: Optional[str] = Form(None),
     plot_format: Literal["png", "pdf", "svg"] = Form("png"),
     plot_dpi: int = Form(300),
-    style: Literal["nature", "science", "presentation", "cell", "omicshare"] = Form("nature"),
+    style: Literal["nature", "science", "presentation"] = Form("nature"),
     categorical_palette: Optional[str] = Form(None),
     sequential_palette: Optional[str] = Form(None),
     diverging_palette: Optional[str] = Form(None),
